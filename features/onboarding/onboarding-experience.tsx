@@ -3,6 +3,7 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { Transition } from "framer-motion";
 import { ArrowRight, Check, LockKeyhole, ShieldCheck, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { SectionHeader } from "@/components/layout/section-header";
@@ -106,6 +107,11 @@ export function OnboardingExperience() {
                   Get Started
                   <ArrowRight size={18} />
                 </Button>
+                <div className="mt-5">
+                  <Button asChild variant="ghost" size="sm" className="text-[#726b7c]">
+                    <Link href="/first-win">Preview First Win</Link>
+                  </Button>
+                </div>
               </div>
               <Card className="relative overflow-hidden p-6 sm:p-8">
                 <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-[#c8baff] to-transparent" />
@@ -304,16 +310,17 @@ export function OnboardingExperience() {
                 >
                   <Check size={24} />
                 </motion.div>
-                <Eyebrow className="mt-6">Your first view is ready</Eyebrow>
+                <Eyebrow className="mt-6">Sample preview</Eyebrow>
                 <h2 className="mt-4 font-serif text-4xl font-semibold leading-tight text-[#16131d] sm:text-5xl">
-                  We&apos;ve finished understanding your financial life.
+                  See what your first financial picture could feel like.
                 </h2>
                 <p className="mt-5 text-lg leading-8 text-[#5f586b]">
-                  Let&apos;s see what we found.
+                  This preview uses sample data while real account analysis is still being built.
                 </p>
-                <Button className="mt-8" size="lg" onClick={() => setStep("welcome")}>
-                  View My Financial Picture
+                <Button asChild className="mt-8" size="lg">
+                  <Link href="/first-win">Preview Example Financial Picture</Link>
                 </Button>
+                <p className="mt-4 text-sm font-medium text-[#726b7c]">Example preview using sample data.</p>
               </Card>
             </motion.section>
           )}
