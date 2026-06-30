@@ -3,7 +3,7 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { Transition } from "framer-motion";
 import { ArrowRight, Check, LockKeyhole, ShieldCheck, Sparkles } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageLayout } from "@/components/layout/page-layout";
 import { SectionHeader } from "@/components/layout/section-header";
 import { Button } from "@/components/ui/button";
@@ -56,6 +56,10 @@ export function OnboardingExperience() {
   const next = useCallback(() => {
     setStep((current) => steps[Math.min(steps.indexOf(current) + 1, steps.length - 1)]);
   }, []);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [step]);
 
   useAutoAdvance(step === "analysis", 9000, () => setStep("ready"));
 
