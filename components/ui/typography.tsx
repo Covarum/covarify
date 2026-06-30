@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 export function Eyebrow({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <p className={cn("text-xs font-semibold uppercase tracking-[0.18em] text-[#7c5cff]", className)} {...props} />;
+  return <p className={cn("text-xs font-semibold uppercase tracking-normal text-[#7c5cff]", className)} {...props} />;
 }
 
 export function Heading({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {

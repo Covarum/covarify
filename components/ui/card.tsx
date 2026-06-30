@@ -1,4 +1,5 @@
 import * as React from "react";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
@@ -14,14 +15,19 @@ export function SelectableCard({
   selected,
   className,
   ...props
-}: React.HTMLAttributes<HTMLButtonElement> & { selected?: boolean }) {
+}: React.ComponentProps<typeof motion.button> & { selected?: boolean }) {
   return (
-    <button
+    <motion.button
       type="button"
       aria-pressed={selected}
+      whileHover={{ y: -3 }}
+      whileTap={{ scale: 0.985 }}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       className={cn(
-        "min-h-24 rounded-3xl border bg-white/70 p-5 text-left text-sm font-medium text-[#262036] shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-[#c8baff] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-        selected ? "border-[#7c5cff] bg-[#f5f1ff] text-[#2d1c78] shadow-[0_14px_34px_rgba(124,92,255,0.16)]" : "border-[#e9e2f0]",
+        "min-h-28 rounded-[26px] border bg-white/76 p-5 text-left text-sm font-medium text-[#262036] shadow-[0_8px_24px_rgba(54,36,99,0.06)] outline-none transition-colors duration-200 hover:border-[#c8baff] hover:bg-white hover:shadow-[0_16px_40px_rgba(54,36,99,0.1)] focus-visible:ring-2 focus-visible:ring-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#fbfaf8]",
+        selected
+          ? "border-[#7c5cff] bg-[#f6f2ff] text-[#2d1c78] shadow-[0_18px_42px_rgba(124,92,255,0.15)]"
+          : "border-[#e9e2f0]",
         className,
       )}
       {...props}

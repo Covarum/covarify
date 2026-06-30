@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { Transition } from "framer-motion";
 import { ArrowRight, Check, LockKeyhole, ShieldCheck, Sparkles } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -18,6 +18,22 @@ type Step = "welcome" | "intentions" | "life" | "connect" | "analysis" | "ready"
 const steps: Step[] = ["welcome", "intentions", "life", "connect", "analysis", "ready"];
 
 const calmTransition: Transition = { duration: 0.42, ease: [0.22, 1, 0.36, 1] };
+const analysisStatuses = ["Understanding your financial life...", "Finding patterns...", "Looking for opportunities...", "Almost ready..."];
+
+const previewItems = [
+  {
+    title: "Today's Bright Spot",
+    body: "You're already doing more right than you think.",
+  },
+  {
+    title: "Today's Discovery",
+    body: "Your spending has a story. Covarify helps you understand it.",
+  },
+  {
+    title: "Biggest Opportunity",
+    body: "We'll help you find the next smart move.",
+  },
+];
 
 const pageMotion = {
   initial: { opacity: 0, y: 18 },
@@ -32,6 +48,7 @@ export function OnboardingExperience() {
   const [life, setLife] = useState<string[]>([]);
   const [analysisAnswers, setAnalysisAnswers] = useState<Record<number, string>>({});
   const [questionIndex, setQuestionIndex] = useState(0);
+  const shouldReduceMotion = useReducedMotion();
 
   const stepIndex = steps.indexOf(step);
   const progress = step === "welcome" ? 8 : ((stepIndex + 1) / steps.length) * 100;
@@ -69,6 +86,13 @@ export function OnboardingExperience() {
               <div className="max-w-3xl">
                 <Eyebrow>Financial clarity, finally calm</Eyebrow>
                 <Heading className="mt-5">Clarity changes everything.</Heading>
+                <div className="mt-6 grid max-w-lg gap-2 text-base font-semibold text-[#262036] sm:grid-cols-2">
+                  {["No budgets.", "No spreadsheets.", "No judgment.", "Just clarity."].map((line) => (
+                    <span key={line} className="rounded-full bg-white/68 px-4 py-2 shadow-[0_8px_22px_rgba(54,36,99,0.06)]">
+                      {line}
+                    </span>
+                  ))}
+                </div>
                 <Subheading className="mt-7 max-w-2xl">
                   Let&apos;s build the clearest picture of your financial life&mdash;where you stand today, what matters most,
                   and the path to where you want to be.
@@ -82,20 +106,23 @@ export function OnboardingExperience() {
               <Card className="relative overflow-hidden p-6 sm:p-8">
                 <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-[#c8baff] to-transparent" />
                 <div className="rounded-[24px] border border-[#eee7f5] bg-[#fbfaf8] p-5">
-                  <p className="text-sm font-semibold text-[#5f586b]">Financial Clarity Preview</p>
+                  <p className="text-sm font-semibold text-[#5f586b]">A preview of what clarity can feel like</p>
                   <div className="mt-6 space-y-4">
-                    {["Cash flow is steadier than last month", "Three subscriptions may be redundant", "Debt payoff can accelerate by 7 months"].map((item, index) => (
+                    {previewItems.map((item, index) => (
                       <motion.div
-                        key={item}
-                        className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm"
+                        key={item.title}
+                        className="rounded-[22px] bg-white p-4 shadow-[0_10px_30px_rgba(54,36,99,0.07)]"
                         initial={{ opacity: 0, x: 12 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: 0.12 * index }}
                       >
-                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#ede7ff] text-[#4d31c7]">
-                          <Check size={16} />
-                        </span>
-                        <span className="text-sm font-medium text-[#262036]">{item}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#ede7ff] text-[#4d31c7]">
+                            <Check size={16} />
+                          </span>
+                          <span className="text-sm font-semibold text-[#262036]">{item.title}</span>
+                        </div>
+                        <p className="mt-3 text-sm leading-6 text-[#5f586b]">{item.body}</p>
                       </motion.div>
                     ))}
                   </div>
@@ -109,6 +136,7 @@ export function OnboardingExperience() {
               key="intentions"
               title="What brought you to Covarify today?"
               eyebrow="Discovery"
+              body="Choose what feels true right now. We'll use this to shape your first view."
               options={intentionOptions}
               selected={intentions}
               onToggle={(value) => toggle(value, setIntentions)}
@@ -122,6 +150,7 @@ export function OnboardingExperience() {
               key="life"
               title="Tell us a little about your financial life."
               eyebrow="Financial life"
+              body="A few details help Covarify understand the shape of your money, not just the numbers."
               options={lifeOptions}
               selected={life}
               icons={lifeIcons}
@@ -140,8 +169,8 @@ export function OnboardingExperience() {
                   title="Let's connect your accounts."
                   body={
                     <>
-                      In just a few minutes, you&apos;ll receive your first Financial Clarity Report&mdash;a personalized view
-                      of where you stand today, what&apos;s driving your finances, and where your biggest opportunities may be.
+                      In just a few minutes, you&apos;ll get a personalized view of where you stand today, what&apos;s driving
+                      your finances, and where your biggest opportunities may be.
                     </>
                   }
                 />
@@ -161,14 +190,14 @@ export function OnboardingExperience() {
                   </div>
                   <div className="mt-7 grid gap-3 sm:grid-cols-2">
                     {trustStatements.map((statement) => (
-                      <div key={statement} className="flex items-center gap-2 text-sm font-medium text-[#5f586b]">
-                        <ShieldCheck size={16} className="text-[#2f8f77]" />
-                        {statement}
+                      <div key={statement} className="flex items-center gap-3 rounded-2xl bg-[#fbfaf8] p-3 text-sm font-semibold text-[#4f4859]">
+                        <ShieldCheck size={17} className="text-[#2f8f77]" />
+                        <span>{statement}</span>
                       </div>
                     ))}
                   </div>
                   <Button className="mt-8 w-full" size="lg" onClick={next}>
-                    Build My Financial Clarity Report
+                    Build My Financial Picture
                     <ArrowRight size={18} />
                   </Button>
                 </Card>
@@ -180,16 +209,37 @@ export function OnboardingExperience() {
             <motion.section key="analysis" className="flex flex-1 items-center py-12" {...pageMotion}>
               <Card className="mx-auto grid w-full max-w-5xl gap-8 p-6 sm:p-8 lg:grid-cols-[0.8fr_1fr]">
                 <div>
-                  <Eyebrow>Building your report</Eyebrow>
+                  <Eyebrow>Understanding your financial life</Eyebrow>
                   <h2 className="mt-4 font-serif text-4xl font-semibold leading-tight text-[#16131d]">
-                    Your Financial Clarity Report is taking shape.
+                    Let&apos;s see what we find.
                   </h2>
                   <p className="mt-5 text-base leading-7 text-[#5f586b]">
-                    Covarify is organizing signals across income, spending, debt, cash flow, and financial trends.
+                    Covarify is organizing the signals that can explain where you stand, what&apos;s changing, and what may
+                    deserve your attention next.
                   </p>
-                  <div className="mt-8">
+                  <div className="mt-8 rounded-[24px] border border-[#eee7f5] bg-white/72 p-4">
                     <ProgressBar value={42 + answeredAnalysisCount * 18} />
-                    <p className="mt-3 text-sm font-medium text-[#726b7c]">Analyzing without making you stare at a blank screen.</p>
+                    <div className="mt-4 grid gap-3">
+                      {analysisStatuses.map((status, index) => {
+                        const active = index <= Math.min(answeredAnalysisCount + 1, analysisStatuses.length - 1);
+
+                        return (
+                          <motion.div
+                            key={status}
+                            className="flex items-center gap-3 text-sm font-medium text-[#5f586b]"
+                            animate={shouldReduceMotion ? undefined : { opacity: active ? 1 : 0.45 }}
+                            transition={{ duration: 0.4 }}
+                          >
+                            <motion.span
+                              className={active ? "h-2.5 w-2.5 rounded-full bg-[#7c5cff]" : "h-2.5 w-2.5 rounded-full bg-[#d9d1e4]"}
+                              animate={shouldReduceMotion || !active ? undefined : { scale: [1, 1.25, 1] }}
+                              transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+                            />
+                            {status}
+                          </motion.div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
                 <div className="rounded-[24px] border border-[#eee7f5] bg-[#fbfaf8] p-5">
@@ -209,8 +259,8 @@ export function OnboardingExperience() {
                           <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#ede7ff] text-[#4d31c7]">
                             <Icon size={18} />
                           </span>
-                          <p className="text-sm font-semibold text-[#726b7c]">Question {index + 1} of 3</p>
-                        </div>
+                        <p className="text-sm font-semibold text-[#726b7c]">Question {index + 1} of 3</p>
+                      </div>
                         <h3 className="mt-5 text-2xl font-semibold leading-snug text-[#16131d]">{question.prompt}</h3>
                         <div className="mt-5 grid gap-3">
                           {question.options.map((option) => (
@@ -242,15 +292,23 @@ export function OnboardingExperience() {
           {step === "ready" && (
             <motion.section key="ready" className="flex flex-1 items-center py-12 text-center" {...pageMotion}>
               <Card className="mx-auto max-w-3xl p-8 sm:p-12">
-                <Eyebrow>Your first report is ready</Eyebrow>
+                <motion.div
+                  className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#ede7ff] text-[#4d31c7]"
+                  initial={{ opacity: 0, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={calmTransition}
+                >
+                  <Check size={24} />
+                </motion.div>
+                <Eyebrow className="mt-6">Your first view is ready</Eyebrow>
                 <h2 className="mt-4 font-serif text-4xl font-semibold leading-tight text-[#16131d] sm:text-5xl">
-                  A clearer financial picture starts here.
+                  We&apos;ve finished understanding your financial life.
                 </h2>
                 <p className="mt-5 text-lg leading-8 text-[#5f586b]">
-                  Sprint 1 stops at the foundation, but this is the handoff point for the first Financial Clarity Report experience.
+                  Let&apos;s see what we found.
                 </p>
                 <Button className="mt-8" size="lg" onClick={() => setStep("welcome")}>
-                  Return to Start
+                  View My Financial Picture
                 </Button>
               </Card>
             </motion.section>
@@ -264,6 +322,7 @@ export function OnboardingExperience() {
 function ChoiceStep({
   eyebrow,
   title,
+  body,
   options,
   selected,
   icons,
@@ -273,6 +332,7 @@ function ChoiceStep({
 }: {
   eyebrow: string;
   title: string;
+  body?: string;
   options: string[];
   selected: string[];
   icons?: React.ElementType[];
@@ -282,14 +342,27 @@ function ChoiceStep({
 }) {
   return (
     <motion.section className="flex flex-1 flex-col justify-center py-10" {...pageMotion}>
-      <SectionHeader eyebrow={eyebrow} title={title} />
-      <div className="mx-auto mt-10 grid w-full max-w-5xl gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <SectionHeader eyebrow={eyebrow} title={title} body={body} />
+      <div className="mx-auto mt-9 grid w-full max-w-5xl gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {options.map((option, index) => {
           const Icon = icons?.[index];
           return (
             <SelectableCard key={option} selected={selected.includes(option)} onClick={() => onToggle(option)}>
-              <div className="flex h-full flex-col justify-between gap-4">
-                {Icon ? <Icon className="text-[#7c5cff]" size={20} /> : <span className="h-2 w-10 rounded-full bg-[#d8cdfd]" />}
+              <div className="flex h-full flex-col justify-between gap-5">
+                <div className="flex items-center justify-between">
+                  {Icon ? (
+                    <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#f1ecff] text-[#7c5cff]">
+                      <Icon size={20} />
+                    </span>
+                  ) : (
+                    <span className="h-2 w-10 rounded-full bg-[#d8cdfd]" />
+                  )}
+                  {selected.includes(option) ? (
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#7c5cff] text-white">
+                      <Check size={14} />
+                    </span>
+                  ) : null}
+                </div>
                 <span>{option}</span>
               </div>
             </SelectableCard>
