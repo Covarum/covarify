@@ -1,0 +1,15 @@
+.next
+.next-build
+node_modules
+out
+dist
+build
+.env
+.env*
+!.env.example
+*.log
+*.tsbuildinfo
+dev-server.job
+_tmp_*
+.DS_Store
+Thumbs.db
