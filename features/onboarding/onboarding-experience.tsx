@@ -31,7 +31,7 @@ const previewItems = [
     body: "Your spending has a story. Covarify helps you understand it.",
   },
   {
-    title: "Biggest Opportunity",
+    title: "Next Best Move",
     body: "We'll help you find the next smart move.",
   },
 ];
