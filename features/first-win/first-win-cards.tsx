@@ -71,7 +71,6 @@ export function FirstWinCard({
       className="relative bg-[#fffdf8]/88 p-8 shadow-[0_40px_120px_rgba(92,63,178,0.2)] ring-1 ring-[#efe4ff] sm:p-12"
     >
       <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[#d9ccff]/52 blur-3xl" />
-      <div className="pointer-events-none absolute bottom-8 right-12 hidden h-16 w-16 rounded-full border border-[#d8cdfd] bg-white/42 sm:block" />
       <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-[#b9a7ff] to-transparent" />
       <div className="relative max-w-3xl">
         <p className="text-sm font-semibold text-[#7c5cff]">Start with what is working</p>
