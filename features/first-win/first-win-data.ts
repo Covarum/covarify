@@ -14,5 +14,29 @@ export const discoveryReasonLines = [
 export const defaultFinancialStory =
   "You're building income from multiple sources while investing in your future. There are opportunities to simplify your finances, but your overall direction is positive.";
 
-export const planPreviewCopy =
-  "Here's how Covarify would help you compare payoff strategies, estimate interest savings, and choose the approach that fits your life. This will become a full planning experience in a future sprint.";
+export const planStrategies = [
+  {
+    title: "Highest Interest First",
+    label: "Usually saves the most interest",
+    details: [
+      "Focuses extra payments on the highest APR balance first",
+      "Best when interest cost is the main concern",
+    ],
+  },
+  {
+    title: "Smallest Balance First",
+    label: "Builds momentum fastest",
+    details: [
+      "Focuses on the smallest balance first",
+      "Best when quick wins help you stay motivated",
+    ],
+  },
+  {
+    title: "Cash Flow First",
+    label: "Frees up monthly breathing room",
+    details: [
+      "Focuses on balances or payments that improve monthly flexibility",
+      "Best when monthly cash flow feels tight",
+    ],
+  },
+];
