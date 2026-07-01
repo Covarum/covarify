@@ -107,9 +107,12 @@ export function OnboardingExperience() {
                   Get Started
                   <ArrowRight size={18} />
                 </Button>
-                <div className="mt-5">
+                <div className="mt-5 flex flex-wrap gap-2">
                   <Button asChild variant="ghost" size="sm" className="text-[#726b7c]">
                     <Link href="/first-win">Preview First Win</Link>
+                  </Button>
+                  <Button asChild variant="ghost" size="sm" className="text-[#726b7c]">
+                    <Link href="/brain-preview">Brain Preview</Link>
                   </Button>
                 </div>
               </div>
