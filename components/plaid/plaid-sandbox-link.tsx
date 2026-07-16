@@ -10,23 +10,26 @@ type MoneyPicture = {
   summary: { totalCash: number; totalDebt: number; recentSpending: number; recentInflow: number; netCashFlow: number; accountCount: number; transactionCount: number };
 };
 
+type SafePlaidError = { error_type: string; error_code: string; error_message: string; display_message: string | null; request_id: string | null; status: number; missing_env_keys?: string[] };
+const fallbackError = (message: string): SafePlaidError => ({ error_type: "CLIENT_ERROR", error_code: "REQUEST_FAILED", error_message: message, display_message: null, request_id: null, status: 0 });
+
 const money = (value: number | null, currency = "USD") => value === null ? "—" : new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
 
 export function PlaidSandboxLink() {
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [picture, setPicture] = useState<MoneyPicture | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<SafePlaidError | null>(null);
   const [loading, setLoading] = useState(true);
   const [exchanging, setExchanging] = useState(false);
 
   const loadLinkToken = useCallback(async () => {
-    setLoading(true); setError("");
+    setLoading(true); setError(null);
     try {
       const response = await fetch("/api/plaid/create-link-token", { method: "POST" });
-      const result = await response.json() as { link_token?: string; message?: string };
-      if (!response.ok || !result.link_token) throw new Error(result.message || "Plaid Link could not be prepared.");
+      const result = await response.json() as { link_token?: string } & Partial<SafePlaidError>;
+      if (!response.ok || !result.link_token) { setError({ ...fallbackError("Plaid Link could not be prepared."), ...result, status: result.status ?? response.status }); return; }
       setLinkToken(result.link_token);
-    } catch (err) { setError(err instanceof Error ? err.message : "Plaid Link could not be prepared."); }
+    } catch (err) { setError(fallbackError(err instanceof Error ? err.message : "Plaid Link could not be prepared.")); }
     finally { setLoading(false); }
   }, []);
 
@@ -34,23 +37,23 @@ export function PlaidSandboxLink() {
     let active = true;
     fetch("/api/plaid/create-link-token", { method: "POST" })
       .then(async (response) => {
-        const result = await response.json() as { link_token?: string; message?: string };
-        if (!response.ok || !result.link_token) throw new Error(result.message || "Plaid Link could not be prepared.");
+        const result = await response.json() as { link_token?: string } & Partial<SafePlaidError>;
+        if (!response.ok || !result.link_token) { if (active) setError({ ...fallbackError("Plaid Link could not be prepared."), ...result, status: result.status ?? response.status }); return; }
         if (active) setLinkToken(result.link_token);
       })
-      .catch((err: unknown) => { if (active) setError(err instanceof Error ? err.message : "Plaid Link could not be prepared."); })
+      .catch((err: unknown) => { if (active) setError(fallbackError(err instanceof Error ? err.message : "Plaid Link could not be prepared.")); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
 
   const onSuccess = useCallback(async (publicToken: string) => {
-    setExchanging(true); setError("");
+    setExchanging(true); setError(null);
     try {
       const response = await fetch("/api/plaid/exchange-public-token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ public_token: publicToken }) });
-      const result = await response.json() as MoneyPicture & { message?: string };
-      if (!response.ok) throw new Error(result.message || "Sandbox data could not be loaded.");
+      const result = await response.json() as MoneyPicture & Partial<SafePlaidError>;
+      if (!response.ok) { setError({ ...fallbackError("Sandbox data could not be loaded."), ...result, status: result.status ?? response.status }); return; }
       setPicture(result);
-    } catch (err) { setError(err instanceof Error ? err.message : "Sandbox data could not be loaded."); }
+    } catch (err) { setError(fallbackError(err instanceof Error ? err.message : "Sandbox data could not be loaded.")); }
     finally { setExchanging(false); }
   }, []);
 
@@ -65,5 +68,5 @@ export function PlaidSandboxLink() {
     <section className="sandbox-first-win"><span className="success-icon"><Check /></span><div><p className="eyebrow plain">First Win recommendation</p><h2>{firstWin}</h2><p>This demonstration turns sandbox activity into a prioritized next step. It is illustrative, not individualized financial advice.</p></div></section>
   </div>;
 
-  return <div className="sandbox-connect-card"><span className="sandbox-card-icon"><Landmark size={25} /></span><p className="eyebrow plain">Secure sandbox connection</p><h2>Bring a sample money picture into view.</h2><p>Plaid Link opens a sandbox institution flow. Credentials and financial data are simulated for development testing.</p>{error && <div className="sandbox-error" role="alert">{error}<button onClick={() => void loadLinkToken()}><RefreshCw size={14} /> Try again</button></div>}<button className="button button-primary" onClick={() => open()} disabled={!ready || loading || exchanging}>{loading || exchanging ? <><LoaderCircle className="spin" size={17} /> {exchanging ? "Building your picture…" : "Preparing Plaid…"}</> : <>Connect Sandbox Account <ArrowRight size={17} /></>}</button></div>;
+  return <div className="sandbox-connect-card"><span className="sandbox-card-icon"><Landmark size={25} /></span><p className="eyebrow plain">Secure sandbox connection</p><h2>Bring a sample money picture into view.</h2><p>Plaid Link opens a sandbox institution flow. Credentials and financial data are simulated for development testing.</p>{error && <div className="sandbox-error" role="alert"><strong>{error.display_message || error.error_message}</strong><dl><div><dt>Type</dt><dd>{error.error_type}</dd></div><div><dt>Code</dt><dd>{error.error_code}</dd></div><div><dt>Status</dt><dd>{error.status || "Network error"}</dd></div>{error.request_id && <div><dt>Request ID</dt><dd>{error.request_id}</dd></div>}{error.missing_env_keys?.length ? <div><dt>Missing environment keys</dt><dd>{error.missing_env_keys.join(", ")}</dd></div> : null}</dl><button onClick={() => void loadLinkToken()}><RefreshCw size={14} /> Try again</button></div>}<button className="button button-primary" onClick={() => open()} disabled={!ready || loading || exchanging}>{loading || exchanging ? <><LoaderCircle className="spin" size={17} /> {exchanging ? "Building your picture…" : "Preparing Plaid…"}</> : <>Connect Sandbox Account <ArrowRight size={17} /></>}</button></div>;
 }

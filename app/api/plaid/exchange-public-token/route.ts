@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPlaidConfig } from "@/lib/plaid/server";
+import { getPlaidConfig, logSafePlaidError, normalizePlaidError, type SafePlaidError } from "@/lib/plaid/server";
 
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 
@@ -7,7 +7,10 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => null);
     const publicToken = typeof body?.public_token === "string" ? body.public_token.trim() : "";
-    if (!publicToken) return NextResponse.json({ message: "A public_token is required." }, { status: 400 });
+    if (!publicToken) {
+      const diagnostic: SafePlaidError = { error_type: "INVALID_REQUEST", error_code: "MISSING_PUBLIC_TOKEN", error_message: "A public_token is required.", display_message: "Complete Plaid Link before loading sandbox data.", request_id: null, status: 400 };
+      return NextResponse.json(diagnostic, { status: diagnostic.status });
+    }
 
     const { client } = getPlaidConfig();
     const exchange = await client.itemPublicTokenExchange({ public_token: publicToken });
@@ -51,7 +54,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ accounts, transactions, summary: { totalCash: cash, totalDebt: debt, recentSpending: spending, recentInflow: inflow, netCashFlow: inflow - spending, accountCount: accounts.length, transactionCount: transactions.length } });
   } catch (error) {
-    const message = error instanceof Error && error.message.startsWith("Plaid is not configured") ? error.message : "Unable to exchange the sandbox token and load financial data.";
-    return NextResponse.json({ message }, { status: message.startsWith("Plaid is not configured") ? 503 : 502 });
+    const diagnostic = normalizePlaidError(error, "Unable to exchange the sandbox token and load financial data.");
+    logSafePlaidError(diagnostic);
+    return NextResponse.json(diagnostic, { status: diagnostic.status });
   }
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPlaidConfig } from "@/lib/plaid/server";
+import { getPlaidConfig, logSafePlaidError, normalizePlaidError } from "@/lib/plaid/server";
 
 export async function POST() {
   try {
@@ -13,7 +13,8 @@ export async function POST() {
     });
     return NextResponse.json({ link_token: response.data.link_token, expiration: response.data.expiration });
   } catch (error) {
-    const message = error instanceof Error && error.message.startsWith("Plaid is not configured") ? error.message : "Unable to create a Plaid sandbox link token.";
-    return NextResponse.json({ message }, { status: message.startsWith("Plaid is not configured") ? 503 : 502 });
+    const diagnostic = normalizePlaidError(error, "Unable to create a Plaid sandbox link token.");
+    logSafePlaidError(diagnostic);
+    return NextResponse.json(diagnostic, { status: diagnostic.status });
   }
 }
