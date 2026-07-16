@@ -9,6 +9,7 @@ export async function POST() {
       products,
       country_codes: countryCodes,
       language: "en",
+      webhook: "https://www.covarify.com/api/plaid/webhook",
       user: { client_user_id: "covarify-sandbox-user" },
     });
     return NextResponse.json({ link_token: response.data.link_token, expiration: response.data.expiration });

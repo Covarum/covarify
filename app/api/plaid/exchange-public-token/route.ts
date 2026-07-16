@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { getPlaidConfig, logSafePlaidError, normalizePlaidError, type SafePlaidError } from "@/lib/plaid/server";
 
-const isoDate = (date: Date) => date.toISOString().slice(0, 10);
+type SanitizedAccount = { id: string; name: string; officialName: string | null; type: string; subtype: string | null; mask: string | null; currentBalance: number | null; availableBalance: number | null; currency: string };
+
+const accountSummary = (accounts: SanitizedAccount[]) => ({
+  totalCash: accounts.filter((account) => account.type === "depository").reduce((sum, account) => sum + (account.currentBalance || 0), 0),
+  totalDebt: accounts.filter((account) => account.type === "credit" || account.type === "loan").reduce((sum, account) => sum + (account.currentBalance || 0), 0),
+});
 
 export async function POST(request: Request) {
   try {
@@ -16,43 +21,27 @@ export async function POST(request: Request) {
     const exchange = await client.itemPublicTokenExchange({ public_token: publicToken });
     const accessToken = exchange.data.access_token;
 
-    // The sandbox token is used only for these immediate reads. It is never logged,
-    // returned to the browser, or stored. TODO: Add encrypted token storage and token management.
-    const endDate = new Date();
-    const startDate = new Date(endDate);
-    startDate.setDate(startDate.getDate() - 30);
-    const [accountsResponse, transactionsResponse] = await Promise.all([
-      client.accountsGet({ access_token: accessToken }),
-      client.transactionsGet({ access_token: accessToken, start_date: isoDate(startDate), end_date: isoDate(endDate), options: { count: 25, offset: 0 } }),
-    ]);
+    // This sandbox token is used only for immediate reads and is never logged,
+    // returned, or stored. TODO: Add persistent encrypted access token storage,
+    // user authentication, production Plaid environment support, and token management.
+    const accountsResponse = await client.accountsGet({ access_token: accessToken });
+    const accounts: SanitizedAccount[] = accountsResponse.data.accounts.map((account) => ({ id: account.account_id, name: account.name, officialName: account.official_name, type: account.type, subtype: account.subtype, mask: account.mask, currentBalance: account.balances.current, availableBalance: account.balances.available, currency: account.balances.iso_currency_code || "USD" }));
+    const balances = accountSummary(accounts);
 
-    const accounts = accountsResponse.data.accounts.map((account) => ({
-      id: account.account_id,
-      name: account.name,
-      officialName: account.official_name,
-      type: account.type,
-      subtype: account.subtype,
-      mask: account.mask,
-      currentBalance: account.balances.current,
-      availableBalance: account.balances.available,
-      currency: account.balances.iso_currency_code || "USD",
-    }));
-    const transactions = transactionsResponse.data.transactions.map((transaction) => ({
-      id: transaction.transaction_id,
-      accountId: transaction.account_id,
-      name: transaction.merchant_name || transaction.name,
-      amount: transaction.amount,
-      date: transaction.date,
-      category: transaction.personal_finance_category?.primary || transaction.category?.[0] || "Other",
-      pending: transaction.pending,
-      currency: transaction.iso_currency_code || "USD",
-    }));
-    const spending = transactions.filter((item) => item.amount > 0).reduce((sum, item) => sum + item.amount, 0);
-    const inflow = Math.abs(transactions.filter((item) => item.amount < 0).reduce((sum, item) => sum + item.amount, 0));
-    const cash = accounts.filter((account) => account.type === "depository").reduce((sum, account) => sum + (account.currentBalance || 0), 0);
-    const debt = accounts.filter((account) => account.type === "credit" || account.type === "loan").reduce((sum, account) => sum + (account.currentBalance || 0), 0);
-
-    return NextResponse.json({ accounts, transactions, summary: { totalCash: cash, totalDebt: debt, recentSpending: spending, recentInflow: inflow, netCashFlow: inflow - spending, accountCount: accounts.length, transactionCount: transactions.length } });
+    try {
+      // TODO: Move transaction sync to a background job with webhook-driven refresh.
+      const syncResponse = await client.transactionsSync({ access_token: accessToken, count: 100 });
+      const transactions = syncResponse.data.added.map((transaction) => ({ id: transaction.transaction_id, accountId: transaction.account_id, name: transaction.merchant_name || transaction.name, amount: transaction.amount, date: transaction.date, category: transaction.personal_finance_category?.primary || transaction.category?.[0] || "Other", pending: transaction.pending, currency: transaction.iso_currency_code || "USD" }));
+      const spending = transactions.filter((item) => item.amount > 0).reduce((sum, item) => sum + item.amount, 0);
+      const inflow = Math.abs(transactions.filter((item) => item.amount < 0).reduce((sum, item) => sum + item.amount, 0));
+      return NextResponse.json({ connected: true, transactions_status: "ready", message: "Account connected and sandbox transactions loaded.", accounts, transactions, summary: { ...balances, recentSpending: spending, recentInflow: inflow, netCashFlow: inflow - spending, accountCount: accounts.length, transactionCount: transactions.length }, first_win: inflow - spending < 0 ? "Protect cash flow before making additional debt payments." : "Review your largest recent expense and direct the remaining margin toward your top priority." });
+    } catch (transactionError) {
+      const diagnostic = normalizePlaidError(transactionError, "Unable to load sandbox transactions.");
+      if (diagnostic.error_code === "PRODUCT_NOT_READY") {
+        return NextResponse.json({ connected: true, transactions_status: "processing", message: "Account connected. Transactions are still processing in Plaid sandbox. Try again shortly or use the transactions test user.", accounts, transactions: [], summary: { ...balances, recentSpending: 0, recentInflow: 0, netCashFlow: 0, accountCount: accounts.length, transactionCount: 0 }, first_win: "Your account connection is working. The next step is waiting for transaction history so Covarify can identify your first win." }, { status: 202 });
+      }
+      throw transactionError;
+    }
   } catch (error) {
     const diagnostic = normalizePlaidError(error, "Unable to exchange the sandbox token and load financial data.");
     logSafePlaidError(diagnostic);
