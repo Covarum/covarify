@@ -10,8 +10,9 @@ type MoneyPicture = {
   summary: { totalCash: number; totalDebt: number; recentSpending: number; recentInflow: number; netCashFlow: number; accountCount: number; transactionCount: number };
 };
 
-type SafePlaidError = { error_type: string; error_code: string; error_message: string; display_message: string | null; request_id: string | null; status: number; missing_env_keys?: string[] };
+type SafePlaidError = { error_type: string; error_code: string; error_message: string; display_message: string | null; request_id: string | null; status: number; missing_env_keys?: string[]; has_client_id?: boolean; client_id_length?: number; has_secret?: boolean; plaid_env?: string; products?: string[]; country_codes?: string[] };
 const fallbackError = (message: string): SafePlaidError => ({ error_type: "CLIENT_ERROR", error_code: "REQUEST_FAILED", error_message: message, display_message: null, request_id: null, status: 0 });
+const withRuntimeDiagnostics = (error: SafePlaidError): SafePlaidError => typeof error.has_client_id !== "boolean" ? error : { ...error, display_message: `${error.display_message || error.error_message} Config: has_client_id=${error.has_client_id}, client_id_length=${error.client_id_length ?? 0}, has_secret=${error.has_secret ?? false}, plaid_env=${error.plaid_env || "empty"}, products=${error.products?.join(",") || "empty"}, country_codes=${error.country_codes?.join(",") || "empty"}.` };
 
 const money = (value: number | null, currency = "USD") => value === null ? "—" : new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
 
@@ -27,7 +28,7 @@ export function PlaidSandboxLink() {
     try {
       const response = await fetch("/api/plaid/create-link-token", { method: "POST" });
       const result = await response.json() as { link_token?: string } & Partial<SafePlaidError>;
-      if (!response.ok || !result.link_token) { setError({ ...fallbackError("Plaid Link could not be prepared."), ...result, status: result.status ?? response.status }); return; }
+      if (!response.ok || !result.link_token) { setError(withRuntimeDiagnostics({ ...fallbackError("Plaid Link could not be prepared."), ...result, status: result.status ?? response.status })); return; }
       setLinkToken(result.link_token);
     } catch (err) { setError(fallbackError(err instanceof Error ? err.message : "Plaid Link could not be prepared.")); }
     finally { setLoading(false); }
@@ -38,7 +39,7 @@ export function PlaidSandboxLink() {
     fetch("/api/plaid/create-link-token", { method: "POST" })
       .then(async (response) => {
         const result = await response.json() as { link_token?: string } & Partial<SafePlaidError>;
-        if (!response.ok || !result.link_token) { if (active) setError({ ...fallbackError("Plaid Link could not be prepared."), ...result, status: result.status ?? response.status }); return; }
+        if (!response.ok || !result.link_token) { if (active) setError(withRuntimeDiagnostics({ ...fallbackError("Plaid Link could not be prepared."), ...result, status: result.status ?? response.status })); return; }
         if (active) setLinkToken(result.link_token);
       })
       .catch((err: unknown) => { if (active) setError(fallbackError(err instanceof Error ? err.message : "Plaid Link could not be prepared.")); })
