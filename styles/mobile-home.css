@@ -1,0 +1,95 @@
+/* Homepage mobile refinements only. Desktop styles intentionally remain untouched. */
+@media (max-width: 600px) {
+  html,
+  body {
+    overflow-x: clip;
+  }
+
+  .site-header.shell {
+    width: 100%;
+    height: 66px;
+    gap: 16px;
+    padding-right: max(14px, env(safe-area-inset-right));
+    padding-left: max(14px, env(safe-area-inset-left));
+  }
+
+  .site-header .brand {
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  .site-header .button-small {
+    width: auto;
+    min-width: max-content;
+    min-height: 40px;
+    flex: 0 0 auto;
+    padding-inline: 16px;
+  }
+
+  .hero {
+    min-height: 0;
+    padding-top: 32px;
+    padding-bottom: 48px;
+  }
+
+  .hero .eyebrow {
+    margin-bottom: 14px;
+  }
+
+  .hero h1 {
+    font-size: clamp(40px, 12.2vw, 50px);
+    line-height: 0.98;
+  }
+
+  .hero-lede {
+    margin-top: 20px;
+    margin-bottom: 12px;
+    font-size: clamp(17px, 4.7vw, 18px);
+    line-height: 1.48;
+  }
+
+  .hero-support {
+    margin-bottom: 22px;
+    line-height: 1.62;
+  }
+
+  .hero-copy > .button-primary {
+    width: 100%;
+    min-height: 48px;
+    padding-block: 12px;
+  }
+
+  .hero-copy > .button-primary svg {
+    flex: 0 0 auto;
+  }
+
+  .hero .microcopy {
+    margin: 11px 0 0;
+  }
+
+  .hero .clarity-card {
+    margin-top: 38px;
+  }
+}
+
+@media (max-width: 340px) {
+  .site-header.shell {
+    gap: 10px;
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-left: max(12px, env(safe-area-inset-left));
+  }
+
+  .site-header .brand {
+    gap: 8px;
+    font-size: 18px;
+  }
+
+  .site-header .button-small {
+    padding-inline: 13px;
+    font-size: 12px;
+  }
+
+  .hero {
+    padding-top: 26px;
+  }
+}

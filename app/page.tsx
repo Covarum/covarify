@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Check, Sparkles } from "lucide-react";
 import { SiteFooter, SiteHeader } from "@/components/site/site-shell";
+import "@/styles/mobile-home.css";
 
 const sections = [
   {
