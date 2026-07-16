@@ -23,3 +23,25 @@
 
 @media (max-width: 760px) { .money-grid { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 440px) { .money-grid { grid-template-columns: 1fr; } .sandbox-heading { align-items: start; flex-direction: column; } }
+
+.money-picture-summary { padding: 30px; border: 1px solid #e2daee; border-radius: 22px; background: rgba(255,255,255,.96); box-shadow: 0 20px 55px rgba(46,20,67,.08); }
+.money-picture-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.money-picture-heading h2 { margin: 5px 0 0; color: var(--plum); font-family: var(--font-serif); font-size: 30px; font-weight: 400; letter-spacing: -.03em; }
+.money-picture-meta { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 7px; }
+.money-picture-meta span { padding: 6px 9px; border: 1px solid #e3dced; border-radius: 99px; color: var(--muted); background: #faf8fd; font-size: 9px; }
+.money-picture-group { margin-top: 25px; }
+.money-group-label { margin: 0 0 10px; color: var(--purple); font-size: 10px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.money-summary-grid { display: grid; gap: 11px; }
+.money-summary-grid.position-grid,.money-summary-grid.meaning-grid { grid-template-columns: repeat(2,1fr); }
+.money-summary-grid.movement-grid { grid-template-columns: repeat(3,1fr); }
+.money-summary-grid article { min-width: 0; padding: 18px; border-radius: 15px; background: var(--lavender-bg); }
+.money-summary-grid article>span { display: block; color: var(--muted); font-size: 10px; }
+.money-summary-grid article>strong { display: block; margin: 9px 0 8px; color: var(--plum); font-size: 23px; letter-spacing: -.025em; }
+.money-summary-grid article>strong.positive,.money-formula strong.positive { color: #237653; }
+.money-summary-grid article>strong.negative,.money-formula strong.negative { color: #9c3f5b; }
+.money-summary-grid article>small { display: block; color: #756b7e; font-size: 10px; line-height: 1.5; }
+.money-formula { margin: 10px 0 0; padding: 11px 14px; border-radius: 10px; background: #f8f5fb; color: var(--muted); font-size: 11px; text-align: center; }
+.money-formula span { padding: 0 5px; color: var(--plum); }
+.money-formula strong { color: var(--ink); }
+@media (max-width: 760px) { .money-picture-heading { align-items: flex-start; flex-direction: column; } .money-picture-meta { justify-content: flex-start; } .money-summary-grid.movement-grid { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .money-picture-summary { padding: 22px; } .money-picture-heading h2 { font-size: 26px; } .money-summary-grid.position-grid,.money-summary-grid.meaning-grid { grid-template-columns: 1fr; } .money-formula { line-height: 1.7; } }
