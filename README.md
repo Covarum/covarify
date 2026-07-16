@@ -39,6 +39,10 @@ pnpm install
 pnpm dev
 ```
 
+## Early-access email configuration
+
+Configure `RESEND_API_KEY`, `EARLY_ACCESS_NOTIFY_EMAIL`, `EARLY_ACCESS_FROM_EMAIL`, and `EARLY_ACCESS_REPLY_TO_EMAIL` in Vercel for both Preview and Production. These values are server-only and must never use the `NEXT_PUBLIC_` prefix.
+
 ## Sprint 1 Scope
 
 This sprint intentionally stops at the foundation. It does not implement account aggregation, authentication, persistent storage, AI services, or the Financial Clarity Report data model.
