@@ -1,6 +1,8 @@
 # Product Decisions
 
-This folder records why product choices were made. Capture tradeoffs, rejected alternatives, user experience principles, and assumptions that should remain visible to future teams.
+The canonical, continuing record for Covarify product, brand, business, and trust decisions now lives in the [Covarify Decision Log](../Playbook/DECISION_LOG.md).
+
+This file preserves the initial product-decision foundation created before the full living playbook. New decisions should be added to the canonical log so the reasoning, tradeoffs, status, and revisit triggers remain in one place.
 
 ## PDR-022: Users Arrive On Meaning, Not Information
 
@@ -14,6 +16,6 @@ The product should start with a genuine strength or useful context before surfac
 
 Discoveries should not be isolated observations. When Covarify notices something meaningful, it should make the next useful move clear, even if that move is simply to organize records or review options.
 
-## PDR-025: Financial Event Is The Core Object, Not Transaction
+## PDR-025: Financial Event Is The Core Context Object
 
-Transactions are evidence. Financial Events are the richer user-facing objects that connect transactions, documents, people, projects, purpose, and life buckets. This makes Covarify a financial life system rather than transaction tracking software.
+Transactions and account records remain first-class analytical evidence. Financial Events are the richer user-facing context objects that connect transactions, documents, people, projects, purpose, and life buckets. This makes Covarify a financial life system rather than transaction tracking software.
