@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test:early-access": "node --experimental-strip-types --test --test-isolation=none tests/early-access-route.test.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from "next/server.js";
 import { Resend } from "resend";
 
 const LIMITS = { name: 100, email: 254, stress: 1500, decision: 1500 } as const;
@@ -6,7 +6,10 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CLIENT_ERROR = { ok: false, error: "SUBMISSION_FAILED", message: "We couldn’t submit your request just yet. Please try again." };
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 
-export async function POST(request: Request) {
+type EmailClient = { emails: { send: Resend["emails"]["send"] } };
+type CreateEmailClient = (apiKey: string) => EmailClient;
+
+export async function handleEarlyAccessPost(request: Request, createEmailClient: CreateEmailClient) {
   try {
     const body: unknown = await request.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json(CLIENT_ERROR, { status: 400 });
@@ -32,8 +35,12 @@ export async function POST(request: Request) {
       return NextResponse.json(CLIENT_ERROR, { status: 500 });
     }
 
-    const resend = new Resend(apiKey);
-    const submitted = new Intl.DateTimeFormat("en-US", { dateStyle: "full", timeStyle: "long", timeZoneName: "short" }).format(new Date());
+    const resend = createEmailClient(apiKey);
+    const submitted = new Intl.DateTimeFormat("en-US", {
+      dateStyle: "full",
+      timeStyle: "long",
+      timeZone: "America/New_York",
+    }).format(new Date());
     const adminResult = await resend.emails.send({
       from: fromEmail,
       to: notifyEmail,
@@ -65,4 +72,8 @@ export async function POST(request: Request) {
     console.error("Early-access submission failed.");
     return NextResponse.json(CLIENT_ERROR, { status: 400 });
   }
+}
+
+export async function POST(request: Request) {
+  return handleEarlyAccessPost(request, (apiKey) => new Resend(apiKey));
 }
