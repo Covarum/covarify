@@ -5,6 +5,7 @@ import { PlaidSandboxLink } from "@/components/plaid/plaid-sandbox-link";
 import "@/styles/plaid.css";
 import "@/styles/plaid-results.css";
 import "@/styles/first-win-engine.css";
+import "@/styles/decision-studio.css";
 
 export const metadata: Metadata = { title: "Plaid Sandbox Connection", robots: { index: false, follow: false, nocache: true } };
 
