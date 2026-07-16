@@ -2,11 +2,23 @@ import { NextResponse } from "next/server";
 import { getPlaidConfig, logSafePlaidError, normalizePlaidError, type SafePlaidError } from "@/lib/plaid/server";
 
 type SanitizedAccount = { id: string; name: string; officialName: string | null; type: string; subtype: string | null; mask: string | null; currentBalance: number | null; availableBalance: number | null; currency: string };
+type SanitizedTransaction = { id: string; accountId: string; name: string; amount: number; date: string; category: string; pending: boolean; currency: string };
 
 const accountSummary = (accounts: SanitizedAccount[]) => ({
   totalCash: accounts.filter((account) => account.type === "depository").reduce((sum, account) => sum + (account.currentBalance || 0), 0),
   totalDebt: accounts.filter((account) => account.type === "credit" || account.type === "loan").reduce((sum, account) => sum + (account.currentBalance || 0), 0),
 });
+
+function firstWinRecommendation(accounts: SanitizedAccount[], transactions: SanitizedTransaction[], netCashFlow: number, spending: number) {
+  const balances = accountSummary(accounts);
+  if (transactions.length === 0) return { headline: "Your account connection is working.", explanation: "Covarify needs transaction history before it can confidently prioritize your first win.", action: "Wait for Plaid to finish preparing transaction history, then reconnect with the transaction-rich test user.", disclaimer: "Sandbox demonstration only. Not individualized financial advice." };
+  if (netCashFlow < 0) return { headline: "Protect cash flow before making extra debt payments.", explanation: "Recent outflows are higher than inflows in the available sandbox history, so preserving near-term flexibility comes first.", action: "Pause optional extra payments and identify the next essential bills your available cash needs to cover.", disclaimer: "Sandbox demonstration only. Not individualized financial advice." };
+  const flexibleCategories = new Set(["FOOD_AND_DRINK", "ENTERTAINMENT", "TRAVEL"]);
+  const flexibleSpending = transactions.filter((item) => item.amount > 0 && flexibleCategories.has(item.category)).reduce((sum, item) => sum + item.amount, 0);
+  if (flexibleSpending > 500 || (spending > 0 && flexibleSpending / spending >= 0.25)) return { headline: "Choose one flexible category to tighten first.", explanation: "Food, entertainment, and travel represent a meaningful share of recent sandbox spending. One focused adjustment is easier to sustain than cutting everywhere.", action: "Pick the largest flexible category and set a simple limit for the next seven days.", disclaimer: "Sandbox demonstration only. Not individualized financial advice." };
+  if (balances.totalDebt > 0 && balances.totalCash < Math.max(1000, balances.totalDebt * 0.25)) return { headline: "Preserve minimum payments and avoid new charges.", explanation: "Credit debt is present while available cash is limited, making stability more useful than an aggressive payoff right now.", action: "Protect required minimum payments and avoid adding new credit charges before increasing payoff amounts.", disclaimer: "Sandbox demonstration only. Not individualized financial advice." };
+  return { headline: "Direct your positive margin toward one priority.", explanation: "Available sandbox history shows positive cash flow without an immediate pressure signal.", action: "Choose one priority—cash reserves or highest-cost debt—and assign a specific amount to it.", disclaimer: "Sandbox demonstration only. Not individualized financial advice." };
+}
 
 export async function POST(request: Request) {
   try {
@@ -31,14 +43,14 @@ export async function POST(request: Request) {
     try {
       // TODO: Move transaction sync to a background job with webhook-driven refresh.
       const syncResponse = await client.transactionsSync({ access_token: accessToken, count: 100 });
-      const transactions = syncResponse.data.added.map((transaction) => ({ id: transaction.transaction_id, accountId: transaction.account_id, name: transaction.merchant_name || transaction.name, amount: transaction.amount, date: transaction.date, category: transaction.personal_finance_category?.primary || transaction.category?.[0] || "Other", pending: transaction.pending, currency: transaction.iso_currency_code || "USD" }));
+      const transactions: SanitizedTransaction[] = syncResponse.data.added.map((transaction) => ({ id: transaction.transaction_id, accountId: transaction.account_id, name: transaction.merchant_name || transaction.name, amount: transaction.amount, date: transaction.date, category: transaction.personal_finance_category?.primary || transaction.category?.[0] || "Other", pending: transaction.pending, currency: transaction.iso_currency_code || "USD" }));
       const spending = transactions.filter((item) => item.amount > 0).reduce((sum, item) => sum + item.amount, 0);
       const inflow = Math.abs(transactions.filter((item) => item.amount < 0).reduce((sum, item) => sum + item.amount, 0));
-      return NextResponse.json({ connected: true, transactions_status: "ready", message: "Account connected and sandbox transactions loaded.", accounts, transactions, summary: { ...balances, recentSpending: spending, recentInflow: inflow, netCashFlow: inflow - spending, accountCount: accounts.length, transactionCount: transactions.length }, first_win: inflow - spending < 0 ? "Protect cash flow before making additional debt payments." : "Review your largest recent expense and direct the remaining margin toward your top priority." });
+      return NextResponse.json({ connected: true, transactions_status: "ready", message: "Account connected and sandbox transactions loaded.", accounts, transactions, summary: { ...balances, recentSpending: spending, recentInflow: inflow, netCashFlow: inflow - spending, accountCount: accounts.length, transactionCount: transactions.length }, first_win: firstWinRecommendation(accounts, transactions, inflow - spending, spending) });
     } catch (transactionError) {
       const diagnostic = normalizePlaidError(transactionError, "Unable to load sandbox transactions.");
       if (diagnostic.error_code === "PRODUCT_NOT_READY") {
-        return NextResponse.json({ connected: true, transactions_status: "processing", message: "Account connected. Transactions are still processing in Plaid sandbox. Try again shortly or use the transactions test user.", accounts, transactions: [], summary: { ...balances, recentSpending: 0, recentInflow: 0, netCashFlow: 0, accountCount: accounts.length, transactionCount: 0 }, first_win: "Your account connection is working. The next step is waiting for transaction history so Covarify can identify your first win." }, { status: 202 });
+        return NextResponse.json({ connected: true, transactions_status: "processing", message: "Account connected. Transactions are still processing in Plaid sandbox. Try again shortly or use the transactions test user.", accounts, transactions: [], summary: { ...balances, recentSpending: 0, recentInflow: 0, netCashFlow: 0, accountCount: accounts.length, transactionCount: 0 }, first_win: firstWinRecommendation(accounts, [], 0, 0) }, { status: 202 });
       }
       throw transactionError;
     }
