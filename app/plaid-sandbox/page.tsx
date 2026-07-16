@@ -6,6 +6,7 @@ import "@/styles/plaid.css";
 import "@/styles/plaid-results.css";
 import "@/styles/first-win-engine.css";
 import "@/styles/decision-studio.css";
+import "@/styles/decision-studio-v1.css";
 
 export const metadata: Metadata = { title: "Plaid Sandbox Connection", robots: { index: false, follow: false, nocache: true } };
 

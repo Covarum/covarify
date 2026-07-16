@@ -15,7 +15,7 @@ const money = (value: number) => new Intl.NumberFormat("en-US", { style: "curren
 type StudioAccount = { id: string; name: string; type: string; currentBalance: number | null };
 type StudioDebt = { detected_credit_accounts: number; estimated_total_credit_balance: number; estimated_available_credit: number | null; estimated_credit_utilization_if_available: number | null; minimum_payment_data_status: string; apr_data_status: string; payment_strategy_note: string };
 
-export function FirstWinAnalysis({ analysis, accounts, debt, totalCash }: { analysis: FirstWinAnalysisData; accounts: StudioAccount[]; debt: StudioDebt; totalCash: number }) {
+export function FirstWinAnalysis({ analysis, accounts, debt, totalCash, transactions }: { analysis: FirstWinAnalysisData; accounts: StudioAccount[]; debt: StudioDebt; totalCash: number; transactions: { id: string; name: string; amount: number; date: string; category: string }[] }) {
   const cash = analysis.cash_flow_summary;
   const spend = analysis.spending_classification;
   return <section className="first-win-engine">
@@ -23,7 +23,7 @@ export function FirstWinAnalysis({ analysis, accounts, debt, totalCash }: { anal
 
     <div className="analysis-block"><div className="analysis-heading"><p className="eyebrow plain">What Covarify sees</p><span>{cash.analysis_window_label}</span></div><div className="analysis-metrics"><article><span>Inflows</span><strong className="positive">+{money(cash.total_inflows)}</strong></article><article><span>Outflows</span><strong>−{money(cash.total_outflows)}</strong></article><article><span>Net cash flow</span><strong className={cash.net_cash_flow >= 0 ? "positive" : "negative"}>{cash.net_cash_flow >= 0 ? "+" : "−"}{money(Math.abs(cash.net_cash_flow))}</strong></article>{cash.cash_gap > 0 && <article><span>Cash gap</span><strong className="negative">{money(cash.cash_gap)}</strong></article>}<article><span>Transactions analyzed</span><strong>{cash.transaction_count_used}</strong></article></div></div>
 
-    <DecisionStudio accounts={accounts} debt={debt} cashGap={cash.cash_gap} totalCash={totalCash} levers={analysis.savings_levers} />
+    <DecisionStudio accounts={accounts} debt={debt} cashGap={cash.cash_gap} totalCash={totalCash} levers={analysis.savings_levers} transactions={transactions} />
 
     <div className="analysis-block"><p className="eyebrow plain">Where the pressure is coming from</p><div className="pressure-grid"><article><h3>Flexible categories</h3>{spend.top_flexible_categories.slice(0, 4).map((item) => <div className="rank-row" key={item.category}><span>{item.category}</span><b>{money(item.amount)}</b><small>{item.transaction_count} transactions</small></div>)}</article><article><h3>Top merchants</h3>{spend.top_merchants.slice(0, 4).map((item) => <div className="rank-row" key={item.merchant}><span>{item.merchant}</span><b>{money(item.amount)}</b><small>{item.transaction_count} transactions</small></div>)}</article><article><h3>Largest outflows</h3>{spend.largest_outflows.slice(0, 4).map((item, index) => <div className="rank-row" key={`${item.merchant}-${index}`}><span>{item.merchant}</span><b>−{money(item.amount)}</b><small>{item.category}</small></div>)}</article></div></div>
 
