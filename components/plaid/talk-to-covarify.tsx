@@ -1,7 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { ArrowRight, Check, MessageCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowRight, Check, MessageCircle, Mic, RotateCcw, Square } from "lucide-react";
+
+type SpeechResultEvent = { results: ArrayLike<{ isFinal: boolean; 0: { transcript: string; confidence: number } }> };
+type SpeechRecognizer = { continuous: boolean; interimResults: boolean; lang: string; onresult: ((event: SpeechResultEvent) => void) | null; onerror: ((event: { error: string }) => void) | null; onend: (() => void) | null; start: () => void; stop: () => void };
+type SpeechRecognizerConstructor = new () => SpeechRecognizer;
+
+declare global { interface Window { SpeechRecognition?: SpeechRecognizerConstructor; webkitSpeechRecognition?: SpeechRecognizerConstructor } }
 
 export type TalkCategory = {
   name: string;
@@ -25,6 +31,8 @@ type Props = {
   onProtectMerchant: (category: string, merchant: string) => void;
   onSetPayment: (scenario: PaymentScenario, amount?: number) => void;
   onApplySuggestion: (suggestion: Suggestion[]) => void;
+  onUndo: () => void;
+  canUndo: boolean;
 };
 
 const money = (value: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
@@ -46,13 +54,30 @@ function findMerchant(command: string, merchants: TalkMerchant[]) {
   });
 }
 
-export function TalkToCovarify({ categories, merchants, cashGap, cashFreed, onSetReduction, onPauseMerchant, onProtectMerchant, onSetPayment, onApplySuggestion }: Props) {
+export function TalkToCovarify({ categories, merchants, cashGap, cashFreed, onSetReduction, onPauseMerchant, onProtectMerchant, onSetPayment, onApplySuggestion, onUndo, canUndo }: Props) {
   const [command, setCommand] = useState("");
   const [response, setResponse] = useState<ResponseState | null>(null);
   const [suggestion, setSuggestion] = useState<Suggestion[] | null>(null);
+  const [voiceSupported] = useState(() => typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [latestHeard, setLatestHeard] = useState("");
+  const [voiceFeedback, setVoiceFeedback] = useState("Voice Mode is off.");
+  const recognitionRef = useRef<SpeechRecognizer | null>(null);
+  const voiceActiveRef = useRef(false);
+  const applyRef = useRef<(raw?: string) => void>(() => undefined);
+  const willApplyRef = useRef<(raw: string) => boolean>(() => false);
   const examples = ["Cut out Uber Eats this month", "Reduce Food and Drink by $100", "Pay minimums this cycle"];
 
   const reply = (input: string, understood: string, changed: string, impact = 0, caution = "This models future choices if similar spending repeats. It does not judge past spending.") => setResponse({ command: input, understood, changed, impact, remaining: Math.max(0, cashGap - Math.max(0, cashFreed + impact)), caution });
+
+  const willApplyPlanChange = (input: string) => {
+    const clean = normalize(input);
+    if (/\b(minimum|min payments|minimum payments|full statement|statement balance|pay full)\b/.test(clean)) return true;
+    if (clean.match(/(?:pay|payment)\s*\$?\s*\d+(?:\.\d+)?/)) return true;
+    if (/\b(protect|do not count|dont count|dont cut|mark .* required)\b/.test(clean) && findMerchant(input, merchants)) return true;
+    if (/\b(cut out|pause|stop|no)\b/.test(clean) && findMerchant(input, merchants)) return true;
+    return Boolean(findCategory(input, categories) && (clean.match(/\d+(?:\.\d+)?\s*%/) || clean.match(/(?:by\s*)?\$\s*\d+(?:\.\d+)?|(?:by\s+)\d+(?:\.\d+)?/)));
+  };
 
   const apply = (raw = command) => {
     const input = raw.trim();
@@ -108,12 +133,77 @@ export function TalkToCovarify({ categories, merchants, cashGap, cashFreed, onSe
     setResponse({ command: input, understood: tooBroad ? "I can help with that." : "I could not find that merchant or category in this sandbox history.", changed: tooBroad ? "Try telling Covarify a merchant, category, payment amount, or goal." : "Try a merchant from the transaction list, a category like Food and Drink, Shopping, or Entertainment, or “reduce Food and Drink by $100.”", impact: 0, remaining: Math.max(0, cashGap - cashFreed), caution: "Covarify is showing tradeoffs, not judging spending.", noMatch: true });
   };
 
+  useEffect(() => { applyRef.current = apply; willApplyRef.current = willApplyPlanChange; });
+
+  useEffect(() => {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) return;
+    const recognition = new Recognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+    recognition.onresult = (event) => {
+      for (let index = 0; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (!result.isFinal) continue;
+        const heard = result[0].transcript.trim();
+        if (!heard) continue;
+        const wakePattern = /\b(?:hey\s+covarify|ask\s+covarify|hey\s+cova)\b[\s,.:;!?-]*/i;
+        const hasWakePhrase = wakePattern.test(heard);
+        const stripped = heard.replace(wakePattern, "").trim();
+        setLatestHeard(stripped || heard);
+        if (hasWakePhrase && stripped) {
+          const changesPlan = willApplyRef.current(stripped);
+          applyRef.current(stripped);
+          setVoiceFeedback(changesPlan ? "Applied to plan." : "Nothing was applied. Review Covarify’s response below.");
+        } else {
+          setCommand(heard);
+          setVoiceFeedback(result[0].confidence >= 0.85 ? "High-confidence transcript ready. Select Apply to Plan to confirm." : "Transcript ready. Review it, then select Apply to Plan.");
+        }
+      }
+    };
+    recognition.onerror = (event) => {
+      if (event.error !== "aborted" && event.error !== "no-speech") setVoiceFeedback("Voice input paused. Restart Voice Mode or keep typing.");
+    };
+    recognition.onend = () => {
+      if (voiceActiveRef.current) {
+        try { recognition.start(); } catch { setVoiceFeedback("Voice input paused. Select Start Voice Mode to resume."); }
+      }
+    };
+    recognitionRef.current = recognition;
+    return () => { voiceActiveRef.current = false; recognition.stop(); recognitionRef.current = null; };
+  }, []);
+
+  const toggleVoice = () => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    if (voiceActiveRef.current) {
+      voiceActiveRef.current = false;
+      setVoiceActive(false);
+      setVoiceFeedback("Voice Mode is off.");
+      recognition.stop();
+      return;
+    }
+    try {
+      recognition.start();
+      voiceActiveRef.current = true;
+      setVoiceActive(true);
+      setVoiceFeedback("Listening for “Hey Covarify”…");
+    } catch { setVoiceFeedback("Voice input could not start. Check microphone permission and try again."); }
+  };
+
   const applySuggested = () => { if (!suggestion) return; onApplySuggestion(suggestion); const impact = suggestion.reduce((sum, item) => sum + item.amount, 0); reply(command, `A suggested flexible-spending plan totaling about ${money(impact)}.`, "The suggested category reductions were applied to My Working Plan.", impact); setSuggestion(null); };
 
   return <section className="talk-covarify" aria-labelledby="talk-covarify-title">
     <div className="talk-heading"><span><MessageCircle size={20} /></span><div><p className="eyebrow plain">Conversational plan builder</p><h3 id="talk-covarify-title">Talk to Covarify</h3><p>Tell Covarify what you want to try. It will update the plan so you can see the tradeoff.</p></div></div>
+    <div className={`voice-mode ${voiceActive ? "is-listening" : ""}`}>
+      <div className="voice-mode-top"><div><strong><Mic size={15} /> Voice Mode</strong><p>Voice Mode listens while this page is open. You can turn it off anytime.</p></div><button type="button" onClick={toggleVoice} disabled={voiceSupported !== true} aria-label={voiceActive ? "Stop Voice Mode microphone" : "Start Voice Mode microphone"} aria-pressed={voiceActive}>{voiceActive ? <><Square size={12} /> Stop Voice Mode</> : <><Mic size={14} /> Start Voice Mode</>}</button></div>
+      {voiceSupported === false ? <p className="voice-unsupported">Voice input is not supported in this browser yet. You can still type to Covarify.</p> : <div className="voice-status" aria-live="polite"><span className="voice-dot" aria-hidden="true" /><strong>{voiceActive ? "Listening" : "Mic off"}</strong><span>{voiceFeedback}</span>{latestHeard && <span>Heard: “{latestHeard}”</span>}</div>}
+      <p className="voice-privacy">Voice input is processed only for this session and is not saved. Some browsers may process speech recognition through their own speech service.</p>
+    </div>
     <form onSubmit={(event) => { event.preventDefault(); apply(); }}><label htmlFor="covarify-command">Try a plan change</label><div><input id="covarify-command" value={command} onChange={(event) => setCommand(event.target.value)} placeholder="Try: “Cut out Uber Eats this month” or “Reduce Food and Drink by $100”" /><button type="submit">Apply to my plan <ArrowRight size={15} /></button></div></form>
     <div className="command-chips" aria-label="Example commands">{examples.map((example) => <button type="button" key={example} onClick={() => apply(example)}>{example}</button>)}</div>
+    {canUndo && <button type="button" className="undo-command" onClick={onUndo}><RotateCcw size={13} /> Undo last change</button>}
     {response && <div className={`command-response ${response.noMatch ? "no-match" : ""}`} aria-live="polite"><p><strong>You said:</strong> “{response.command}”</p><div><span><small>What Covarify understood</small><strong>{response.understood}</strong></span><span><small>What changed in the plan</small><strong>{response.changed}</strong></span><span><small>Estimated impact</small><strong>{money(response.impact)}</strong></span><span><small>Remaining gap</small><strong>{money(response.remaining)}</strong></span></div><p className="command-caution"><strong>Note:</strong> {response.caution}</p>{suggestion && <button type="button" className="apply-suggestion" onClick={applySuggested}><Check size={14} /> Apply suggested plan</button>}</div>}
   </section>;
 }
@@ -121,3 +211,6 @@ export function TalkToCovarify({ categories, merchants, cashGap, cashFreed, onSe
 // TODO: Add real AI-assisted command understanding, saved plans after authentication,
 // encrypted user data storage, recurring merchant detection, Plaid Liabilities integration,
 // compliance/legal review, and user confirmation before larger recommendations.
+// TODO(voice): Add an on-device custom wake word engine, speaker-aware wake phrase,
+// native app voice mode, stricter privacy review, user wake phrase settings,
+// and LLM-powered command interpretation.

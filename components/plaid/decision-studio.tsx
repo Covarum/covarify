@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { TalkToCovarify, type PaymentScenario, type TalkMerchant } from "./talk-to-covarify";
 
@@ -11,6 +11,7 @@ type Lever = { category: string; current_30_day_spend: number; estimated_savings
 type Debt = { id: string; manual: boolean; name: string; balance: string; minimum: string; statement: string; apr: string; due: string; planned: string };
 type TxChoice = "none" | "skip" | "reduce" | "protect";
 type MerchantChoice = "pause" | "reduce" | "protect";
+type PlanSnapshot = { scenario: PaymentScenario; customPayment: string; reductions: Record<string, number>; merchantPlans: Record<string, Record<string, number>>; merchantChoices: Record<string, MerchantChoice>; txPlans: Record<string, { choice: TxChoice; amount: number }> };
 
 const money = (value: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
 const number = (value: string) => Math.max(0, Number(value) || 0);
@@ -28,6 +29,11 @@ export function DecisionStudio({ accounts, debt, cashGap, totalCash, levers, tra
   const [merchantPlans, setMerchantPlans] = useState<Record<string, Record<string, number>>>({});
   const [merchantChoices, setMerchantChoices] = useState<Record<string, MerchantChoice>>({});
   const [txPlans, setTxPlans] = useState<Record<string, { choice: TxChoice; amount: number }>>({});
+  const undoSnapshot = useRef<PlanSnapshot | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+
+  const rememberPlan = () => { undoSnapshot.current = { scenario, customPayment, reductions, merchantPlans, merchantChoices, txPlans }; setCanUndo(true); };
+  const undoLastChange = () => { const snapshot = undoSnapshot.current; if (!snapshot) return; setScenario(snapshot.scenario); setCustomPayment(snapshot.customPayment); setReductions(snapshot.reductions); setMerchantPlans(snapshot.merchantPlans); setMerchantChoices(snapshot.merchantChoices); setTxPlans(snapshot.txPlans); undoSnapshot.current = null; setCanUndo(false); };
 
   const updateDebt = (id: string, key: keyof Debt, value: string) => setDebts((current) => current.map((item) => item.id === id ? { ...item, [key]: value } : item));
   const addDebt = () => setDebts((current) => [...current, { id: `manual-${Date.now()}`, manual: true, name: "Manual debt", balance: "", minimum: "", statement: "", apr: "", due: "", planned: "" }]);
@@ -88,7 +94,7 @@ export function DecisionStudio({ accounts, debt, cashGap, totalCash, levers, tra
 
   return <div className="decision-studio v1">
     <div className="mode-card"><div><p className="eyebrow plain">Current mode</p><h3>{mode}</h3><p>Based on available sandbox history, Covarify would look at net cash flow and the estimated cash gap before optimizing longer-term progress.</p></div><span>Protect essentials first.</span></div>
-    <TalkToCovarify categories={talkCategories} merchants={allMerchants} cashGap={cashGap} cashFreed={cashFreed} onSetReduction={setReduction} onPauseMerchant={(category, merchant, amount) => applyMerchant(category, merchant, amount, "pause")} onProtectMerchant={protectMerchant} onSetPayment={setPayment} onApplySuggestion={(items) => items.forEach((item) => setReduction(item.category, item.amount))} />
+    <TalkToCovarify categories={talkCategories} merchants={allMerchants} cashGap={cashGap} cashFreed={cashFreed} canUndo={canUndo} onUndo={undoLastChange} onSetReduction={(category, amount) => { rememberPlan(); setReduction(category, amount); }} onPauseMerchant={(category, merchant, amount) => { rememberPlan(); applyMerchant(category, merchant, amount, "pause"); }} onProtectMerchant={(category, merchant) => { rememberPlan(); protectMerchant(category, merchant); }} onSetPayment={(nextScenario, amount) => { rememberPlan(); setPayment(nextScenario, amount); }} onApplySuggestion={(items) => { rememberPlan(); items.forEach((item) => setReduction(item.category, item.amount)); }} />
     <section className="debt-assumptions">
       <div className="decision-heading"><div><p className="eyebrow plain">Debt Assumptions</p><h3>Model every card or debt in the decision.</h3></div><button className="add-debt" onClick={addDebt}><Plus size={14} />Add manual debt</button></div>
       <p className="helper-copy">Manual inputs are used only for sandbox decision modeling. Covarify needs minimums, APRs, statement balances, and due dates to compare payment strategies more accurately.</p>
