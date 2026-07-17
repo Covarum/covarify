@@ -5,9 +5,12 @@ import { buildFirstWinAnalysis } from "@/lib/plaid/first-win-engine";
 type SanitizedAccount = { id: string; name: string; officialName: string | null; type: string; subtype: string | null; mask: string | null; currentBalance: number | null; availableBalance: number | null; creditLimit: number | null; currency: string };
 type SanitizedTransaction = { id: string; accountId: string; name: string; amount: number; date: string; category: string; pending: boolean; currency: string };
 
+const isCashAccount = (account: SanitizedAccount) => account.type.toLowerCase() === "depository" && ["checking", "savings"].includes((account.subtype || "").toLowerCase());
+const isDebtAccount = (account: SanitizedAccount) => ["credit", "loan", "liability", "liabilities"].includes(account.type.toLowerCase());
+
 const accountSummary = (accounts: SanitizedAccount[]) => ({
-  totalCash: accounts.filter((account) => account.type === "depository").reduce((sum, account) => sum + (account.currentBalance || 0), 0),
-  totalDebt: accounts.filter((account) => account.type === "credit" || account.type === "loan").reduce((sum, account) => sum + (account.currentBalance || 0), 0),
+  totalCash: accounts.filter(isCashAccount).reduce((sum, account) => sum + (account.availableBalance ?? account.currentBalance ?? 0), 0),
+  totalDebt: accounts.filter(isDebtAccount).reduce((sum, account) => sum + Math.abs(account.currentBalance ?? 0), 0),
 });
 
 const debtStrategy = (accounts: SanitizedAccount[]) => {
