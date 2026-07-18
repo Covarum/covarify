@@ -1,26 +1,25 @@
 # Covarify Documentation
 
-This directory keeps Covarify's company, product, engineering, brand, research, trust, and operating decisions beside the code so the business and the product evolve together.
+This documentation is the canonical source of truth for Covarify.
 
-## Start here
+Before implementing any significant feature, review the Constitution, Product Philosophy, Financial Memory Specification, and Playbook.
 
-The canonical company source of truth is the [Covarify Playbook](./COVARIFY_PLAYBOOK.md).
+If implementation conflicts with the documentation, ask before proceeding rather than making assumptions.
 
-It connects to four working modules:
+## Mandatory code-change gate
 
-- [Product and Decision System](./Playbook/PRODUCT_AND_DECISION_SYSTEM.md)
-- [Business and Go-to-Market](./Playbook/BUSINESS_AND_GTM.md)
-- [Operations, Trust, and Roadmap](./Playbook/OPERATIONS_TRUST_AND_ROADMAP.md)
-- [Decision Log](./Playbook/DECISION_LOG.md)
+Before Codex writes or modifies application code, it must review [`PLAYBOOK_GAP_ANALYSIS.md`](PLAYBOOK_GAP_ANALYSIS.md) against the current working tree. Before any significant feature or architectural change, Codex must update that analysis when repository reality has changed, classify the affected surfaces as **production-ready**, **prototype**, **placeholder**, **contradicted by the playbook**, or **needs refactoring**, and confirm that the proposed change follows the Master Playbook.
 
-## Supporting documentation
+Documentation-only work, read-only inspection, and the gap-analysis update itself may proceed without this gate. If the codebase and playbook conflict, stop and ask rather than coding through the conflict.
 
-- `Architecture/` documents system boundaries, data flows, infrastructure, and security design.
-- `Brand/` documents the visual, verbal, interaction, and trust system.
-- `Competitor Recon/` contains dated market research and product comparisons.
-- `PRD/` contains feature and release requirements derived from the playbook.
-- `Product Decisions/` preserves the initial product-decision foundation; the canonical ongoing record is now the Decision Log linked above.
+## Governing sources
 
-## Documentation rule
+- [Master Playbook v1.0](codex_pack/COVARIFY_MASTER_PLAYBOOK_v1.0.md) governs product, architecture, UX, financial memory, recommendations, trust behavior, product language, and company decisions.
+- [Source-pack instructions](codex_pack/README.md) define the governing rules and change protocol.
+- [Final brand board](codex_pack/COVARIFY_FINAL_BRAND_BOARD.jpeg) is the locked visual-identity source.
+- [Playbook gap analysis](PLAYBOOK_GAP_ANALYSIS.md) maps the current repository to v1.0.
+- [Next 100 commits](NEXT_100_COMMITS.md) is the implementation roadmap, subject to the playbook's decision and release gates.
 
-Chat history, prototypes, and informal notes are inputs. Decisions that materially change the company, product behavior, business model, data use, trust posture, roadmap, or external claims must be incorporated into the playbook and decision log.
+## Precedence
+
+The contents of `docs/codex_pack/` are authoritative. Files under `docs/archive/` are retained only for history and must not be used to make current product decisions. If a proposed implementation would change a locked decision, update the Master Playbook decision and risk registers through founder review before implementation.

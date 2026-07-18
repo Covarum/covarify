@@ -1,48 +1,24 @@
 # Covarify
 
-Covarify is an AI-powered Financial Operating System designed to help people gain complete financial clarity through conversational AI, financial memory, and personalized insights.
+Covarify is a personal financial decision platform you can speak to in everyday language. It understands the user's real financial picture, remembers what things mean in their life, and helps them know what to do next.
 
-Sprint 1 establishes the product foundation: a production-minded Next.js app, a reusable design system, a premium welcome screen, and the first onboarding flow.
+The official category is **Financial Clarity**. Covarify is not a bank, lender, debt settlement service, investment manager, or automatic money-movement product.
 
-## Principles
+## Canonical documentation
 
-- Clarity over complexity
-- Calm over clutter
-- Trust over hype
-- Conversation over forms
-- Insight over spreadsheets
+The governing product, architecture, UX, recommendation, financial-memory, trust, voice, and language decisions are in [`docs/`](docs/README.md). Read the Master Playbook before making any significant product change. When implementation and documentation conflict, ask rather than assume.
 
-## Stack
+## Current repository state
 
-- Next.js App Router
-- TypeScript
-- Tailwind CSS
-- shadcn/ui-inspired primitives
-- Framer Motion
-- Lucide React
+This repository contains a Next.js/TypeScript interactive prototype with onboarding, early-access collection, Plaid sandbox connectivity, rule-based First Win analysis, Decision Studio, Talk to Covarify/Voice Mode prototypes, an in-memory Decision Ledger, and Financial Brain sample experiences.
 
-## Project Structure
+It is not yet ready for a real-financial-data private beta. Production identity, persistence, encrypted token storage, authorization, consent/audit workflows, recommendation versioning, deletion/export, background sync, and other trust controls remain required. See the [gap analysis](docs/PLAYBOOK_GAP_ANALYSIS.md) and [implementation roadmap](docs/NEXT_100_COMMITS.md).
 
-- `app/` - App Router entry points and route composition
-- `components/` - reusable layout and UI system primitives
-- `features/` - product features organized by domain
-- `hooks/` - reusable React hooks
-- `lib/` - shared utilities
-- `styles/` - global styles and design tokens
-- `public/` - static assets
-- `docs/` - product, architecture, brand, and research documentation
-
-## Getting Started
+## Local development
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-## Early-access email configuration
-
-Configure `RESEND_API_KEY`, `EARLY_ACCESS_NOTIFY_EMAIL`, `EARLY_ACCESS_FROM_EMAIL`, and `EARLY_ACCESS_REPLY_TO_EMAIL` in Vercel for both Preview and Production. These values are server-only and must never use the `NEXT_PUBLIC_` prefix.
-
-## Sprint 1 Scope
-
-This sprint intentionally stops at the foundation. It does not implement account aggregation, authentication, persistent storage, AI services, or the Financial Clarity Report data model.
+Server-only configuration is documented in `.env.example`. Never expose Plaid or email-provider secrets through `NEXT_PUBLIC_` variables.
