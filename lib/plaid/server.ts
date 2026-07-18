@@ -1,7 +1,7 @@
 import "server-only";
 import { Configuration, CountryCode, PlaidApi, PlaidEnvironments, Products } from "plaid";
 
-const REQUIRED_ENV_KEYS = ["PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV", "PLAID_PRODUCTS", "PLAID_COUNTRY_CODES", "PLAID_CLIENT_NAME"] as const;
+const REQUIRED_ENV_KEYS = ["PLAID_CLIENT_ID", "PLAID_SANDBOX_SECRET", "PLAID_ENV", "PLAID_PRODUCTS", "PLAID_COUNTRY_CODES", "PLAID_CLIENT_NAME"] as const;
 
 export type SafePlaidError = {
   error_type: string;
@@ -35,7 +35,7 @@ const httpStatus = (value: unknown, fallback = 502) => typeof value === "number"
 
 function getPlaidRuntimeValues(): PlaidRuntimeValues {
   const clientId = (process.env.PLAID_CLIENT_ID || "").trim();
-  const secret = (process.env.PLAID_SECRET || "").trim();
+  const secret = (process.env.PLAID_SANDBOX_SECRET || "").trim();
   const plaidEnv = (process.env.PLAID_ENV || "").trim().toLowerCase();
   const products = (process.env.PLAID_PRODUCTS || "").split(",").map((value) => value.trim()).filter(Boolean);
   const countryCodes = (process.env.PLAID_COUNTRY_CODES || "").split(",").map((value) => value.trim().toUpperCase()).filter(Boolean);

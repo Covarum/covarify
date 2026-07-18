@@ -10,6 +10,8 @@ The repository is a strong interactive prototype, not yet the production financi
 
 This creates a material architecture mismatch. The UI can appear to remember, decide, and protect choices, while most state is local or request-scoped and cannot yet provide the continuity, traceability, deletion, authorization, or safety guarantees required by the Master Playbook.
 
+**Plaid Production foundation update:** A separate fail-closed foundation now defines environment separation, authenticated route contracts, persistence interfaces, versioned encrypted-token handling, official webhook verification, cursor-based sync behavior, update mode, disconnect behavior, rollout flags, and operations runbooks. It does not close the production-readiness gap: authentication, database, KMS, queue/worker, consent copy, retention policy, and operational adapters remain unapproved or unimplemented.
+
 ## Mandatory pre-code gate
 
 This document is the bridge between the Master Playbook and implementation. **Codex must review this analysis before writing or modifying application code.** Before a significant feature or architecture change, update it when the working tree has changed materially and identify whether the affected code is production-ready, prototype, placeholder, contradicted by the playbook, or in need of refactoring.
@@ -40,7 +42,7 @@ No authenticated financial-data, Financial Memory, recommendation, Decision Ledg
 
 | Surface | Why it is a prototype | Evidence needed to advance |
 |---|---|---|
-| Plaid connection and First Win flow | Uses sandbox configuration, fixed sandbox identity, immediate reads, and no durable encrypted item lifecycle. | Authenticated ownership, encrypted tokens, background sync, verified webhooks, completeness, monitoring, and deletion. |
+| Plaid connection and First Win flow | The existing demo still uses sandbox configuration, fixed sandbox identity, immediate reads, and no durable Item. A separate Production foundation exists but intentionally fails closed because auth, database, KMS, and queue adapters are unapproved. | Approve ADR-001; implement authenticated ownership, database/KMS/queue adapters, OAuth resume state, connection UI, consent, health, monitoring, deletion, and the remaining security tests. |
 | Decision Studio | Interactive scenario behavior exists, but policy and state are coupled to UI/client state. | Durable scenario records, centralized safeguards, liability evidence, forward timeline, ranking contract, and golden tests. |
 | Talk to Covarify | Typed heuristics can model a limited set of commands and expose confirmation/undo. | Server-side schemas, resolver, authorization, idempotency, durable commands, audit, ambiguity gates, and recomputation. |
 | Voice Mode | Explicit browser microphone controls and typed fallback demonstrate the interaction. | Approved vendor/retention policy, secure transcription, transcript review, speaker safety, accessibility, privacy, and command-path integration. |
