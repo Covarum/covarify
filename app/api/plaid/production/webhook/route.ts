@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server.js";
 import { readProductionPlaidConfig } from "@/lib/plaid/production/config";
 import { productionPlaidError } from "@/lib/plaid/production/http";
-import { unavailablePlaidRepository, type PlaidProductionRepository, type PlaidSyncQueue } from "@/lib/plaid/production/repositories";
+import type { PlaidProductionRepository, PlaidSyncQueue } from "@/lib/plaid/production/repositories";
+import { createSupabasePlaidRepository } from "@/lib/plaid/production/supabase-repository";
 import { verifyPlaidWebhook } from "@/lib/plaid/production/webhook-verification";
 
 const unavailableQueue: PlaidSyncQueue = { async enqueue() { throw new Error("Plaid sync queue is not configured."); } };
@@ -18,7 +19,7 @@ export async function handleProductionWebhook(request: Request, dependencies: { 
     const webhookCode = typeof body.webhook_code === "string" ? body.webhook_code : "UNKNOWN";
     const plaidItemId = typeof body.item_id === "string" ? body.item_id : null;
     const bodyHash = createHash("sha256").update(rawBody).digest("hex");
-    const repository = dependencies.repository || unavailablePlaidRepository;
+    const repository = dependencies.repository || createSupabasePlaidRepository();
     const result = await repository.recordWebhook({ id: randomUUID(), bodyHash, plaidItemId, webhookType, webhookCode, receivedAt: new Date().toISOString(), processedAt: null });
     if (result === "duplicate") return NextResponse.json({ received: true, duplicate: true });
     if (plaidItemId && webhookType === "TRANSACTIONS" && ["SYNC_UPDATES_AVAILABLE", "INITIAL_UPDATE", "HISTORICAL_UPDATE"].includes(webhookCode)) {

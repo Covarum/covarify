@@ -1,16 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server.js";
-import { unconfiguredPlaidAuthProvider, type PlaidAuthProvider } from "@/lib/plaid/production/auth";
+import type { PlaidAuthProvider } from "@/lib/plaid/production/auth";
+import { supabasePlaidAuthProvider } from "@/lib/plaid/production/supabase-auth";
 import { assertProductionConnectionAllowed, readProductionPlaidConfig } from "@/lib/plaid/production/config";
 import { readTokenCipher, type PlaidTokenCipher } from "@/lib/plaid/production/encryption";
 import { productionPlaidError } from "@/lib/plaid/production/http";
-import { unavailablePlaidRepository, type PlaidProductionRepository } from "@/lib/plaid/production/repositories";
+import type { PlaidProductionRepository } from "@/lib/plaid/production/repositories";
 import { exchangeAndPersistProductionItem } from "@/lib/plaid/production/services";
+import { createSupabasePlaidRepository } from "@/lib/plaid/production/supabase-repository";
 
 export type ExchangeDependencies = { auth: PlaidAuthProvider; repository: PlaidProductionRepository; cipher: PlaidTokenCipher };
 
 export async function handleProductionExchange(request: Request, dependencies?: Partial<ExchangeDependencies>) {
-  const auth = dependencies?.auth || unconfiguredPlaidAuthProvider;
+  const auth = dependencies?.auth || supabasePlaidAuthProvider;
   const profile = await auth.getAuthenticatedProfile(request);
   if (!profile) return NextResponse.json({ ok: false, error_code: "AUTHENTICATION_REQUIRED", message: "Sign in to connect an account." }, { status: 401 });
 
@@ -27,7 +29,7 @@ export async function handleProductionExchange(request: Request, dependencies?: 
       productsRequested: config.products.map(String), dataPurposes: ["Build the Money Picture", "Support explainable financial decisions"],
       acceptedAt: new Date().toISOString(), revokedAt: null, source: "connect" as const, ipHash: null,
     };
-    const result = await exchangeAndPersistProductionItem({ config, profile, publicToken, consent, repository: dependencies?.repository || unavailablePlaidRepository, cipher: dependencies?.cipher || readTokenCipher() });
+    const result = await exchangeAndPersistProductionItem({ config, profile, publicToken, consent, repository: dependencies?.repository || createSupabasePlaidRepository(), cipher: dependencies?.cipher || readTokenCipher() });
     return NextResponse.json(result, { status: result.idempotent ? 200 : 201 });
   } catch (error) { return productionPlaidError(error); }
 }

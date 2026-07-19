@@ -1,0 +1,2 @@
+import { requestReset } from "../auth/actions";
+export default async function Forgot({searchParams}:{searchParams:Promise<{message?:string}>}){const p=await searchParams;return <main className="mx-auto max-w-md p-8"><h1>Reset password</h1>{p.message&&<p>{p.message}</p>}<form action={requestReset}><input required name="email" type="email" aria-label="Email"/><button>Send reset link</button></form></main>}

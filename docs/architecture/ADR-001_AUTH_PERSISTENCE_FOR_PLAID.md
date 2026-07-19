@@ -1,7 +1,7 @@
 # ADR-001: Authentication and Persistence for Plaid Production
 
-**Status:** Proposed — founder approval required  
-**Decision date:** Open
+**Status:** Approved
+**Decision date:** 2026-07-17
 
 ## Context
 
@@ -28,4 +28,8 @@ Approve **Supabase Auth + managed Postgres** for the first controlled beta, subj
 - KMS choice: recommended Vercel-managed secret bootstrap plus AWS KMS or Google Cloud KMS envelope encryption; select the cloud aligned with deployment operations.
 - Queue/worker vendor for webhook-triggered sync.
 
-No vendor was installed or configured by this change.
+## Decision
+
+The founder approved Supabase Auth and Supabase-managed Postgres, owned by Covarum with Covarify as the product project. The first rollout is a controlled founder beta. Immutable Supabase user UUIDs are the authorization and ownership keys; email addresses are not.
+
+KMS, queue/worker, retention, deletion, and privileged admin-role design remain open decisions and are not approved by this ADR. Plaid Production remains disabled until those blockers and the production-readiness checklist are resolved.

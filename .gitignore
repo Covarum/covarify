@@ -59,6 +59,7 @@ build
 # Local development artifacts
 dev-server.job
 _tmp_*
+supabase/.temp/
 
 # OS files
 .DS_Store

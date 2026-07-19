@@ -39,7 +39,7 @@ Never paste secret values into source control, issues, chat, logs, or client-vis
 
 1. Confirm all completion gates and founder approval.
 2. Add only the founder's immutable authenticated user ID to `PLAID_PRODUCTION_ALLOWED_USER_IDS`.
-3. Set `PLAID_PRODUCTION_CONNECTIONS_ENABLED=true` and redeploy.
+3. Keep `PLAID_PRODUCTION_CONNECTIONS_ENABLED=false` until the production-readiness review explicitly approves KMS, queue/worker, consent, retention, deletion, applied migrations, and verified RLS. Enable it only in a separately approved implementation phase.
 4. Record explicit consent through `/connect`.
 5. Connect one founder-owned institution; monitor Link, Item persistence, account persistence, initial sync, webhook verification, cursor, freshness, and logs.
 6. Exercise update mode in a controlled test where possible.
