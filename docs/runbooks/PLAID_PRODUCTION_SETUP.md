@@ -15,17 +15,22 @@ Set for the Production environment only unless explicitly testing Sandbox in Pre
 - `PLAID_PRODUCTION_SECRET` — Sensitive, Production only
 - `PLAID_SANDBOX_SECRET` — Sensitive, Preview/Development only; do not set to the Production value
 - `PLAID_ENV=production` — Production only
-- `PLAID_PRODUCTS` — exact verified approved products
+- `PLAID_PRODUCTS=transactions` — must exactly match the Plaid Production approval; do not add optional products implicitly
 - `PLAID_COUNTRY_CODES=US`
 - `PLAID_CLIENT_NAME=Covarify`
 - `PLAID_WEBHOOK_URL=https://www.covarify.com/api/plaid/production/webhook`
 - `PLAID_REDIRECT_URI=https://www.covarify.com/connect/oauth`
 - `PLAID_PRODUCTION_CONNECTIONS_ENABLED=false`
 - `PLAID_PRODUCTION_ALLOWED_USER_IDS=` — immutable internal user IDs, never emails
-- KMS/key adapter variables defined after KMS approval — Sensitive
-- Auth/database/queue variables defined after ADR approval — Sensitive where credentials are involved
+- `PLAID_KMS_PROVIDER` — proposed value `aws`; unavailable until ADR-002 is approved and its adapter is implemented
+- `PLAID_KMS_KEY_ID` — proposed KMS alias/ARN, server-only; not a raw encryption key
+- KMS workload-identity variables required by the selected provider; prefer federation over long-lived access keys
+- `PLAID_SYNC_WORKER_SECRET` — server-only worker authentication if Vercel Cron is approved; never expose as `NEXT_PUBLIC_*`
+- Existing Supabase server variables remain required by the deployed auth/persistence foundation; `SUPABASE_SERVICE_ROLE_KEY` stays server-only
 
 Never paste secret values into source control, issues, chat, logs, or client-visible variables.
+
+No generic `PLAID_SECRET` is accepted. Production reads only `PLAID_PRODUCTION_SECRET`; Sandbox reads only `PLAID_SANDBOX_SECRET`. Production and Preview/Development must use separate Plaid Items, secrets, databases, KMS keys, webhook URLs, and worker identities.
 
 ## Redeployment
 

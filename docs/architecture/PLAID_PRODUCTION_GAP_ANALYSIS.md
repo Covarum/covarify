@@ -1,5 +1,7 @@
 # Plaid Production Gap Analysis
 
+> Status refreshed 2026-07-20. The global Production connection flag remains disabled.
+
 **Date:** July 17, 2026  
 **Authority:** Master Playbook v1.0 Sections 06, 07, 10, TDR-001, and TDR-002  
 **Status:** Production connections blocked
@@ -28,11 +30,11 @@ The existing `/plaid-sandbox` flow remains an unlisted, `noindex` development de
 
 | Gap | Current state | Required before first connection |
 |---|---|---|
-| Authentication | No approved provider or adapter. Production routes fail closed. | Approve provider; authenticated stable user/profile IDs; recovery; secure sessions. |
+| Authentication | **Verified:** Supabase Auth, secure cookie sessions, recovery routes, and stable user/profile IDs are live. | Preserve the verified boundary and regression tests. |
 | Admin separation | No approved admin identity/role implementation. | Privileged role boundary and MFA policy. |
-| Persistence | Strict interfaces only; no database adapter or migrations. | Approved database, transactional repository, tenancy constraints, backups, restore test. |
+| Persistence | **Verified foundation:** Supabase migrations, repository adapter, ownership constraints, and RLS are deployed. | Add job/attempt migrations; retain restore evidence and migration validation. |
 | Encrypted token storage | AES-256-GCM abstraction exists; no approved KMS/key provider. | KMS-backed key-ring adapter, rotation procedure, ciphertext-only persistence tests. |
-| Item/user ownership | Domain and repository contracts exist; no durable enforcement. | Unique ownership constraints and cross-user denial tests. |
+| Item/user ownership | **Verified foundation:** authenticated owner lookups, foreign keys, grants, and RLS exist. | Add cross-user OAuth-attempt and worker tests. |
 | Webhook verification | ES256/JWK/raw-body verifier exists; operational key caching and persisted adapter are not configured. | Persistence/queue adapters, replay/dedup evidence, production endpoint test. |
 | Update mode | Owner-only route contract exists but default auth/repository adapters reject. | Approved adapters, UI, Item health mapping, recovery tests. |
 | OAuth | Redirect config is validated; no authenticated Link UI or resume-state store. | `/connect/oauth`, Link-token/session binding, HTTPS registered URI, cross-user-state tests. |
@@ -44,11 +46,11 @@ The existing `/plaid-sandbox` flow remains an unlisted, `noindex` development de
 
 ## Exact blockers before the first real connection
 
-1. Approve and implement the authentication/persistence ADR.
-2. Add authenticated and admin adapters; require MFA for privileged access.
-3. Add database migrations and production repository with tenancy/uniqueness constraints.
-4. Approve a KMS provider; add key-ring adapter and rotation/restore procedure.
-5. Implement queue/worker execution for Transactions Sync and webhook-driven jobs.
+1. **Closed:** ADR-001 is approved; Supabase Auth/Postgres, founder bootstrap, ownership boundaries, migrations, and RLS verification are implemented.
+2. **Partially closed:** authenticated adapters are live; approve the separate privileged-admin/MFA boundary in ADR-004.
+3. **Closed for the existing schema:** migrations and the production repository are live; validate each new job/attempt migration before deployment.
+4. Approve a KMS provider and cloud ownership model; configure the envelope-encryption adapter, least-privilege identity, and rotation/restore procedure. No environment-held production wrapping key is acceptable.
+5. Approve and provision the durable worker execution model; webhook persistence and sync logic alone are not sufficient without an independently scheduled consumer.
 6. Complete authenticated `/connect` and `/connect/oauth` state-bound Link flow.
 7. Persist consent version and approved purposes before Link.
 8. Complete Item health/update-mode UX.

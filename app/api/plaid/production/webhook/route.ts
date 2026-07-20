@@ -6,8 +6,6 @@ import type { PlaidProductionRepository, PlaidSyncQueue } from "@/lib/plaid/prod
 import { createSupabasePlaidRepository } from "@/lib/plaid/production/supabase-repository";
 import { verifyPlaidWebhook } from "@/lib/plaid/production/webhook-verification";
 
-const unavailableQueue: PlaidSyncQueue = { async enqueue() { throw new Error("Plaid sync queue is not configured."); } };
-
 export async function handleProductionWebhook(request: Request, dependencies: { repository?: PlaidProductionRepository; queue?: PlaidSyncQueue } = {}) {
   const rawBody = await request.text();
   try {
@@ -19,11 +17,12 @@ export async function handleProductionWebhook(request: Request, dependencies: { 
     const webhookCode = typeof body.webhook_code === "string" ? body.webhook_code : "UNKNOWN";
     const plaidItemId = typeof body.item_id === "string" ? body.item_id : null;
     const bodyHash = createHash("sha256").update(rawBody).digest("hex");
-    const repository = dependencies.repository || createSupabasePlaidRepository();
+    const durableRepository = createSupabasePlaidRepository();
+    const repository = dependencies.repository || durableRepository;
     const result = await repository.recordWebhook({ id: randomUUID(), bodyHash, plaidItemId, webhookType, webhookCode, receivedAt: new Date().toISOString(), processedAt: null });
     if (result === "duplicate") return NextResponse.json({ received: true, duplicate: true });
     if (plaidItemId && webhookType === "TRANSACTIONS" && ["SYNC_UPDATES_AVAILABLE", "INITIAL_UPDATE", "HISTORICAL_UPDATE"].includes(webhookCode)) {
-      await (dependencies.queue || unavailableQueue).enqueue({ plaidItemId, webhookCode, deduplicationKey: bodyHash });
+      await (dependencies.queue || durableRepository).enqueue({ plaidItemId, webhookCode, deduplicationKey: bodyHash });
     }
     return NextResponse.json({ received: true }, { status: 202 });
   } catch (error) { return productionPlaidError(error); }

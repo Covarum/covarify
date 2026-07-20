@@ -6,11 +6,11 @@
 
 ## Executive assessment
 
-The repository is a strong interactive prototype, not yet the production financial decision platform defined by the playbook. It demonstrates several signature ideas—calm onboarding, Plaid sandbox ingestion, rule-based First Win analysis, Decision Studio, typed and browser-native voice commands, visible confirmation/undo, and an in-memory Decision Ledger. The largest gap is below the interface: there is no verified production identity, tenancy, durable encrypted financial store, consent/audit system, recommendation-version store, background sync, or production-grade conversational command service.
+The repository is a strong interactive prototype with a verified narrow production identity and persistence foundation, not yet the complete production financial decision platform defined by the playbook. Supabase authentication, durable user profiles, founder bootstrap, session persistence, protected routes, ownership-aware Plaid tables, and RLS controls are implemented and verified. The largest remaining gaps are production token key management, durable Plaid job execution, approved consent/retention policy, privileged-administration MFA, and the broader financial decision system.
 
 This creates a material architecture mismatch. The UI can appear to remember, decide, and protect choices, while most state is local or request-scoped and cannot yet provide the continuity, traceability, deletion, authorization, or safety guarantees required by the Master Playbook.
 
-**Plaid Production foundation update:** A separate fail-closed foundation now defines environment separation, authenticated route contracts, persistence interfaces, versioned encrypted-token handling, official webhook verification, cursor-based sync behavior, update mode, disconnect behavior, rollout flags, and operations runbooks. It does not close the production-readiness gap: authentication, database, KMS, queue/worker, consent copy, retention policy, and operational adapters remain unapproved or unimplemented.
+**Plaid Production foundation update (2026-07-20):** Supabase Auth/Postgres, authenticated ownership, RLS, founder allowlisting, production environment separation, official webhook verification, cursor-aware sync logic, update mode, disconnect behavior, rollout flags, and operating runbooks exist. Authentication and database selection are no longer blockers. Production KMS, durable worker execution, approved consent/retention decisions, admin MFA, Plaid Dashboard verification, and controlled end-to-end evidence remain blockers. `PLAID_PRODUCTION_CONNECTIONS_ENABLED=false` remains mandatory.
 
 ## Mandatory pre-code gate
 

@@ -15,7 +15,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const repository = createSupabasePlaidRepository();
     const item = await repository.findOwnedItem(id, profile.userId);
     if (!item) return NextResponse.json({ ok: false, error_code: "ITEM_NOT_FOUND", message: "Connection not found." }, { status: 404 });
-    const accessToken = readTokenCipher().decrypt({ ciphertext: item.encryptedAccessToken, keyVersion: item.tokenKeyVersion });
+    const accessToken = await readTokenCipher().decrypt({ ciphertext: item.encryptedAccessToken, keyVersion: item.tokenKeyVersion });
     await config.client.itemRemove({ access_token: accessToken });
     await repository.markDisconnected(item.id, new Date().toISOString());
     await repository.clearEncryptedToken(item.id);

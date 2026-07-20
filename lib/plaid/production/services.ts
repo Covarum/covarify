@@ -49,7 +49,7 @@ export async function exchangeAndPersistProductionItem(input: {
   if (existing && existing.userId !== input.profile.userId) throw new Error("Plaid Item ownership conflict.");
   if (existing) return { connected: true, itemId: existing.id, status: existing.status, idempotent: true };
 
-  const encrypted = input.cipher.encrypt(exchange.data.access_token);
+  const encrypted = await input.cipher.encrypt(exchange.data.access_token);
   const itemResponse = await input.config.client.itemGet({ access_token: exchange.data.access_token });
   const institutionId = itemResponse.data.item.institution_id || null;
   let institutionName: string | null = null;

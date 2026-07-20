@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { randomBytes } from "node:crypto";
 import { unconfiguredPlaidAuthProvider } from "../lib/plaid/production/auth.ts";
-import { AesGcmPlaidTokenCipher } from "../lib/plaid/production/encryption.ts";
+import { KmsEnvelopePlaidTokenCipher, UnitTestKeyEncryptionService, readTokenCipher } from "../lib/plaid/production/encryption.ts";
 import { readProductionPlaidConfig } from "../lib/plaid/production/config.ts";
 import { exchangeAndPersistProductionItem } from "../lib/plaid/production/services.ts";
+import { consumeLinkAttempt, createLinkAttempt } from "../lib/plaid/production/link-state.ts";
 import { verifyPlaidWebhook } from "../lib/plaid/production/webhook-verification.ts";
 
 const productionEnvironment = () => ({
@@ -27,18 +27,52 @@ test("environment configuration selects one distinct secret and requires HTTPS",
   assert.throws(() => readProductionPlaidConfig({ ...productionEnvironment(), PLAID_PRODUCTION_SECRET: "sandbox-secret" }), /distinct/);
 });
 
-test("versioned token cipher encrypts at rest and supports decryption", () => {
-  const cipher = new AesGcmPlaidTokenCipher("v1", new Map([["v1", randomBytes(32)]]));
+test("generic PLAID_SECRET cannot configure Production", () => {
+  const environment = { ...productionEnvironment(), PLAID_PRODUCTION_SECRET: "", PLAID_SECRET: "generic-secret" };
+  assert.throws(() => readProductionPlaidConfig(environment), /PLAID_PRODUCTION_SECRET/);
+});
+
+test("production rollout requires both the global gate and exact UUID allowlist membership", async () => {
+  const { assertProductionConnectionAllowed } = await import("../lib/plaid/production/config.ts");
+  const disabled = readProductionPlaidConfig(productionEnvironment());
+  assert.throws(() => assertProductionConnectionAllowed(disabled, "founder-user"), /not enabled/);
+  const enabled = readProductionPlaidConfig({ ...productionEnvironment(), PLAID_PRODUCTION_CONNECTIONS_ENABLED: "true" });
+  assert.throws(() => assertProductionConnectionAllowed(enabled, "different-user"), /not enabled for/);
+  assert.doesNotThrow(() => assertProductionConnectionAllowed(enabled, "founder-user"));
+});
+
+test("OAuth state is user-bound, expiring, and one-time", async () => {
+  let row;
+  const store = {
+    async create(input) { row = { id: "attempt-1", ...input, consumedAt: null }; },
+    async consume(input) {
+      if (!row || row.userId !== input.userId || row.stateHash !== input.stateHash || row.consumedAt) return null;
+      const result = { ...row }; row.consumedAt = input.consumedAt; return result;
+    },
+  };
+  const created = await createLinkAttempt(store, "founder-user", "draft-v1", new Date("2026-07-20T12:00:00Z"));
+  await assert.rejects(() => consumeLinkAttempt(store, "other-user", created.state, new Date("2026-07-20T12:01:00Z")), /invalid/);
+  await consumeLinkAttempt(store, "founder-user", created.state, new Date("2026-07-20T12:01:00Z"));
+  await assert.rejects(() => consumeLinkAttempt(store, "founder-user", created.state, new Date("2026-07-20T12:02:00Z")), /invalid/);
+});
+
+test("versioned KMS envelope encrypts at rest and supports decryption", async () => {
+  const cipher = new KmsEnvelopePlaidTokenCipher(new UnitTestKeyEncryptionService("v1"));
   const plaintext = "access-production-sensitive";
-  const encrypted = cipher.encrypt(plaintext);
+  const encrypted = await cipher.encrypt(plaintext);
   assert.equal(encrypted.keyVersion, "v1");
   assert.equal(encrypted.ciphertext.includes(plaintext), false);
-  assert.equal(cipher.decrypt(encrypted), plaintext);
+  assert.equal(await cipher.decrypt(encrypted), plaintext);
+});
+
+test("production token encryption fails closed without KMS and rejects the test adapter", () => {
+  assert.throws(() => readTokenCipher(), /KMS is not configured/);
+  assert.throws(() => new UnitTestKeyEncryptionService("v1", undefined, "production"), /cannot run in Production/);
 });
 
 test("exchange service persists ciphertext and never returns the access token", async () => {
   const plaintext = "access-production-sensitive";
-  const cipher = new AesGcmPlaidTokenCipher("v1", new Map([["v1", randomBytes(32)]]));
+  const cipher = new KmsEnvelopePlaidTokenCipher(new UnitTestKeyEncryptionService("v1"));
   let persisted;
   const repository = {
     async findItemByPlaidId() { return null; },
