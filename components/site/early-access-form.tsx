@@ -14,7 +14,12 @@ export function EarlyAccessForm() {
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [submittedFirstName, setSubmittedFirstName] = useState("");
   const submittingRef = useRef(false);
-  useEffect(() => { const params = new URLSearchParams(window.location.search); setValues((current) => ({ ...current, utmSource: params.get("utm_source") || "", utmMedium: params.get("utm_medium") || "", utmCampaign: params.get("utm_campaign") || "" })); }, []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    // URL attribution is external browser state and must be synchronized after hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setValues((current) => ({ ...current, utmSource: params.get("utm_source") || "", utmMedium: params.get("utm_medium") || "", utmCampaign: params.get("utm_campaign") || "" }));
+  }, []);
   function updateValue(field: keyof FormValues, value: string) { setValues((current) => ({ ...current, [field]: value })); }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {

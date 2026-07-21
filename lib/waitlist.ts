@@ -1,9 +1,8 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getAuthenticatedUser } from "@/lib/supabase/auth";
-
-export const WAITLIST_STATUSES = ["waiting", "invited", "active", "archived"] as const;
-export type WaitlistStatus = (typeof WAITLIST_STATUSES)[number];
+import { BetaApplication, buildApplicationUpdate, filterAndSortApplications, isFounderAdmin, WaitlistFilters, WaitlistStatus } from "@/lib/waitlist-core";
+export { WAITLIST_STATUSES } from "@/lib/waitlist-core";
 
 export type BetaApplicationInput = {
   name: string;
@@ -33,32 +32,47 @@ export async function markApplicationEmail(id: string, field: "admin_email_sent"
 
 export async function requireFounderAdmin() {
   const user = await getAuthenticatedUser();
-  if (!user) return null;
-  const allowed = (process.env.COVARIFY_ADMIN_EMAILS || "tara@covarify.com").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
-  if (!user.email || !allowed.includes(user.email.toLowerCase())) return null;
-  return user;
+  return isFounderAdmin(user, process.env.COVARIFY_ADMIN_EMAILS) ? user : null;
 }
 
-export async function listBetaApplications(search = "", status = "all") {
+async function readAllBetaApplications() {
   const supabase = createSupabaseAdminClient();
-  let query = supabase.from("beta_applications").select("*").order("created_at", { ascending: false }).limit(500);
-  if (status !== "all" && WAITLIST_STATUSES.includes(status as WaitlistStatus)) query = query.eq("status", status);
-  const term = search.trim();
-  if (term) query = query.or(`name.ilike.%${term}%,email.ilike.%${term}%,referred_by_name.ilike.%${term}%,founder_notes.ilike.%${term}%`);
-  const { data, error } = await query;
+  const { data, error } = await supabase.from("beta_applications").select("*").order("created_at", { ascending: false }).limit(5000);
   if (error) throw new Error("WAITLIST_READ_FAILED");
-  return data || [];
+  return (data || []) as BetaApplication[];
+}
+
+export async function listBetaApplications(filters: WaitlistFilters = {}) {
+  return filterAndSortApplications(await readAllBetaApplications(), filters);
+}
+
+export async function getBetaApplication(id: string) {
+  const { data, error } = await createSupabaseAdminClient().from("beta_applications").select("*").eq("id", id).single();
+  if (error || !data) return null;
+  return data as BetaApplication;
+}
+
+export async function getWaitlistDashboard() {
+  const rows = await readAllBetaApplications();
+  const now = new Date();
+  const startToday = new Date(now); startToday.setHours(0, 0, 0, 0);
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const counts = Object.fromEntries(["waiting", "invited", "active", "archived"].map((status) => [status, rows.filter((row) => row.status === status).length]));
+  const sourceCounts = rows.reduce<Record<string, number>>((result, row) => { result[row.lead_source] = (result[row.lead_source] || 0) + 1; return result; }, {});
+  const topLeadSource = Object.entries(sourceCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "—";
+  return {
+    rows, counts, sourceCounts, topLeadSource,
+    today: rows.filter((row) => new Date(row.created_at) >= startToday).length,
+    lastSevenDays: rows.filter((row) => new Date(row.created_at) >= sevenDaysAgo).length,
+  };
 }
 
 export async function updateBetaApplication(id: string, values: { status?: WaitlistStatus; founder_notes?: string }) {
   const supabase = createSupabaseAdminClient();
-  const update: Record<string, unknown> = {};
-  if (values.status) {
-    update.status = values.status;
-    if (values.status === "invited") update.invited_at = new Date().toISOString();
-    if (values.status === "active") update.activated_at = new Date().toISOString();
-  }
-  if (typeof values.founder_notes === "string") update.founder_notes = values.founder_notes.slice(0, 5000);
+  const { data: current, error: readError } = await supabase.from("beta_applications").select("invited_at,activated_at").eq("id", id).single();
+  if (readError || !current) throw new Error("WAITLIST_NOT_FOUND");
+  const update = buildApplicationUpdate(current, values);
+  if (!Object.keys(update).length) return;
   const { error } = await supabase.from("beta_applications").update(update).eq("id", id);
   if (error) throw new Error("WAITLIST_UPDATE_FAILED");
 }
