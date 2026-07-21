@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { handleEarlyAccessPost } from "../app/api/early-access/route.ts";
-import { applicationsToCsv, buildApplicationUpdate, filterAndSortApplications, isFounderAdmin } from "../lib/waitlist-core.ts";
+import { applicationsToCsv, buildApplicationUpdate, filterAndSortApplications, isFounderAdmin, sanitizeDatabaseErrorText } from "../lib/waitlist-core.ts";
 
 const baseApplication = {
   id: "11111111-1111-4111-8111-111111111111", application_id: "CF-000001", created_at: "2026-07-20T16:00:00.000Z", updated_at: "2026-07-20T16:00:00.000Z",
@@ -100,4 +100,10 @@ test("email failure retains the durably stored row and returns success", async (
 test("client admin component contains no service-role material", async () => {
   const clientSource = await readFile(new URL("../components/admin/copy-email-button.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(clientSource, /service.?role|SUPABASE_SERVICE_ROLE_KEY|COVARIFY_ADMIN_EMAILS/i);
+});
+
+test("database error logging sanitizer removes credentials, URLs, and applicant emails", () => {
+  const sanitized = sanitizeDatabaseErrorText("permission denied at https://project.supabase.co for lead@example.com token eyJabcdefghijklmnopqrstuvwxyz1234567890");
+  assert.doesNotMatch(sanitized, /supabase\.co|lead@example\.com|eyJabcdefghijklmnopqrstuvwxyz/);
+  assert.match(sanitized, /permission denied/);
 });

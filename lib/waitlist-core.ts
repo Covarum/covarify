@@ -31,6 +31,15 @@ export type WaitlistFilters = {
   sort?: "newest" | "oldest";
 };
 
+export function sanitizeDatabaseErrorText(value: unknown) {
+  return String(value || "")
+    .replace(/https?:\/\/\S+/gi, "[redacted-url]")
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[redacted-email]")
+    .replace(/(?:eyJ|sbp_)[A-Za-z0-9._-]{20,}/g, "[redacted-secret]")
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, "[redacted-connection]")
+    .slice(0, 300);
+}
+
 export function parseAdminEmails(value: string | undefined) {
   if (!value) return [];
   return value.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean);
