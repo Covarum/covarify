@@ -54,6 +54,6 @@ export async function handleEarlyAccessPost(request: Request, createEmailClient:
   } catch { console.error("Early-access submission failed."); return NextResponse.json(CLIENT_ERROR, { status: 400 }); }
 }
 export async function POST(request: Request) {
-  const { createBetaApplication, markApplicationEmail } = await import("../../../lib/waitlist.ts");
+  const { createBetaApplication, markApplicationEmail } = await import("../../../lib/waitlist");
   return handleEarlyAccessPost(request, (apiKey) => new Resend(apiKey), { createApplication: createBetaApplication, markEmail: markApplicationEmail });
 }
