@@ -1,7 +1,10 @@
 # Plaid Production Connection Consent
 
-**Status:** Proposed for founder approval
+**Status:** Approved for the controlled founder rollout
 **Immutable version:** `plaid-production-consent-v1-2026-07-22`
+**Founder approval recorded:** 2026-07-21
+
+This approval fixes the text and identifier below as the immutable consent version for the controlled founder rollout. It does not authorize enabling `PLAID_PRODUCTION_CONNECTIONS_ENABLED` or `PLAID_SYNC_WORKER_ENABLED`, and it does not authorize connecting a financial institution. The policy decisions listed at the end of this document remain pending.
 
 ## Connect your financial accounts
 

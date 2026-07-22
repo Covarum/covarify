@@ -1,6 +1,6 @@
 # ADR-002: Plaid Token Envelope Encryption and KMS
 
-**Status:** Proposed - founder decision required  
+**Status:** Accepted - AWS KMS approved for Production
 **Date:** 2026-07-20
 
 ## Decision context
@@ -28,6 +28,8 @@ Production fails closed when KMS configuration or permission is unavailable. It 
 - Schedule key deletion only after database and backup retention windows and a verified rewrap inventory of zero.
 - Audit identifiers and outcomes only, never tokens, data keys, ciphertext, or secrets.
 
-## Founder decision required
+## Approval and remaining execution boundary
 
-Choose AWS or GCP, owning account/project, region, billing owner, break-glass owner, rotation cadence, and recovery approvers. This ADR does not authorize paid infrastructure or credential provisioning.
+AWS KMS is the approved Production provider. Use a single-Region, AWS-generated, symmetric `SYMMETRIC_DEFAULT` customer-managed key in `us-east-1`, addressed for writes by `alias/covarify-production-plaid-tokens`. Every call carries the non-secret encryption context `application=covarify,purpose=plaid-access-token`; IAM and key policies require it.
+
+This approval covers code and documentation only. It does not authorize account signup, credential entry, or creation of the billable KMS key. Follow `docs/runbooks/AWS_KMS_FOUNDER_SETUP.md`; Production connections remain disabled until readiness review succeeds.

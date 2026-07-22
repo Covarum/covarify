@@ -1,5 +1,5 @@
 if (typeof window !== "undefined") throw new Error("Plaid production modules are server-only.");
-import type { ConsentRecord, PlaidAccountRecord, PlaidItemRecord, PlaidTransactionRecord, TransactionSyncStateRecord, WebhookEventRecord } from "./domain.ts";
+import type { ConsentRecord, PlaidAccountRecord, PlaidItemRecord, PlaidSyncJobRecord, PlaidTransactionRecord, TransactionSyncStateRecord, WebhookEventRecord } from "./domain.ts";
 
 export interface PlaidProductionRepository {
   findItemByPlaidId(plaidItemId: string): Promise<PlaidItemRecord | null>;
@@ -15,6 +15,15 @@ export interface PlaidProductionRepository {
 
 export interface PlaidSyncQueue {
   enqueue(input: { plaidItemId: string; webhookCode: string; deduplicationKey: string }): Promise<void>;
+}
+
+export interface PlaidSyncWorkerRepository extends PlaidProductionRepository {
+  claimSyncJob(): Promise<PlaidSyncJobRecord | null>;
+  findItemById(id: string): Promise<PlaidItemRecord | null>;
+  getSyncState(plaidItemId: string): Promise<TransactionSyncStateRecord | null>;
+  completeSyncJob(job: PlaidSyncJobRecord): Promise<void>;
+  retrySyncJob(job: PlaidSyncJobRecord, input: { availableAt: string; safeErrorCode: string }): Promise<void>;
+  failSyncJob(job: PlaidSyncJobRecord, safeErrorCode: string): Promise<void>;
 }
 
 export class PlaidPersistenceUnavailableError extends Error {

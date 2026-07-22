@@ -1,6 +1,6 @@
 # ADR-003: Durable Plaid Sync Execution
 
-**Status:** Proposed - founder deployment decision required  
+**Status:** Accepted - Vercel Cron approved as the initial worker
 **Date:** 2026-07-20
 
 ## Decision
@@ -17,6 +17,8 @@ The worker claims jobs atomically with per-Item exclusion, records attempts, fol
 
 The worker endpoint requires a dedicated server-only identity and is unavailable to browser sessions. Logs exclude tokens, keys, request bodies, account numbers, balances, and transaction descriptions.
 
-## Founder decision required
+## Deployment boundary
 
-Confirm Vercel Cron as the initial execution provider and its plan limits, or approve a managed worker vendor. Durable foundations may deploy while disabled; no Production consumer is enabled by this ADR.
+Vercel Cron invokes `GET /api/cron/plaid-transactions-sync` every five minutes. Each invocation claims at most one job and has a 60-second ceiling. Postgres uses `FOR UPDATE SKIP LOCKED` plus a unique lease token; a stale ten-minute lease may be reclaimed, while completion and retry require the current lease.
+
+The worker remains unavailable unless `PLAID_SYNC_WORKER_ENABLED=true` and Vercel supplies `Authorization: Bearer $CRON_SECRET`. Implementation does not authorize creating a deployment or enabling the flag. The five-minute schedule requires a non-Hobby Vercel team; Hobby schedules are limited to once daily. Confirm the selected plan supports the schedule and 60-second duration before deployment.

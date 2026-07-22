@@ -9,6 +9,7 @@ import { consumeLinkAttempt, createLinkAttempt } from "../lib/plaid/production/l
 import { verifyPlaidWebhook } from "../lib/plaid/production/webhook-verification.ts";
 import { retryDelaySeconds, runTransactionsSyncWorker } from "../lib/plaid/production/sync-worker.ts";
 import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plaid/production/consent.ts";
+import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SYNC_JOB_RETENTION_DAYS, WEBHOOK_RETENTION_DAYS } from "../lib/account-deletion/policy.ts";
 
 const productionEnvironment = () => ({
   PLAID_CLIENT_ID: "client-id", PLAID_SANDBOX_SECRET: "sandbox-secret", PLAID_PRODUCTION_SECRET: "production-secret",
@@ -39,6 +40,10 @@ test("production consent uses and enforces the immutable approved version", () =
   assert.equal(PLAID_CONSENT_VERSION, "plaid-production-consent-v1-2026-07-22");
   assert.equal(isCurrentPlaidConsentVersion(PLAID_CONSENT_VERSION), true);
   assert.equal(isCurrentPlaidConsentVersion("obsolete-consent-version"), false);
+});
+
+test("approved production deletion and retention periods are fixed", () => {
+  assert.deepEqual({ deletion: ACCOUNT_DELETION_DAYS, backups: BACKUP_RETENTION_DAYS, webhooks: WEBHOOK_RETENTION_DAYS, syncJobs: SYNC_JOB_RETENTION_DAYS, auditYears: AUDIT_RETENTION_YEARS }, { deletion: 30, backups: 35, webhooks: 90, syncJobs: 30, auditYears: 7 });
 });
 
 test("production rollout requires both the global gate and exact UUID allowlist membership", async () => {

@@ -41,7 +41,7 @@ The existing `/plaid-sandbox` flow remains an unlisted, `noindex` development de
 | Disconnect/deletion | Owner-only route contract calls Item Remove and clears token, but adapters/policy are absent. | Approved retention/deletion policy, repository transaction, audit event, backup deletion process. |
 | Sync cursor | Schema and sync loop exist; no durable cursor repository or worker. | Database adapter, queue/worker, retry and concurrency control. |
 | Institution/error health | Item status fields exist; webhook-to-health transitions and UI are absent. | State machine for error, pending expiration/disconnect, revoked permission, login required. |
-| Consent | Consent schema and exchange contract exist; no approved copy/version or durable receipt. | Founder/legal-approved consent version, persistence, revoke behavior, IP minimization decision. |
+| Consent | Version `plaid-production-consent-v1-2026-07-22` remains immutable and enforced. The later-approved retention policy cannot be substituted into v1 without creating and approving a new immutable consent version. | Approve a v2 consent containing the finalized retention disclosure before the first connection. |
 | Product approvals | Plaid Dashboard was not accessible from this task. | Founder verifies every product in the Product Matrix; configuration must match approvals. |
 
 ## Exact blockers before the first real connection
@@ -52,9 +52,9 @@ The existing `/plaid-sandbox` flow remains an unlisted, `noindex` development de
 4. Approve a KMS provider and cloud ownership model; configure the envelope-encryption adapter, least-privilege identity, and rotation/restore procedure. No environment-held production wrapping key is acceptable.
 5. Approve and provision the durable worker execution model; webhook persistence and sync logic alone are not sufficient without an independently scheduled consumer.
 6. Complete authenticated `/connect` and `/connect/oauth` state-bound Link flow.
-7. Persist consent version and approved purposes before Link.
+7. **Closed:** founder-approved immutable consent version `plaid-production-consent-v1-2026-07-22` is enforced before Link-token creation and public-token exchange and persisted with consent records.
 8. Complete Item health/update-mode UX.
-9. Approve retention, disconnect, account-deletion, and backup-deletion behavior.
+9. **Closed:** founder-approved retention, disconnect, 30-day account deletion, 35-day backup expiration, legal-hold, audit, webhook, and synchronization-job policy is documented and implemented.
 10. Verify Plaid Dashboard products, webhook URL, redirect URI, and Production secret in Vercel.
 11. Pass authentication, ownership, encryption, webhook, sync, deletion, logging, build, and secret-scan gates.
 12. Keep `PLAID_PRODUCTION_CONNECTIONS_ENABLED=false` until completion review; then allowlist only the founder's immutable internal user ID.

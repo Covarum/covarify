@@ -34,3 +34,7 @@ export type PlaidTransactionRecord = {
   merchantName: string | null; name: string; amount: number; currency: string | null; date: string; authorizedDate: string | null;
   pending: boolean; removedAt: string | null; sourceUpdatedAt: string; rawCategory: string | null;
 };
+
+export type PlaidSyncJobRecord = {
+  id: string; plaidItemId: string; webhookCode: string; attemptCount: number; leaseToken: string;
+};

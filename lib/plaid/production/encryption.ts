@@ -1,12 +1,13 @@
 if (typeof window !== "undefined") throw new Error("Plaid production modules are server-only.");
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { AwsKmsKeyEncryptionService } from "./aws-kms.ts";
 
 type TokenEnvelope = { v: 1; alg: "A256GCM"; nonce: string; tag: string; data: string; wrappedKey: string };
 export type EncryptedToken = { ciphertext: string; keyVersion: string };
 
 export interface PlaidKeyEncryptionService {
   readonly keyVersion: string;
-  generateDataKey(): Promise<{ plaintextKey: Uint8Array; wrappedKey: string }>;
+  generateDataKey(): Promise<{ plaintextKey: Uint8Array; wrappedKey: string; keyVersion?: string }>;
   unwrapDataKey(wrappedKey: string, keyVersion: string): Promise<Uint8Array>;
 }
 
@@ -21,7 +22,7 @@ export class KmsEnvelopePlaidTokenCipher implements PlaidTokenCipher {
 
   async encrypt(plaintext: string): Promise<EncryptedToken> {
     if (!plaintext) throw new Error("Cannot encrypt an empty Plaid access token.");
-    const { plaintextKey, wrappedKey } = await this.kms.generateDataKey();
+    const { plaintextKey, wrappedKey, keyVersion } = await this.kms.generateDataKey();
     const key = Buffer.from(plaintextKey);
     if (key.length !== 32) throw new Error("KMS returned an invalid Plaid data key.");
     try {
@@ -29,7 +30,7 @@ export class KmsEnvelopePlaidTokenCipher implements PlaidTokenCipher {
       const cipher = createCipheriv("aes-256-gcm", key, nonce);
       const data = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
       const envelope: TokenEnvelope = { v: 1, alg: "A256GCM", nonce: nonce.toString("base64"), tag: cipher.getAuthTag().toString("base64"), data: data.toString("base64"), wrappedKey };
-      return { ciphertext: Buffer.from(JSON.stringify(envelope)).toString("base64"), keyVersion: this.kms.keyVersion };
+      return { ciphertext: Buffer.from(JSON.stringify(envelope)).toString("base64"), keyVersion: keyVersion ?? this.kms.keyVersion };
     } finally { key.fill(0); }
   }
 
@@ -47,7 +48,12 @@ export class KmsEnvelopePlaidTokenCipher implements PlaidTokenCipher {
 }
 
 export function readTokenCipher(): PlaidTokenCipher {
-  throw new Error("Production Plaid KMS is not configured. Select and provision the provider in ADR-002.");
+  if (process.env.PLAID_KMS_PROVIDER !== "aws") throw new Error("Production Plaid KMS is not configured. Set PLAID_KMS_PROVIDER=aws.");
+  const region = process.env.AWS_REGION?.trim();
+  const keyId = process.env.PLAID_KMS_KEY_ID?.trim();
+  const roleArn = process.env.AWS_ROLE_ARN?.trim();
+  if (!region || !keyId || !roleArn) throw new Error("AWS KMS requires AWS_REGION, PLAID_KMS_KEY_ID, and AWS_ROLE_ARN.");
+  return new KmsEnvelopePlaidTokenCipher(new AwsKmsKeyEncryptionService({ region, keyId, roleArn }));
 }
 
 export class UnitTestKeyEncryptionService implements PlaidKeyEncryptionService {
