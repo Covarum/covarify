@@ -42,8 +42,8 @@ export function ProductionPlaidLink({ available, consentVersion }: { available: 
   }, []);
   const onExit = useCallback((error: PlaidLinkError | null, metadata: PlaidLinkOnExitMetadata) => { recordDiagnostic("EXIT", metadata, error); resetAfterFailure(); }, [recordDiagnostic, resetAfterFailure]);
   const onEvent = useCallback((eventName: string, metadata: PlaidLinkOnEventMetadata) => recordDiagnostic(eventName, metadata), [recordDiagnostic]);
-  const { open, ready, error: initializationError } = usePlaidLink({ token: linkToken, onSuccess, onExit, onEvent, onLoad: () => recordDiagnostic("LOAD") });
-  useEffect(() => { if (openWhenReady.current && ready) { openWhenReady.current = false; open(); timeoutRef.current = setTimeout(() => { recordDiagnostic("CLIENT_TIMEOUT"); resetAfterFailure(); }, 10 * 60_000); } }, [open, ready, recordDiagnostic, resetAfterFailure]);
+  const { open, ready, exit, error: initializationError } = usePlaidLink({ token: linkToken, onSuccess, onExit, onEvent, onLoad: () => recordDiagnostic("LOAD") });
+  useEffect(() => { if (openWhenReady.current && ready) { openWhenReady.current = false; open(); timeoutRef.current = setTimeout(() => { recordDiagnostic("CLIENT_TIMEOUT"); exit({ force: true }); resetAfterFailure(); }, 10 * 60_000); } }, [exit, open, ready, recordDiagnostic, resetAfterFailure]);
   useEffect(() => { if (!initializationError) return; const timer = setTimeout(() => { recordDiagnostic("INITIALIZATION_ERROR"); resetAfterFailure(); }, 0); return () => clearTimeout(timer); }, [initializationError, recordDiagnostic, resetAfterFailure]);
   useEffect(() => () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); }, []);
 
