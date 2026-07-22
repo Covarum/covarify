@@ -5,7 +5,7 @@ if (process.env.CRON_LIVE_CANARY !== "true") {
 
 const secret = process.env.CRON_SECRET?.trim();
 if (!secret) throw new Error("CRON_SECRET is unavailable in the Production environment.");
-if (process.env.PLAID_PRODUCTION_CONNECTIONS_ENABLED !== "false") throw new Error("PLAID_PRODUCTION_CONNECTIONS_ENABLED must remain false.");
+if (process.env.PLAID_PRODUCTION_CONNECTIONS_ENABLED !== "true") throw new Error("PLAID_PRODUCTION_CONNECTIONS_ENABLED must be enabled for the approved founder-only connection phase.");
 
 const workerEnabled = process.env.PLAID_SYNC_WORKER_ENABLED === "true";
 if (!workerEnabled && process.env.PLAID_SYNC_WORKER_ENABLED !== "false") {
