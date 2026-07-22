@@ -8,6 +8,7 @@ import { productionPlaidError } from "@/lib/plaid/production/http";
 import type { PlaidProductionRepository } from "@/lib/plaid/production/repositories";
 import { exchangeAndPersistProductionItem } from "@/lib/plaid/production/services";
 import { createSupabasePlaidRepository } from "@/lib/plaid/production/supabase-repository";
+import { isCurrentPlaidConsentVersion } from "@/lib/plaid/production/consent";
 
 export type ExchangeDependencies = { auth: PlaidAuthProvider; repository: PlaidProductionRepository; cipher: PlaidTokenCipher };
 
@@ -19,7 +20,7 @@ export async function handleProductionExchange(request: Request, dependencies?: 
   const body = await request.json().catch(() => null);
   const publicToken = typeof body?.public_token === "string" ? body.public_token.trim() : "";
   const consentVersion = typeof body?.consent_version === "string" ? body.consent_version.trim() : "";
-  if (!publicToken || !consentVersion) return NextResponse.json({ ok: false, error_code: "INVALID_REQUEST", message: "A public token and consent version are required." }, { status: 400 });
+  if (!publicToken || !isCurrentPlaidConsentVersion(consentVersion)) return NextResponse.json({ ok: false, error_code: "INVALID_REQUEST", message: "A public token and the current consent version are required." }, { status: 400 });
 
   try {
     const config = readProductionPlaidConfig();

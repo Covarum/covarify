@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { unconfiguredPlaidAuthProvider } from "../lib/plaid/production/auth.ts";
 import { KmsEnvelopePlaidTokenCipher, UnitTestKeyEncryptionService, readTokenCipher } from "../lib/plaid/production/encryption.ts";
+import { AwsKmsKeyEncryptionService } from "../lib/plaid/production/aws-kms.ts";
 import { readProductionPlaidConfig } from "../lib/plaid/production/config.ts";
 import { exchangeAndPersistProductionItem } from "../lib/plaid/production/services.ts";
 import { consumeLinkAttempt, createLinkAttempt } from "../lib/plaid/production/link-state.ts";
 import { verifyPlaidWebhook } from "../lib/plaid/production/webhook-verification.ts";
+import { retryDelaySeconds, runTransactionsSyncWorker } from "../lib/plaid/production/sync-worker.ts";
+import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plaid/production/consent.ts";
 
 const productionEnvironment = () => ({
   PLAID_CLIENT_ID: "client-id", PLAID_SANDBOX_SECRET: "sandbox-secret", PLAID_PRODUCTION_SECRET: "production-secret",
@@ -30,6 +33,12 @@ test("environment configuration selects one distinct secret and requires HTTPS",
 test("generic PLAID_SECRET cannot configure Production", () => {
   const environment = { ...productionEnvironment(), PLAID_PRODUCTION_SECRET: "", PLAID_SECRET: "generic-secret" };
   assert.throws(() => readProductionPlaidConfig(environment), /PLAID_PRODUCTION_SECRET/);
+});
+
+test("production consent uses and enforces the immutable approved version", () => {
+  assert.equal(PLAID_CONSENT_VERSION, "plaid-production-consent-v1-2026-07-22");
+  assert.equal(isCurrentPlaidConsentVersion(PLAID_CONSENT_VERSION), true);
+  assert.equal(isCurrentPlaidConsentVersion("obsolete-consent-version"), false);
 });
 
 test("production rollout requires both the global gate and exact UUID allowlist membership", async () => {
@@ -65,6 +74,31 @@ test("versioned KMS envelope encrypts at rest and supports decryption", async ()
   assert.equal(await cipher.decrypt(encrypted), plaintext);
 });
 
+test("AWS KMS adapter generates AES-256 keys and binds decrypt to the production context", async () => {
+  const calls = [];
+  const plaintext = new Uint8Array(32).fill(7);
+  const wrapped = new Uint8Array([1, 2, 3, 4]);
+  const client = { async send(command) {
+    calls.push({ name: command.constructor.name, input: command.input });
+    if (command.constructor.name === "GenerateDataKeyCommand") return { Plaintext: plaintext, CiphertextBlob: wrapped, KeyId: "arn:aws:kms:us-east-1:123456789012:key/key-id" };
+    return { Plaintext: plaintext, KeyId: "arn:aws:kms:us-east-1:123456789012:key/key-id" };
+  } };
+  const kms = new AwsKmsKeyEncryptionService({ region: "us-east-1", keyId: "alias/covarify-production-plaid-tokens", client });
+  const generated = await kms.generateDataKey();
+  assert.equal(generated.plaintextKey.byteLength, 32);
+  assert.equal(generated.keyVersion, "arn:aws:kms:us-east-1:123456789012:key/key-id");
+  await kms.unwrapDataKey(generated.wrappedKey, generated.keyVersion);
+  assert.deepEqual(calls[0].input, { KeyId: "alias/covarify-production-plaid-tokens", KeySpec: "AES_256", EncryptionContext: { application: "covarify", purpose: "plaid-access-token" } });
+  assert.equal("KeyId" in calls[1].input, false, "decrypt must keep working after an alias is repointed");
+  assert.deepEqual(calls[1].input.EncryptionContext, { application: "covarify", purpose: "plaid-access-token" });
+});
+
+test("AWS KMS adapter rejects incomplete key material", async () => {
+  const client = { async send() { return { Plaintext: new Uint8Array(16), CiphertextBlob: new Uint8Array([1]) }; } };
+  const kms = new AwsKmsKeyEncryptionService({ region: "us-east-1", keyId: "alias/covarify-production-plaid-tokens", client });
+  await assert.rejects(() => kms.generateDataKey(), /incomplete AES-256/);
+});
+
 test("production token encryption fails closed without KMS and rejects the test adapter", () => {
   assert.throws(() => readTokenCipher(), /KMS is not configured/);
   assert.throws(() => new UnitTestKeyEncryptionService("v1", undefined, "production"), /cannot run in Production/);
@@ -86,14 +120,44 @@ test("exchange service persists ciphertext and never returns the access token", 
   };
   const result = await exchangeAndPersistProductionItem({
     config: { ...readProductionPlaidConfig(productionEnvironment()), client }, profile: { userId: "founder-user", profileId: "profile-1", roles: [] },
-    publicToken: "public-token", consent: { id: "consent-1", userId: "founder-user", profileId: "profile-1", consentVersion: "v1", productsRequested: ["transactions"], dataPurposes: ["Money Picture"], acceptedAt: new Date().toISOString(), revokedAt: null, source: "connect", ipHash: null }, repository, cipher,
+    publicToken: "public-token", consent: { id: "consent-1", userId: "founder-user", profileId: "profile-1", consentVersion: PLAID_CONSENT_VERSION, productsRequested: ["transactions"], dataPurposes: ["Money Picture"], acceptedAt: new Date().toISOString(), revokedAt: null, source: "connect", ipHash: null }, repository, cipher,
   });
   assert.equal(JSON.stringify(result).includes(plaintext), false);
   assert.equal(JSON.stringify(persisted).includes(plaintext), false);
   assert.notEqual(persisted.item.encryptedAccessToken, plaintext);
+  assert.equal(persisted.consent.consentVersion, PLAID_CONSENT_VERSION);
 });
 
 test("production webhook rejects missing verification before persistence", async () => {
   const valid = await verifyPlaidWebhook({ verificationHeader: null, rawBody: "{}", client: { webhookVerificationKeyGet() { throw new Error("must not fetch a key"); } } });
   assert.equal(valid, false);
+});
+
+test("transactions worker claims, decrypts, paginates, applies deltas, and completes", async () => {
+  const job = { id: "job-1", plaidItemId: "item-1", webhookCode: "SYNC_UPDATES_AVAILABLE", attemptCount: 1, leaseToken: "lease-1" };
+  const item = { id: "item-1", userId: "user-1", profileId: "profile-1", plaidItemId: "plaid-item", institutionId: null, institutionName: null, environment: "production", encryptedAccessToken: "ciphertext", tokenKeyVersion: "key-v1", status: "active", consentId: "consent-1", createdAt: "2026-07-20T00:00:00Z", updatedAt: "2026-07-20T00:00:00Z", lastSuccessfulSyncAt: null, lastWebhookAt: null, errorCode: null, needsUpdateMode: false, disconnectedAt: null };
+  let state = { plaidItemId: "item-1", cursor: null, lastSyncStartedAt: null, lastSyncCompletedAt: null, status: "queued", retryCount: 0, lastErrorCode: null, triggeringWebhookCode: null };
+  const deltas = []; let completed = false; let page = 0;
+  const repository = {
+    async claimSyncJob() { return job; }, async findItemById() { return item; }, async getSyncState() { return state; },
+    async updateSyncState(value) { state = value; }, async applyTransactionDelta(value) { deltas.push(value); },
+    async completeSyncJob() { completed = true; }, async retrySyncJob() { throw new Error("unexpected retry"); }, async failSyncJob() { throw new Error("unexpected failure"); },
+  };
+  const transaction = { transaction_id: "tx-1", account_id: "account-1", pending_transaction_id: null, merchant_name: "Shop", name: "Purchase", amount: 12, iso_currency_code: "USD", unofficial_currency_code: null, date: "2026-07-20", authorized_date: null, pending: false, personal_finance_category: null, category: ["Shops"] };
+  const config = { environment: "production", client: { async transactionsSync() { page += 1; return { data: page === 1 ? { added: [transaction], modified: [], removed: [], next_cursor: "cursor-1", has_more: true } : { added: [], modified: [], removed: [{ transaction_id: "tx-old" }], next_cursor: "cursor-2", has_more: false } }; } } };
+  const result = await runTransactionsSyncWorker({ config, cipher: { async decrypt() { return "access-token"; } }, repository, now: () => new Date("2026-07-20T12:00:00Z") });
+  assert.equal(result.outcome, "complete"); assert.equal(page, 2); assert.equal(deltas.length, 2); assert.equal(completed, true);
+  assert.equal(state.cursor, "cursor-2"); assert.equal(state.status, "complete"); assert.equal(state.lastSyncStartedAt, "2026-07-20T12:00:00.000Z");
+});
+
+test("transactions worker retries transient Plaid failures with bounded jittered backoff", async () => {
+  const job = { id: "job-1", plaidItemId: "item-1", webhookCode: "SYNC_UPDATES_AVAILABLE", attemptCount: 2, leaseToken: "lease-1" };
+  const item = { id: "item-1", userId: "user-1", environment: "production", encryptedAccessToken: "ciphertext", tokenKeyVersion: "key-v1", status: "active" };
+  let state = { plaidItemId: "item-1", cursor: "cursor-1", lastSyncStartedAt: null, lastSyncCompletedAt: null, status: "queued", retryCount: 0, lastErrorCode: null, triggeringWebhookCode: null }; let retry;
+  const repository = { async claimSyncJob(){return job;},async findItemById(){return item;},async getSyncState(){return state;},async updateSyncState(v){state=v;},async retrySyncJob(_j,v){retry=v;},async failSyncJob(){throw new Error("unexpected failure");} };
+  const error = { response: { data: { error_type: "RATE_LIMIT_EXCEEDED", error_code: "RATE_LIMIT_EXCEEDED" } } };
+  const config = { environment: "production", client: { async transactionsSync(){throw error;} } };
+  const result = await runTransactionsSyncWorker({ config, cipher: { async decrypt(){return "access-token";} }, repository, now:()=>new Date("2026-07-20T12:00:00Z"), random:()=>0.5 });
+  assert.equal(result.outcome,"retry"); assert.equal(state.status,"retry"); assert.equal(retry.safeErrorCode,"RATE_LIMIT_EXCEEDED"); assert.equal(retry.availableAt,"2026-07-20T12:02:00.000Z");
+  assert.equal(retryDelaySeconds(5,()=>1),1440);
 });
