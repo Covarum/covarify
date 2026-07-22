@@ -41,10 +41,12 @@ export function ProductionPlaidLink({ available, consentVersion }: { available: 
     finally { setBusy(false); }
   }
 
-  return <div>
-    <div className="auth-consent-copy">
+  return <div className="connect-consent">
+    <div className="connect-introduction">
       <p>Covarify securely connects the financial accounts you choose through Plaid so we can build your Money Picture and help you make more informed financial decisions.</p>
       <p>You enter your bank username and password directly with Plaid. Covarify never receives or stores your banking credentials.</p>
+    </div>
+    <div className="auth-consent-copy">
       <p>For this connection, Covarify requests access to the Plaid Transactions product. This allows Covarify to receive information about your connected accounts, balances, and transaction history.</p>
       <p>Covarify uses this information to build your Money Picture, keep it up to date, and provide financial insights and decision support. Covarify does not move money or initiate financial transactions through this connection.</p>
       <p>After a successful connection, Plaid provides Covarify with a secure access token. That token is encrypted before it is stored, remains on Covarify&apos;s secure servers, and is never exposed to your browser.</p>
@@ -57,9 +59,13 @@ export function ProductionPlaidLink({ available, consentVersion }: { available: 
       <ul><li>The consent version</li><li>The approved Plaid products</li><li>The purposes for which data is used</li><li>Your account identifier</li><li>The date and time you provided consent</li></ul>
       <p>If you have questions about your connection or your data, contact <a href="mailto:contact@covarify.com">contact@covarify.com</a>.</p>
     </div>
-    <label className="auth-consent"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} disabled={!available || busy} /> <span>I understand and consent to Covarify connecting my selected financial accounts through Plaid and using Transactions data to build and refresh my Money Picture and provide financial insights and decision support. I understand that disconnecting a financial institution stops future access but is separate from permanently deleting my Covarify account.</span></label>
-    {message && <div className="auth-notice" role="alert">{message}</div>}
-    <button className="auth-submit" type="button" disabled={!available || !accepted || busy} onClick={() => void start()}>{busy ? "Preparing secure connection…" : "Continue securely with Plaid"}</button>
-    <a className="auth-secondary-link" href="/account">Not now — Return to my account</a>
+    <section className="connect-consent-action">
+      <label className="auth-consent"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} disabled={!available || busy} /> <span>I understand and consent to Covarify connecting my selected financial accounts through Plaid and using Transactions data to build and refresh my Money Picture and provide financial insights and decision support. I understand that disconnecting a financial institution stops future access but is separate from permanently deleting my Covarify account.</span></label>
+      {message && <div className="auth-notice auth-notice-error" role="alert">{message}</div>}
+      <div className="connect-actions">
+        <button className="auth-submit" type="button" aria-busy={busy} disabled={!available || !accepted || busy} onClick={() => void start()}>{busy ? "Preparing secure connection…" : "Continue securely with Plaid"}</button>
+        <a className="auth-secondary-link" href="/account">Not now — Return to my account</a>
+      </div>
+    </section>
   </div>;
 }
