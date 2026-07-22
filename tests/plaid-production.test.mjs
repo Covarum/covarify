@@ -10,6 +10,7 @@ import { verifyPlaidWebhook } from "../lib/plaid/production/webhook-verification
 import { retryDelaySeconds, runTransactionsSyncWorker } from "../lib/plaid/production/sync-worker.ts";
 import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plaid/production/consent.ts";
 import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SYNC_JOB_RETENTION_DAYS, WEBHOOK_RETENTION_DAYS } from "../lib/account-deletion/policy.ts";
+import { assertFounderPilotItemLimit } from "../lib/plaid/production/item-limit.ts";
 
 const productionEnvironment = () => ({
   PLAID_CLIENT_ID: "client-id", PLAID_SANDBOX_SECRET: "sandbox-secret", PLAID_PRODUCTION_SECRET: "production-secret",
@@ -53,6 +54,11 @@ test("production rollout requires both the global gate and exact UUID allowlist 
   const enabled = readProductionPlaidConfig({ ...productionEnvironment(), PLAID_PRODUCTION_CONNECTIONS_ENABLED: "true" });
   assert.throws(() => assertProductionConnectionAllowed(enabled, "different-user"), /not enabled for/);
   assert.doesNotThrow(() => assertProductionConnectionAllowed(enabled, "founder-user"));
+});
+
+test("founder pilot blocks a second production Plaid Item", () => {
+  assert.doesNotThrow(() => assertFounderPilotItemLimit(false));
+  assert.throws(() => assertFounderPilotItemLimit(true), (error) => error?.code === "PRODUCTION_ITEM_LIMIT_REACHED");
 });
 
 test("OAuth state is user-bound, expiring, and one-time", async () => {

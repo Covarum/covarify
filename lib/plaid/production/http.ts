@@ -4,7 +4,7 @@ import { ProductionPlaidConfigurationError } from "./config";
 
 export function productionPlaidError(error: unknown) {
   if (error instanceof ProductionPlaidConfigurationError) {
-    const status = error.code === "USER_NOT_ALLOWLISTED" ? 403 : 503;
+    const status = error.code === "USER_NOT_ALLOWLISTED" ? 403 : error.code === "PRODUCTION_ITEM_LIMIT_REACHED" ? 409 : 503;
     return NextResponse.json({ ok: false, error_code: error.code, message: error.message, missing_keys: error.missingKeys }, { status });
   }
   if (error instanceof PlaidPersistenceUnavailableError) {
