@@ -8,7 +8,15 @@ if (process.env.PLAID_PRODUCTION_ENV_AUDIT !== "true") {
 const results: Array<{ name: string; pass: boolean; issue?: string }> = [];
 const exact = (name: string, expected: string) => {
   const actual = process.env[name];
-  results.push({ name, pass: actual === expected, issue: actual === undefined ? "missing" : actual === expected ? undefined : `malformed or unexpected value (actual=${JSON.stringify(actual)})` });
+  results.push({ name, pass: actual === expected, issue: actual === undefined ? "missing" : actual === expected ? undefined : "malformed or unexpected value" });
+};
+const present = (name: string) => {
+  const pass = Boolean(process.env[name]?.trim());
+  results.push({ name, pass, issue: pass ? undefined : "missing or empty" });
+};
+const absent = (name: string) => {
+  const pass = !process.env[name]?.trim();
+  results.push({ name, pass, issue: pass ? undefined : "must not be configured" });
 };
 
 exact("PLAID_PRODUCTS", "transactions");
@@ -17,6 +25,15 @@ exact("PLAID_REDIRECT_URI", "https://www.covarify.com/connect/oauth");
 exact("PLAID_ENV", "production");
 exact("PLAID_SYNC_WORKER_ENABLED", "false");
 exact("PLAID_PRODUCTION_CONNECTIONS_ENABLED", "false");
+exact("PLAID_KMS_PROVIDER", "aws");
+exact("AWS_REGION", "us-east-1");
+present("PLAID_KMS_KEY_ID");
+present("AWS_ROLE_ARN");
+present("CRON_SECRET");
+absent("AWS_ACCESS_KEY_ID");
+absent("AWS_SECRET_ACCESS_KEY");
+absent("AWS_SESSION_TOKEN");
+absent("PLAID_SECRET");
 
 const productionSecret = process.env.PLAID_PRODUCTION_SECRET;
 results.push({ name: "PLAID_PRODUCTION_SECRET", pass: Boolean(productionSecret?.trim()), issue: productionSecret?.trim() ? undefined : "missing or empty" });
@@ -44,6 +61,10 @@ if (allowlistPass) {
   }
 }
 results.push({ name: "PLAID_PRODUCTION_ALLOWED_USER_IDS", pass: allowlistPass, issue: allowlistIssue });
+
+console.log(`PLAID_PRODUCTION_ALLOWED_USER_IDS_ENTRY_COUNT: ${allowlist.length}`);
+console.log(`PLAID_PRODUCTION_ALLOWED_USER_IDS_UUID_FORMAT_VALID: ${allowlist.length === 1 && uuidPattern.test(allowlist[0]) ? "YES" : "NO"}`);
+console.log(`PLAID_PRODUCTION_ALLOWED_USER_IDS_MATCHES_FOUNDER: ${allowlistPass ? "YES" : "NO"}`);
 
 for (const result of results) console.log(`${result.name}: ${result.pass ? "PASS" : `FAIL (${result.issue})`}`);
 if (results.some((result) => !result.pass)) process.exit(1);
