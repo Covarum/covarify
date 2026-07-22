@@ -1,6 +1,6 @@
 # Founder Pilot MFA Evidence
 
-**Track:** A — Founder Pilot  
+**Track:** A — Founder Pilot
 **Evidence date:** 2026-07-22
 
 Do not record credentials, recovery codes, device identifiers, serial numbers, or secrets in this file.

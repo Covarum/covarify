@@ -1,6 +1,6 @@
 # Founder Pilot Control Attestation
 
-**Track:** A — Founder Pilot  
+**Track:** A — Founder Pilot
 **Attestation date:** 2026-07-22
 
 ## External deletion register
