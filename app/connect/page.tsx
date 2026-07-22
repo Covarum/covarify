@@ -16,14 +16,14 @@ export default async function ConnectPage() {
   const available = enabled && allowlisted;
   return <main className="connect-page"><section className="connect-shell">
     <header className="connect-header">
-      <Brand />
+      <div className="connect-brand-row"><Brand /><p className="connect-pilot">Founder Pilot <span aria-hidden="true">•</span> Invite Only</p></div>
       <div className="connect-heading">
-        <p className="eyebrow plain">Controlled founder connection</p>
-        <h1>Connect your financial accounts</h1>
+        <h1>Build your Money Picture</h1>
+        <p className="connect-lede"><strong>Securely connect your financial accounts through Plaid.</strong></p>
+        <p>Covarify uses your account information to build and keep your Money Picture current, helping you make more informed financial decisions.</p>
       </div>
-      <div className="connect-status" role="status">{available ? "This connection is limited to the approved founder account." : "Connections remain intentionally disabled while Production safeguards are completed."}</div>
+      {!available && <div className="connect-status" role="status">Connections remain intentionally disabled while Production safeguards are completed.</div>}
     </header>
     <ProductionPlaidLink available={available} consentVersion={PLAID_CONSENT_VERSION} />
-    <p className="connect-meta">Internal beta only. No financial institution will be contacted while the connection gate is disabled.</p>
   </section></main>;
 }

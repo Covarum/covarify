@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
 import type { PlaidLinkError, PlaidLinkOnEventMetadata, PlaidLinkOnExitMetadata } from "react-plaid-link";
+import { Ban, KeyRound, Landmark, Unplug } from "lucide-react";
 import { LINK_FAILURE_MESSAGE } from "@/lib/plaid/production/link-diagnostics";
 
 const LINK_TOKEN_KEY = "covarify:plaid:link-token";
@@ -62,29 +63,25 @@ export function ProductionPlaidLink({ available, consentVersion }: { available: 
   }
 
   return <div className="connect-consent">
-    <div className="connect-introduction">
-      <p>Covarify securely connects the financial accounts you choose through Plaid so we can build your Money Picture and help you make more informed financial decisions.</p>
-      <p>You enter your bank username and password directly with Plaid. Covarify never receives or stores your banking credentials.</p>
-    </div>
-    <div className="auth-consent-copy">
-      <p>For this connection, Covarify requests access to the Plaid Transactions product. This allows Covarify to receive information about your connected accounts, balances, and transaction history.</p>
-      <p>Covarify uses this information to build your Money Picture, keep it up to date, and provide financial insights and decision support. Covarify does not move money or initiate financial transactions through this connection.</p>
-      <p>After a successful connection, Plaid provides Covarify with a secure access token. That token is encrypted before it is stored, remains on Covarify&apos;s secure servers, and is never exposed to your browser.</p>
-      <p>You can disconnect a financial institution at any time. Disconnecting immediately stops future account updates and permanently removes the encrypted Plaid access token used to access that institution.</p>
-      <p>Disconnecting a financial institution is separate from deleting your Covarify account. Historical information already received may remain so your Money Picture, Financial Memory, and Decision Studio remain accurate until you request complete account deletion.</p>
-      <p>When you submit and verify a request to permanently delete your account, Covarify immediately disables your account, disconnects every Plaid institution, permanently destroys the encrypted Plaid access tokens, and stops future synchronization. Connected account information, transaction history, your Money Picture, Financial Memory, decision history, connection metadata, and synchronization records are removed within 30 days.</p>
-      <p>Encrypted backups may temporarily contain earlier copies of deleted information. Covarify&apos;s production backups expire within a maximum of seven days. Before any backup is restored, Covarify performs a security review to ensure deleted accounts cannot be reactivated and removed financial institutions cannot regain access.</p>
-      <p>To meet security, legal, and compliance obligations, Covarify may retain limited records such as your consent history, deletion requests, security audit events, and records required by applicable law for up to seven years. These retained records cannot reconnect your financial institutions or rebuild your financial profile. Covarify does not retain financial transaction data solely for audit purposes.</p>
-      <p>If you continue, Covarify records:</p>
-      <ul><li>The consent version</li><li>The approved Plaid products</li><li>The purposes for which data is used</li><li>Your account identifier</li><li>The date and time you provided consent</li></ul>
-      <p>If you have questions about your connection or your data, contact <a href="mailto:contact@covarify.com">contact@covarify.com</a>.</p>
-    </div>
+    <section className="connect-trust" aria-labelledby="trust-heading"><h2 id="trust-heading">Before you continue</h2><div className="connect-trust-grid">
+      <div><Landmark aria-hidden="true" /><p>You enter your bank credentials directly with Plaid.</p></div>
+      <div><KeyRound aria-hidden="true" /><p>Covarify never sees or stores your banking username or password.</p></div>
+      <div><Ban aria-hidden="true" /><p>Covarify cannot move money or initiate transactions.</p></div>
+      <div><Unplug aria-hidden="true" /><p>You can disconnect a financial institution at any time.</p></div>
+    </div></section>
+    <section className="connect-learn" aria-labelledby="learn-heading"><h2 id="learn-heading">Learn more</h2><div className="connect-accordions">
+      <details><summary>What information does Covarify receive?</summary><div><p>Covarify receives information about your connected accounts, balances, and transaction history through Plaid&apos;s Transactions product.</p><p>Covarify uses this information to build and update your Money Picture and provide financial insights and decision support.</p></div></details>
+      <details><summary>How is my information protected?</summary><div><p>After you successfully connect an institution, Plaid provides Covarify with a secure access token.</p><p>The token is encrypted before it is stored, remains on Covarify&apos;s secure servers, and is never exposed to your browser.</p><p>Covarify never receives or stores your banking credentials.</p></div></details>
+      <details><summary>Disconnecting versus deleting your account</summary><div><p>You can disconnect a financial institution at any time. Disconnecting immediately stops future account updates and permanently removes the encrypted Plaid access token used to access that institution.</p><p>Disconnecting an institution is separate from permanently deleting your Covarify account. Historical information already received may remain so your Money Picture, Financial Memory, and Decision Studio remain accurate until you request complete account deletion.</p><p>When you submit and verify a request to permanently delete your account, Covarify immediately disables your account, disconnects every Plaid institution, permanently destroys the encrypted Plaid access tokens, and stops future synchronization.</p><p>Connected account information, transaction history, your Money Picture, Financial Memory, decision history, connection metadata, and synchronization records are removed within 30 days.</p></div></details>
+      <details><summary>Backups and retained records</summary><div><p>Encrypted backups may temporarily contain earlier copies of deleted information. Covarify&apos;s production backups expire within a maximum of seven days.</p><p>Before any backup is restored, Covarify performs a security review to ensure deleted accounts cannot be reactivated and removed financial institutions cannot regain access.</p><p>To meet security, legal, and compliance obligations, Covarify may retain limited records such as consent history, deletion requests, security audit events, and records required by applicable law for up to seven years.</p><p>These retained records cannot reconnect financial institutions or rebuild a financial profile. Covarify does not retain financial transaction data solely for audit purposes.</p></div></details>
+      <details><summary>What does Covarify record when I continue?</summary><div><p>Covarify records:</p><ul><li>The consent version</li><li>The approved Plaid products</li><li>The purposes for which data is used</li><li>Your account identifier</li><li>The date and time you provided consent</li></ul><p>For questions about your connection or your data, contact <a href="mailto:contact@covarify.com">contact@covarify.com</a>.</p></div></details>
+    </div></section>
     <section className="connect-consent-action">
       <label className="auth-consent"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} disabled={!available || busy} /> <span>I understand and consent to Covarify connecting my selected financial accounts through Plaid and using Transactions data to build and refresh my Money Picture and provide financial insights and decision support. I understand that disconnecting a financial institution stops future access but is separate from permanently deleting my Covarify account.</span></label>
       {message && <div className="auth-notice auth-notice-error" role="alert">{message}</div>}
       <div className="connect-actions">
         <button className="auth-submit" type="button" aria-busy={busy} disabled={!available || !accepted || busy} onClick={() => void start()}>{busy ? "Preparing secure connection…" : "Continue securely with Plaid"}</button>
-        <a className="auth-secondary-link" href="/account">Not now — Return to my account</a>
+        <a className="auth-secondary-link" href="/account">Not now - Return to my account</a>
       </div>
     </section>
   </div>;
