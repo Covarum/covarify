@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
+import type { PlaidLinkError, PlaidLinkOnEventMetadata, PlaidLinkOnExitMetadata } from "react-plaid-link";
+import { LINK_FAILURE_MESSAGE } from "@/lib/plaid/production/link-diagnostics";
 
 const LINK_TOKEN_KEY = "covarify:plaid:link-token";
 const OAUTH_STATE_KEY = "covarify:plaid:oauth-state";
@@ -10,6 +12,7 @@ export function ProductionPlaidLink({ available, consentVersion }: { available: 
   const [accepted, setAccepted] = useState(false);
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const openWhenReady = useRef(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -24,8 +27,25 @@ export function ProductionPlaidLink({ available, consentVersion }: { available: 
     } catch (error) { setMessage(error instanceof Error ? error.message : "The institution connection could not be saved."); setBusy(false); }
   }, [consentVersion]);
 
-  const { open, ready } = usePlaidLink({ token: linkToken, onSuccess });
-  useEffect(() => { if (openWhenReady.current && ready) { openWhenReady.current = false; open(); } }, [open, ready]);
+  const recordDiagnostic = useCallback((eventName: string, metadata: Partial<PlaidLinkOnEventMetadata & PlaidLinkOnExitMetadata> = {}, error?: PlaidLinkError | null) => {
+    const state = sessionStorage.getItem(OAUTH_STATE_KEY);
+    if (!state) return;
+    void fetch("/api/plaid/production/link-diagnostic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      state, event_name: eventName, error_code: error?.error_code ?? metadata.error_code, error_type: error?.error_type ?? metadata.error_type,
+      institution_id: metadata.institution_id ?? metadata.institution?.institution_id, link_session_id: metadata.link_session_id, request_id: metadata.request_id,
+    }) });
+  }, []);
+  const resetAfterFailure = useCallback(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    openWhenReady.current = false; setLinkToken(null); setBusy(false); setMessage(LINK_FAILURE_MESSAGE);
+    sessionStorage.removeItem(LINK_TOKEN_KEY); sessionStorage.removeItem(OAUTH_STATE_KEY);
+  }, []);
+  const onExit = useCallback((error: PlaidLinkError | null, metadata: PlaidLinkOnExitMetadata) => { recordDiagnostic("EXIT", metadata, error); resetAfterFailure(); }, [recordDiagnostic, resetAfterFailure]);
+  const onEvent = useCallback((eventName: string, metadata: PlaidLinkOnEventMetadata) => recordDiagnostic(eventName, metadata), [recordDiagnostic]);
+  const { open, ready, error: initializationError } = usePlaidLink({ token: linkToken, onSuccess, onExit, onEvent, onLoad: () => recordDiagnostic("LOAD") });
+  useEffect(() => { if (openWhenReady.current && ready) { openWhenReady.current = false; open(); timeoutRef.current = setTimeout(() => { recordDiagnostic("CLIENT_TIMEOUT"); resetAfterFailure(); }, 10 * 60_000); } }, [open, ready, recordDiagnostic, resetAfterFailure]);
+  useEffect(() => { if (!initializationError) return; const timer = setTimeout(() => { recordDiagnostic("INITIALIZATION_ERROR"); resetAfterFailure(); }, 0); return () => clearTimeout(timer); }, [initializationError, recordDiagnostic, resetAfterFailure]);
+  useEffect(() => () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); }, []);
 
   async function start() {
     if (!available || !accepted || busy) return;

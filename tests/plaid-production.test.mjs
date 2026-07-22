@@ -11,6 +11,7 @@ import { retryDelaySeconds, runTransactionsSyncWorker } from "../lib/plaid/produ
 import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plaid/production/consent.ts";
 import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SYNC_JOB_RETENTION_DAYS, WEBHOOK_RETENTION_DAYS } from "../lib/account-deletion/policy.ts";
 import { assertFounderPilotItemLimit } from "../lib/plaid/production/item-limit.ts";
+import { sanitizeLinkDiagnostic } from "../lib/plaid/production/link-diagnostics.ts";
 
 const productionEnvironment = () => ({
   PLAID_CLIENT_ID: "client-id", PLAID_SANDBOX_SECRET: "sandbox-secret", PLAID_PRODUCTION_SECRET: "production-secret",
@@ -59,6 +60,14 @@ test("production rollout requires both the global gate and exact UUID allowlist 
 test("founder pilot blocks a second production Plaid Item", () => {
   assert.doesNotThrow(() => assertFounderPilotItemLimit(false));
   assert.throws(() => assertFounderPilotItemLimit(true), (error) => error?.code === "PRODUCTION_ITEM_LIMIT_REACHED");
+});
+
+test("Plaid Link diagnostics retain only bounded non-sensitive identifiers", () => {
+  assert.deepEqual(sanitizeLinkDiagnostic({ event_name: "ERROR", error_code: "INSTITUTION_NOT_RESPONDING", error_type: "INSTITUTION_ERROR", institution_id: "ins_123", link_session_id: "session-123", request_id: "request-123", public_token: "must-not-be-retained", account: "must-not-be-retained" }), {
+    eventName: "ERROR", errorCode: "INSTITUTION_NOT_RESPONDING", errorType: "INSTITUTION_ERROR", institutionId: "ins_123", linkSessionId: "session-123", requestId: "request-123",
+  });
+  assert.equal(sanitizeLinkDiagnostic({ event_name: "ERROR", error_code: "contains sensitive spaces" })?.errorCode, null);
+  assert.equal(sanitizeLinkDiagnostic({ event_name: "" }), null);
 });
 
 test("OAuth state is user-bound, expiring, and one-time", async () => {
