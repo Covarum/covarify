@@ -27,9 +27,11 @@ For Track A, full public-workforce RBAC, two-person staffing, and automated priv
 
 ## A3. Manual external deletion register
 
-Create a company-controlled encrypted record outside Supabase and outside the Covarify Git repository. For the one-founder pilot, a protected password-manager secure note is acceptable. Name it exactly:
+For the one-founder pilot, maintain a company-controlled secure email thread outside Supabase and outside the Covarify Git repository. The email thread is the master deletion register and the manual restore gate. Name the thread exactly:
 
 `Covarify Founder Pilot Deletion Register`
+
+Record each future deletion request by replying within the same thread using the approved record fields below. The mailbox account must use MFA, access must remain restricted to the founder, and the thread must be retained independently of the production database.
 
 Record only:
 
@@ -41,7 +43,9 @@ Record only:
 - last review timestamp
 - reviewer name
 
-Do not record Plaid tokens, Item IDs, bank names, account details, transaction data, credentials, or recovery codes. Before the first connection, create the record with the founder UUID, `status=NONE`, and `restore block=NO`.
+Do not record Plaid tokens, Item IDs, bank names, account details, transaction data, credentials, or recovery codes. Before the first connection, create the master email with the founder UUID, `status=NONE`, and `restore block=NO`.
+
+This email control is temporary and satisfies Track A only. Track B requires the automated rollback-independent deletion ledger in the Public Launch backlog.
 
 ## A4. Restore-review checklist
 
@@ -49,7 +53,7 @@ Every Supabase restore is a security event. Before starting a restore:
 
 1. Set both Plaid flags to false and confirm the authenticated sync cron returns `503` with outcome `disabled`.
 2. Record the restore owner, reason, selected backup time, and expected data-loss window.
-3. Read the external deletion register. If the status is `REQUESTED` or `COMPLETED`, set and retain `restore block=YES`.
+3. Read the complete secure email deletion-register thread. If any relevant status is `REQUESTED` or `COMPLETED`, set and retain `restore block=YES`.
 
 After restoration and before restoring user access or synchronization:
 
@@ -58,7 +62,7 @@ After restoration and before restoring user access or synchronization:
 3. Verify a restored encrypted token cannot be submitted to a Plaid endpoint; `/item/remove` makes the original Plaid token permanently invalid.
 4. Run the secured account-deletion cron and verify no due request or retention cleanup failed.
 5. Verify RLS, founder allowlisting, KMS/OIDC, webhook authentication, and cron authentication.
-6. Record the reconciliation result and reviewer in the external register.
+6. Reply to the master email thread with the reconciliation result, review timestamp, and reviewer.
 7. Only after every check passes may the founder separately approve re-enabling the worker and connection flag.
 
 If the external register is unavailable or reconciliation cannot be proven, keep authentication and both Plaid flags disabled.
