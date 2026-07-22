@@ -23,7 +23,7 @@ exact("PLAID_PRODUCTS", "transactions");
 exact("PLAID_WEBHOOK_URL", "https://www.covarify.com/api/plaid/production/webhook");
 exact("PLAID_REDIRECT_URI", "https://www.covarify.com/connect/oauth");
 exact("PLAID_ENV", "production");
-exact("PLAID_SYNC_WORKER_ENABLED", "false");
+exact("PLAID_SYNC_WORKER_ENABLED", "true");
 exact("PLAID_PRODUCTION_CONNECTIONS_ENABLED", "false");
 exact("PLAID_KMS_PROVIDER", "aws");
 exact("AWS_REGION", "us-east-1");

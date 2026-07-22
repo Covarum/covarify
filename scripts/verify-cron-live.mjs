@@ -5,8 +5,17 @@ if (process.env.CRON_LIVE_CANARY !== "true") {
 
 const secret = process.env.CRON_SECRET?.trim();
 if (!secret) throw new Error("CRON_SECRET is unavailable in the Production environment.");
-if (process.env.PLAID_SYNC_WORKER_ENABLED !== "false") throw new Error("PLAID_SYNC_WORKER_ENABLED must remain false.");
 if (process.env.PLAID_PRODUCTION_CONNECTIONS_ENABLED !== "false") throw new Error("PLAID_PRODUCTION_CONNECTIONS_ENABLED must remain false.");
+
+const workerEnabled = process.env.PLAID_SYNC_WORKER_ENABLED === "true";
+if (!workerEnabled && process.env.PLAID_SYNC_WORKER_ENABLED !== "false") {
+  throw new Error("PLAID_SYNC_WORKER_ENABLED must be explicitly true or false.");
+}
+
+if (workerEnabled) {
+  console.log("Authenticated cron verification deferred until the enabled deployment is serving Production.");
+  process.exit(0);
+}
 
 const endpoint = "https://www.covarify.com/api/cron/plaid-transactions-sync";
 const response = await fetch(endpoint, { headers: { authorization: `Bearer ${secret}` } });
