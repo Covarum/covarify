@@ -4,7 +4,12 @@
 
 **Date:** July 17, 2026  
 **Authority:** Master Playbook v1.0 Sections 06, 07, 10, TDR-001, and TDR-002  
-**Status:** Production connections blocked
+**Status:** Track A Founder Pilot conditionally approved; Track B Public Launch blocked
+
+## Readiness tracks
+
+- **Track A — Founder Pilot:** exactly one allowlisted founder and one institution. Complete consent v2, phishing-resistant MFA verification, the manual external deletion register, and the restore-review checklist. Public Launch requirements do not block this track.
+- **Track B — Public Launch:** maintained in `docs/product/PUBLIC_LAUNCH_BACKLOG.md`. Track B requires automated rollback-independent deletion reconciliation and broader operational, privacy, support, and security controls.
 
 ## Current architecture
 
@@ -41,7 +46,7 @@ The existing `/plaid-sandbox` flow remains an unlisted, `noindex` development de
 | Disconnect/deletion | Owner-only route contract calls Item Remove and clears token, but adapters/policy are absent. | Approved retention/deletion policy, repository transaction, audit event, backup deletion process. |
 | Sync cursor | Schema and sync loop exist; no durable cursor repository or worker. | Database adapter, queue/worker, retry and concurrency control. |
 | Institution/error health | Item status fields exist; webhook-to-health transitions and UI are absent. | State machine for error, pending expiration/disconnect, revoked permission, login required. |
-| Consent | Version `plaid-production-consent-v1-2026-07-22` remains immutable and enforced. The later-approved retention policy cannot be substituted into v1 without creating and approving a new immutable consent version. | Approve a v2 consent containing the finalized retention disclosure before the first connection. |
+| Consent | Version `plaid-production-consent-v2-2026-07-22` is founder-approved, immutable, and enforced for future connections. V1 remains unchanged for historical audit. | Preserve version enforcement and consent-receipt tests. |
 | Product approvals | Plaid Dashboard was not accessible from this task. | Founder verifies every product in the Product Matrix; configuration must match approvals. |
 
 ## Exact blockers before the first real connection
@@ -52,7 +57,7 @@ The existing `/plaid-sandbox` flow remains an unlisted, `noindex` development de
 4. Approve a KMS provider and cloud ownership model; configure the envelope-encryption adapter, least-privilege identity, and rotation/restore procedure. No environment-held production wrapping key is acceptable.
 5. Approve and provision the durable worker execution model; webhook persistence and sync logic alone are not sufficient without an independently scheduled consumer.
 6. Complete authenticated `/connect` and `/connect/oauth` state-bound Link flow.
-7. **Closed:** founder-approved immutable consent version `plaid-production-consent-v1-2026-07-22` is enforced before Link-token creation and public-token exchange and persisted with consent records.
+7. **Closed:** founder-approved immutable consent version `plaid-production-consent-v2-2026-07-22` is enforced before Link-token creation and public-token exchange and persisted with all future consent records; v1 remains unchanged for audit.
 8. Complete Item health/update-mode UX.
 9. **Closed:** founder-approved retention, disconnect, 30-day account deletion, 35-day backup expiration, legal-hold, audit, webhook, and synchronization-job policy is documented and implemented.
 10. Verify Plaid Dashboard products, webhook URL, redirect URI, and Production secret in Vercel.

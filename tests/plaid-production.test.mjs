@@ -37,7 +37,7 @@ test("generic PLAID_SECRET cannot configure Production", () => {
 });
 
 test("production consent uses and enforces the immutable approved version", () => {
-  assert.equal(PLAID_CONSENT_VERSION, "plaid-production-consent-v1-2026-07-22");
+  assert.equal(PLAID_CONSENT_VERSION, "plaid-production-consent-v2-2026-07-22");
   assert.equal(isCurrentPlaidConsentVersion(PLAID_CONSENT_VERSION), true);
   assert.equal(isCurrentPlaidConsentVersion("obsolete-consent-version"), false);
 });
