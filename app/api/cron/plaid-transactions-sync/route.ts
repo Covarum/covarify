@@ -24,13 +24,18 @@ export async function handlePlaidTransactionsCron(request: Request, dependencies
   const environment = dependencies.environment ?? process.env;
   const secret = (environment.CRON_SECRET || "").trim();
   if (!secret || !authorized(request, secret)) return NextResponse.json({ ok: false }, { status: 401, headers: { "Cache-Control": "no-store" } });
-  if (environment.PLAID_SYNC_WORKER_ENABLED !== "true") return NextResponse.json({ ok: false, outcome: "disabled" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  if (environment.PLAID_SYNC_WORKER_ENABLED !== "true") {
+    console.info("Plaid sync worker", { outcome: "disabled" });
+    return NextResponse.json({ ok: false, outcome: "disabled" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
   try {
     const config = dependencies.config ?? readProductionPlaidConfig(environment);
     if (config.environment !== "production") throw new Error("Transactions sync worker requires PLAID_ENV=production.");
     const result = await runTransactionsSyncWorker({ config, cipher: dependencies.cipher ?? readTokenCipher(), repository: dependencies.repository ?? createSupabasePlaidRepository() });
+    console.info("Plaid sync worker", { outcome: result.outcome });
     return NextResponse.json({ ok: true, outcome: result.outcome }, { headers: { "Cache-Control": "no-store" } });
   } catch {
+    console.error("Plaid sync worker", { outcome: "error" });
     return NextResponse.json({ ok: false, outcome: "error" }, { status: 500, headers: { "Cache-Control": "no-store" } });
   }
 }
