@@ -13,6 +13,7 @@ import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plai
 import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SYNC_JOB_RETENTION_DAYS, WEBHOOK_RETENTION_DAYS } from "../lib/account-deletion/policy.ts";
 import { assertFounderPilotItemLimit } from "../lib/plaid/production/item-limit.ts";
 import { sanitizeLinkDiagnostic } from "../lib/plaid/production/link-diagnostics.ts";
+import { buildMoneyPicture, classifyTransaction, filterTransactions } from "../lib/money-picture.ts";
 
 const productionEnvironment = () => ({
   PLAID_CLIENT_ID: "client-id", PLAID_SANDBOX_SECRET: "sandbox-secret", PLAID_PRODUCTION_SECRET: "production-secret",
@@ -29,6 +30,34 @@ test("founder workspace scopes sync state through Plaid Item RLS and renders per
   assert.match(accountPage, /accounts: \(accounts\.data \|\| \[\]\)\.map/);
   assert.match(workspace, /Connected accounts/);
   assert.match(workspace, /financialData\.accounts\.map/);
+});
+
+test("Money Picture classification excludes transfers and pending rows from spending", () => {
+  const base = { id: "1", plaidAccountId: "account", name: "Entry", currency: "USD", date: "2026-07-20", pendingTransactionId: null, detailedCategory: null };
+  assert.equal(classifyTransaction({ ...base, amount: 25, pending: false, category: "FOOD_AND_DRINK" }), "outflow");
+  assert.equal(classifyTransaction({ ...base, amount: -100, pending: false, category: "INCOME" }), "inflow");
+  assert.equal(classifyTransaction({ ...base, amount: 100, pending: false, category: "TRANSFER_OUT" }), "transfer");
+  assert.equal(classifyTransaction({ ...base, amount: 25, pending: true, category: "FOOD_AND_DRINK" }), "pending");
+  assert.equal(classifyTransaction({ ...base, amount: -25, pending: false, category: "GENERAL_MERCHANDISE" }), "refund");
+  const picture = buildMoneyPicture([{ ...base, amount: 25, pending: false, category: "FOOD_AND_DRINK" }, { ...base, id: "2", amount: 100, pending: false, category: "TRANSFER_OUT" }, { ...base, id: "3", amount: 12, pending: true, category: "FOOD_AND_DRINK" }], new Date("2026-07-22T00:00:00Z"));
+  assert.equal(picture.spending, 25); assert.equal(picture.spendingByCategory[0].amount, 25);
+});
+
+test("Money Picture filters preserve deterministic newest-first input without duplicates", () => {
+  const rows = Array.from({ length: 50 }, (_, index) => ({ id: String(50 - index), plaidAccountId: index % 2 ? "a" : "b", name: `Merchant ${index}`, amount: index + 1, currency: "USD", date: `2026-07-${String(22 - Math.floor(index / 3)).padStart(2, "0")}`, pending: false, pendingTransactionId: null, category: index % 2 ? "FOOD_AND_DRINK" : "TRAVEL", detailedCategory: null }));
+  const filtered = filterTransactions(rows, { accountId: "a", category: "FOOD_AND_DRINK" }, new Date("2026-07-22T00:00:00Z"));
+  assert.equal(filtered.length, 25); assert.equal(new Set(filtered.map((row) => row.id)).size, filtered.length); assert.deepEqual(filtered.map((row) => row.id), rows.filter((row) => row.plaidAccountId === "a").map((row) => row.id));
+});
+
+test("Money Picture empty and partial states do not invent balances", () => {
+  const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
+  const empty = buildMoneyPicture([], new Date("2026-07-22T00:00:00Z"));
+  assert.equal(empty.spending, 0); assert.equal(empty.spendingByCategory.length, 0); assert.match(workspace, /currentBalance === null \? "Balance unavailable"/); assert.match(workspace, /every\(\(account\) => account\.currentBalance !== null\)/);
+});
+
+test("transaction browsing remains authenticated, owner-scoped, cursor ordered, and read-only", () => {
+  const route = readFileSync(new URL("../app/api/account/transactions/route.ts", import.meta.url), "utf8");
+  assert.match(route, /if \(!user\).*401/s); assert.match(route, /\.eq\("user_id", user\.id\)/); assert.match(route, /\.is\("removed_at", null\)/); assert.match(route, /order\("transaction_date", \{ ascending: false \}\)\.order\("id", \{ ascending: false \}\)/); assert.doesNotMatch(route, /\.(insert|update|upsert|delete)\(/);
 });
 
 test("anonymous production Link token requests are rejected before configuration", async () => {
