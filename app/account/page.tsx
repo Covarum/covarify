@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { AuthenticatedWorkspace } from "@/components/account/authenticated-workspace";
 import { getAuthenticatedUser } from "@/lib/supabase/auth";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -21,5 +22,28 @@ function timeGreeting() {
 export default async function AccountPage() {
   const user = await getAuthenticatedUser();
   if (!user) redirect("/login?next=/account");
-  return <AuthenticatedWorkspace firstName={founderName(user)} email={user.email || "Signed-in founder"} greeting={timeGreeting()} />;
+
+  const supabase = await createSupabaseServerClient();
+  const { data: item } = await supabase.from("plaid_items").select("id,status").eq("user_id", user.id).eq("environment", "production").maybeSingle();
+  let financialData = null;
+
+  if (item) {
+    const [accounts, transactions, recent, sync] = await Promise.all([
+      supabase.from("plaid_accounts").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("plaid_item_id", item.id).eq("active_status", "active"),
+      supabase.from("plaid_transactions").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("plaid_item_id", item.id).is("removed_at", null),
+      supabase.from("plaid_transactions").select("id,transaction_name,merchant_name,amount,currency,transaction_date,pending").eq("user_id", user.id).eq("plaid_item_id", item.id).is("removed_at", null).order("transaction_date", { ascending: false }).limit(25),
+      supabase.from("transaction_sync_states").select("sync_status,last_sync_completed_at").eq("user_id", user.id).eq("plaid_item_id", item.id).maybeSingle(),
+    ]);
+    const readFailed = [accounts.error, transactions.error, recent.error, sync.error].some(Boolean);
+    financialData = readFailed ? { state: "unavailable" as const } : {
+      state: "ready" as const,
+      connectionStatus: item.status,
+      syncStatus: sync.data?.sync_status || "pending",
+      accountCount: accounts.count || 0,
+      transactionCount: transactions.count || 0,
+      transactions: (recent.data || []).map((transaction) => ({ id: transaction.id, name: transaction.merchant_name || transaction.transaction_name, amount: Number(transaction.amount), currency: transaction.currency || "USD", date: transaction.transaction_date, pending: transaction.pending })),
+    };
+  }
+
+  return <AuthenticatedWorkspace firstName={founderName(user)} email={user.email || "Signed-in founder"} greeting={timeGreeting()} financialData={financialData} />;
 }
