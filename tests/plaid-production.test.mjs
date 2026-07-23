@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { unconfiguredPlaidAuthProvider } from "../lib/plaid/production/auth.ts";
 import { KmsEnvelopePlaidTokenCipher, UnitTestKeyEncryptionService, readTokenCipher } from "../lib/plaid/production/encryption.ts";
@@ -18,6 +19,16 @@ const productionEnvironment = () => ({
   PLAID_ENV: "production", PLAID_PRODUCTS: "transactions", PLAID_COUNTRY_CODES: "US", PLAID_CLIENT_NAME: "Covarify",
   PLAID_WEBHOOK_URL: "https://www.covarify.com/api/plaid/production/webhook", PLAID_REDIRECT_URI: "https://www.covarify.com/connect/oauth",
   PLAID_PRODUCTION_CONNECTIONS_ENABLED: "false", PLAID_PRODUCTION_ALLOWED_USER_IDS: "founder-user",
+});
+
+test("founder workspace scopes sync state through Plaid Item RLS and renders persisted accounts", () => {
+  const accountPage = readFileSync(new URL("../app/account/page.tsx", import.meta.url), "utf8");
+  const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
+  assert.match(accountPage, /from\("transaction_sync_states"\).*\.eq\("plaid_item_id", item\.id\)\.maybeSingle\(\)/s);
+  assert.doesNotMatch(accountPage, /from\("transaction_sync_states"\).*\.eq\("user_id"/s);
+  assert.match(accountPage, /accounts: \(accounts\.data \|\| \[\]\)\.map/);
+  assert.match(workspace, /Connected accounts/);
+  assert.match(workspace, /financialData\.accounts\.map/);
 });
 
 test("anonymous production Link token requests are rejected before configuration", async () => {

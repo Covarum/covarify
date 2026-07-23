@@ -29,17 +29,18 @@ export default async function AccountPage() {
 
   if (item) {
     const [accounts, transactions, recent, sync] = await Promise.all([
-      supabase.from("plaid_accounts").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("plaid_item_id", item.id).eq("active_status", "active"),
+      supabase.from("plaid_accounts").select("id,name,official_name,type,subtype,mask").eq("user_id", user.id).eq("plaid_item_id", item.id).eq("active_status", "active").order("created_at", { ascending: true }),
       supabase.from("plaid_transactions").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("plaid_item_id", item.id).is("removed_at", null),
       supabase.from("plaid_transactions").select("id,transaction_name,merchant_name,amount,currency,transaction_date,pending").eq("user_id", user.id).eq("plaid_item_id", item.id).is("removed_at", null).order("transaction_date", { ascending: false }).limit(25),
-      supabase.from("transaction_sync_states").select("sync_status,last_sync_completed_at").eq("user_id", user.id).eq("plaid_item_id", item.id).maybeSingle(),
+      supabase.from("transaction_sync_states").select("sync_status,last_sync_completed_at").eq("plaid_item_id", item.id).maybeSingle(),
     ]);
     const readFailed = [accounts.error, transactions.error, recent.error, sync.error].some(Boolean);
     financialData = readFailed ? { state: "unavailable" as const } : {
       state: "ready" as const,
       connectionStatus: item.status,
       syncStatus: sync.data?.sync_status || "pending",
-      accountCount: accounts.count || 0,
+      accountCount: accounts.data?.length || 0,
+      accounts: (accounts.data || []).map((account) => ({ id: account.id, name: account.official_name || account.name, type: account.subtype || account.type, mask: account.mask })),
       transactionCount: transactions.count || 0,
       transactions: (recent.data || []).map((transaction) => ({ id: transaction.id, name: transaction.merchant_name || transaction.transaction_name, amount: Number(transaction.amount), currency: transaction.currency || "USD", date: transaction.transaction_date, pending: transaction.pending })),
     };
