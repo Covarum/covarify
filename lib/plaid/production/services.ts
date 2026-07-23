@@ -6,6 +6,7 @@ import type { ConsentRecord, PlaidAccountRecord, PlaidItemRecord, PlaidTransacti
 import type { PlaidTokenCipher } from "./encryption.ts";
 import type { ProductionPlaidConfig } from "./config.ts";
 import type { PlaidProductionRepository } from "./repositories.ts";
+import { categoryFromPlaidTransaction } from "../category-normalization.ts";
 
 const now = () => new Date().toISOString();
 
@@ -27,7 +28,7 @@ function transactionRecord(transaction: Transaction, item: PlaidItemRecord): Pla
     merchantName: transaction.merchant_name || null, name: transaction.name, amount: transaction.amount,
     currency: transaction.iso_currency_code || transaction.unofficial_currency_code || null, date: transaction.date,
     authorizedDate: transaction.authorized_date || null, pending: transaction.pending, removedAt: null, sourceUpdatedAt: now(),
-    rawCategory: transaction.personal_finance_category?.primary || transaction.category?.[0] || null,
+    rawCategory: categoryFromPlaidTransaction(transaction),
   };
 }
 

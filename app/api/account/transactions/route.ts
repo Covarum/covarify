@@ -3,10 +3,11 @@ import { getAuthenticatedUser } from "@/lib/supabase/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { annotateInternalTransfers, filterTransactions, type MoneyTransaction, type TransactionFilters } from "@/lib/money-picture";
 import { decodeTransactionCursor, encodeTransactionCursor } from "@/lib/transaction-pagination";
+import { normalizePersistedPlaidCategory } from "@/lib/plaid/category-normalization";
 
 export const dynamic = "force-dynamic";
 const PAGE_SIZE = 25;
-function mapTransaction(row: Record<string, unknown>, accountLabel: string): MoneyTransaction { const category = row.category_data as { primary?: string; detailed?: string } | null; const amount = Number(row.amount); return { id: String(row.id), plaidAccountId: String(row.plaid_account_id), accountLabel, name: String(row.merchant_name || row.transaction_name), amount, currency: String(row.currency || "USD"), date: String(row.transaction_date), pending: Boolean(row.pending), pendingTransactionId: row.pending_transaction_id ? String(row.pending_transaction_id) : null, category: category?.primary || "Uncategorized", detailedCategory: category?.detailed || null, direction: amount < 0 ? "inflow" : amount > 0 ? "outflow" : "neutral", transferRelationship: null }; }
+function mapTransaction(row: Record<string, unknown>, accountLabel: string): MoneyTransaction { const category = normalizePersistedPlaidCategory(row.category_data); const amount = Number(row.amount); return { id: String(row.id), plaidAccountId: String(row.plaid_account_id), accountLabel, name: String(row.merchant_name || row.transaction_name), amount, currency: String(row.currency || "USD"), date: String(row.transaction_date), pending: Boolean(row.pending), pendingTransactionId: row.pending_transaction_id ? String(row.pending_transaction_id) : null, category: category?.primary || "Uncategorized", detailedCategory: category?.detailed || null, direction: amount < 0 ? "inflow" : amount > 0 ? "outflow" : "neutral", transferRelationship: null }; }
 
 export async function POST(request: Request) {
   const user = await getAuthenticatedUser(); if (!user) return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });

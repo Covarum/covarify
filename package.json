@@ -8,7 +8,8 @@
     "start": "next start",
     "test:early-access": "node --experimental-strip-types --test --test-isolation=none tests/early-access-route.test.mjs",
     "test:plaid-production": "node --conditions=react-server --experimental-strip-types --test --test-force-exit --test-isolation=none tests/plaid-production.test.mjs",
-    "test": "pnpm run test:early-access && pnpm run test:plaid-production",
+    "test:intelligence": "node --experimental-strip-types --test --test-isolation=none tests/money-picture-intelligence.test.mjs",
+    "test": "pnpm run test:early-access && pnpm run test:plaid-production && pnpm run test:intelligence",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },

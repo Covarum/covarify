@@ -216,6 +216,7 @@ test("transactions worker claims, decrypts, paginates, applies deltas, and compl
   const result = await runTransactionsSyncWorker({ config, cipher: { async decrypt() { return "access-token"; } }, repository, now: () => new Date("2026-07-20T12:00:00Z") });
   assert.equal(result.outcome, "complete"); assert.equal(page, 2); assert.equal(deltas.length, 2); assert.equal(completed, true);
   assert.equal(state.cursor, "cursor-2"); assert.equal(state.status, "complete"); assert.equal(state.lastSyncStartedAt, "2026-07-20T12:00:00.000Z");
+  assert.deepEqual(deltas[0].added[0].rawCategory, { primary: "Shops", detailed: null, source: "legacy_category", legacy: ["Shops"] });
 });
 
 test("transactions worker retries transient Plaid failures with bounded jittered backoff", async () => {

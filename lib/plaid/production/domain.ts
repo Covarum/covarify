@@ -32,7 +32,7 @@ export type WebhookEventRecord = {
 export type PlaidTransactionRecord = {
   id: string; userId: string; plaidItemId: string; plaidAccountId: string; plaidTransactionId: string; pendingTransactionId: string | null;
   merchantName: string | null; name: string; amount: number; currency: string | null; date: string; authorizedDate: string | null;
-  pending: boolean; removedAt: string | null; sourceUpdatedAt: string; rawCategory: string | null;
+  pending: boolean; removedAt: string | null; sourceUpdatedAt: string; rawCategory: import("../category-normalization").PersistedPlaidCategory | null;
 };
 
 export type PlaidSyncJobRecord = {
