@@ -38,7 +38,7 @@ test("Money Picture classification excludes transfers and pending rows from spen
   assert.equal(classifyTransaction({ ...base, amount: -100, pending: false, category: "INCOME" }), "inflow");
   assert.equal(classifyTransaction({ ...base, amount: 100, pending: false, category: "TRANSFER_OUT" }), "transfer");
   assert.equal(classifyTransaction({ ...base, amount: 25, pending: true, category: "FOOD_AND_DRINK" }), "pending");
-  assert.equal(classifyTransaction({ ...base, amount: -25, pending: false, category: "GENERAL_MERCHANDISE" }), "refund");
+  assert.equal(classifyTransaction({ ...base, name: "Purchase refund", amount: -25, pending: false, category: "GENERAL_MERCHANDISE" }), "refund");
   const picture = buildMoneyPicture([{ ...base, amount: 25, pending: false, category: "FOOD_AND_DRINK" }, { ...base, id: "2", amount: 100, pending: false, category: "TRANSFER_OUT" }, { ...base, id: "3", amount: 12, pending: true, category: "FOOD_AND_DRINK" }], new Date("2026-07-22T00:00:00Z"));
   assert.equal(picture.spending, 25); assert.equal(picture.spendingByCategory[0].amount, 25);
 });

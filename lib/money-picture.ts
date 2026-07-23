@@ -3,22 +3,23 @@ export type TransactionFilters = { accountId?: string; category?: string; dateRa
 
 const categoryLabel = (value: string) => value === "Uncategorized" ? value : value.toLowerCase().split("_").map((word) => word[0]?.toUpperCase() + word.slice(1)).join(" ");
 const monthKey = (date: Date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+const isTransfer = (transaction: MoneyTransaction) => transaction.category.toUpperCase().startsWith("TRANSFER_") || /\b(online\s+)?xfer\b|\btransfer\b/i.test(transaction.name);
+const isRefund = (transaction: MoneyTransaction) => /\brefund\b|\breversal\b|\breturned\b/i.test(transaction.name);
 
 export function classifyTransaction(transaction: MoneyTransaction) {
-  const primary = transaction.category.toUpperCase();
   if (transaction.pending) return "pending" as const;
-  if (primary.startsWith("TRANSFER_") && transaction.transferRelationship === "internal") return "internal_transfer" as const;
-  if (primary.startsWith("TRANSFER_")) return "transfer" as const;
-  if (transaction.amount < 0 && primary !== "INCOME") return "refund" as const;
+  if (isTransfer(transaction) && transaction.transferRelationship === "internal") return "internal_transfer" as const;
+  if (isTransfer(transaction)) return "transfer" as const;
+  if (transaction.amount < 0 && isRefund(transaction)) return "refund" as const;
   if (transaction.amount < 0) return "inflow" as const;
   if (transaction.amount > 0) return "outflow" as const;
   return "neutral" as const;
 }
 
 export function annotateInternalTransfers(transactions: MoneyTransaction[]) {
-  const transferRows = transactions.filter((transaction) => !transaction.pending && transaction.category.toUpperCase().startsWith("TRANSFER_")); const internal = new Set<string>();
+  const transferRows = transactions.filter((transaction) => !transaction.pending && isTransfer(transaction)); const internal = new Set<string>();
   for (const outgoing of transferRows.filter((transaction) => transaction.amount > 0)) { const outgoingDate = new Date(`${outgoing.date}T00:00:00Z`).getTime(); const match = transferRows.find((candidate) => candidate.amount < 0 && candidate.plaidAccountId !== outgoing.plaidAccountId && Math.abs(Math.abs(candidate.amount) - outgoing.amount) < .01 && Math.abs(new Date(`${candidate.date}T00:00:00Z`).getTime() - outgoingDate) <= 3 * 86400000); if (match) { internal.add(outgoing.id); internal.add(match.id); } }
-  return transactions.map((transaction) => ({ ...transaction, transferRelationship: internal.has(transaction.id) ? "internal" as const : transaction.category.toUpperCase().startsWith("TRANSFER_") ? "external" as const : null }));
+  return transactions.map((transaction) => ({ ...transaction, transferRelationship: internal.has(transaction.id) ? "internal" as const : isTransfer(transaction) ? "external" as const : null }));
 }
 
 export function filterTransactions(transactions: MoneyTransaction[], filters: TransactionFilters, now = new Date()) {
