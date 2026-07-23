@@ -13,7 +13,7 @@ import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plai
 import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SYNC_JOB_RETENTION_DAYS, WEBHOOK_RETENTION_DAYS } from "../lib/account-deletion/policy.ts";
 import { assertFounderPilotItemLimit } from "../lib/plaid/production/item-limit.ts";
 import { sanitizeLinkDiagnostic } from "../lib/plaid/production/link-diagnostics.ts";
-import { buildMoneyPicture, classifyTransaction, filterTransactions } from "../lib/money-picture.ts";
+import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions } from "../lib/money-picture.ts";
 
 const productionEnvironment = () => ({
   PLAID_CLIENT_ID: "client-id", PLAID_SANDBOX_SECRET: "sandbox-secret", PLAID_PRODUCTION_SECRET: "production-secret",
@@ -27,7 +27,7 @@ test("founder workspace scopes sync state through Plaid Item RLS and renders per
   const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
   assert.match(accountPage, /from\("transaction_sync_states"\).*\.eq\("plaid_item_id", item\.id\)\.maybeSingle\(\)/s);
   assert.doesNotMatch(accountPage, /from\("transaction_sync_states"\).*\.eq\("user_id"/s);
-  assert.match(accountPage, /accounts: \(accounts\.data \|\| \[\]\)\.map/);
+  assert.match(accountPage, /const accountRows = \(accounts\.data \|\| \[\]\)\.map/);
   assert.match(workspace, /Connected accounts/);
   assert.match(workspace, /financialData\.accounts\.map/);
 });
@@ -41,6 +41,14 @@ test("Money Picture classification excludes transfers and pending rows from spen
   assert.equal(classifyTransaction({ ...base, amount: -25, pending: false, category: "GENERAL_MERCHANDISE" }), "refund");
   const picture = buildMoneyPicture([{ ...base, amount: 25, pending: false, category: "FOOD_AND_DRINK" }, { ...base, id: "2", amount: 100, pending: false, category: "TRANSFER_OUT" }, { ...base, id: "3", amount: 12, pending: true, category: "FOOD_AND_DRINK" }], new Date("2026-07-22T00:00:00Z"));
   assert.equal(picture.spending, 25); assert.equal(picture.spendingByCategory[0].amount, 25);
+});
+
+test("account analytics retain provenance and exclude matched internal transfers", () => {
+  const base = { name: "Entry", accountLabel: "Account A • 1111", currency: "USD", pending: false, pendingTransactionId: null, detailedCategory: null, direction: "outflow", transferRelationship: null };
+  const rows = annotateInternalTransfers([{ ...base, id: "out", plaidAccountId: "a", amount: 100, date: "2026-07-20", category: "TRANSFER_OUT" }, { ...base, id: "in", plaidAccountId: "b", accountLabel: "Account B • 2222", amount: -100, direction: "inflow", date: "2026-07-21", category: "TRANSFER_IN" }, { ...base, id: "spend", plaidAccountId: "a", amount: 25, date: "2026-07-21", category: "FOOD_AND_DRINK" }]);
+  assert.equal(rows[0].transferRelationship, "internal"); assert.equal(rows[1].transferRelationship, "internal");
+  const picture = buildMoneyPicture(rows, new Date("2026-07-22T00:00:00Z")); assert.equal(picture.spending, 25); assert.equal(picture.income, 0);
+  const analytics = buildAccountAnalytics(rows); assert.equal(analytics.length, 2); assert.equal(analytics.find((account) => account.accountId === "a").transfersOut, 1); assert.equal(buildAccountObservations(analytics).every((observation) => !observation.title.includes("undefined")), true);
 });
 
 test("Money Picture filters preserve deterministic newest-first input without duplicates", () => {
