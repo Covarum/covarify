@@ -3,56 +3,29 @@ import {
   buildMoneyPicture,
   classifyTransaction,
   type MoneyTransaction,
-} from "./money-picture";
+} from "./money-picture.ts";
 import {
   runMoneyPictureIntelligence,
   type IntelligenceMetrics,
-} from "./money-picture-intelligence";
-
-const DAY = 86400000;
+} from "./money-picture-intelligence.ts";
+import { buildObservationExplanation } from "./money-picture-explanations.ts";
+import { buildCanonicalScopedFinancialMetrics } from "./money-picture-canonical-metrics.ts";
 
 export function buildMoneyPictureIntelligence(
   transactions: MoneyTransaction[],
   input: { syncStatus: string; lastSyncAt: string | null; now?: Date },
 ) {
   const now = input.now || new Date();
-  const currentStart = new Date(now.getTime() - 30 * DAY);
-  const priorStart = new Date(now.getTime() - 60 * DAY);
-  const currentRows = transactions.filter(
-    (transaction) =>
-      new Date(`${transaction.date}T00:00:00Z`) >= currentStart,
-  );
-  const priorRows = transactions.filter((transaction) => {
-    const date = new Date(`${transaction.date}T00:00:00Z`);
-    return date >= priorStart && date < currentStart;
+  const canonical = buildCanonicalScopedFinancialMetrics(transactions, {
+    now,
   });
-  const sum = (
-    rows: MoneyTransaction[],
-    kind: "inflow" | "outflow",
-  ) =>
-    rows
-      .filter((transaction) => classifyTransaction(transaction) === kind)
-      .reduce(
-        (total, transaction) =>
-          total +
-          (kind === "inflow"
-            ? Math.abs(transaction.amount)
-            : transaction.amount),
-        0,
-      );
+  const { currentRows } = canonical;
   const analytics = buildAccountAnalytics(currentRows);
   const picture = buildMoneyPicture(transactions, now);
 
   const metrics: IntelligenceMetrics = {
     generatedAt: now.toISOString(),
-    period: {
-      currentStart: currentStart.toISOString().slice(0, 10),
-      currentEnd: now.toISOString().slice(0, 10),
-      priorStart: priorStart.toISOString().slice(0, 10),
-      priorEnd: new Date(currentStart.getTime() - DAY)
-        .toISOString()
-        .slice(0, 10),
-    },
+    period: canonical.metrics.period,
     transactionCount: transactions.length,
     pendingCount: transactions.filter((transaction) => transaction.pending)
       .length,
@@ -66,10 +39,10 @@ export function buildMoneyPictureIntelligence(
       (transaction) =>
         classifyTransaction(transaction) === "internal_transfer",
     ).length,
-    identifiedInflows: sum(currentRows, "inflow"),
-    identifiedOutflows: sum(currentRows, "outflow"),
-    priorInflows: sum(priorRows, "inflow"),
-    priorOutflows: sum(priorRows, "outflow"),
+    identifiedInflows: canonical.metrics.current.inflows,
+    identifiedOutflows: canonical.metrics.current.outflows,
+    priorInflows: canonical.metrics.prior.inflows,
+    priorOutflows: canonical.metrics.prior.outflows,
     largestExpense:
       currentRows
         .filter(
@@ -111,7 +84,24 @@ export function buildMoneyPictureIntelligence(
     })),
     syncStatus: input.syncStatus,
     lastSyncAt: input.lastSyncAt,
+    canonicalCashFlow: canonical.metrics,
   };
 
   return runMoneyPictureIntelligence(metrics);
+}
+
+export function buildMoneyPictureIntelligenceBundle(
+  transactions: MoneyTransaction[],
+  input: { syncStatus: string; lastSyncAt: string | null; now?: Date },
+) {
+  const intelligence = buildMoneyPictureIntelligence(transactions, input);
+  const explanations = [
+    ...(intelligence.criticalAlert ? [intelligence.criticalAlert] : []),
+    ...intelligence.observations,
+  ]
+    .map((observation) =>
+      buildObservationExplanation(observation, transactions),
+    )
+    .filter((payload) => payload !== null);
+  return { intelligence, explanations };
 }

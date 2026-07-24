@@ -9,6 +9,11 @@ import {
 } from "../lib/money-picture.ts";
 import { runMoneyPictureIntelligence } from "../lib/money-picture-intelligence.ts";
 import { normalizePersistedPlaidCategory } from "../lib/plaid/category-normalization.ts";
+import {
+  answerObservationQuestion,
+  buildObservationExplanation,
+} from "../lib/money-picture-explanations.ts";
+import { buildCanonicalScopedFinancialMetrics } from "../lib/money-picture-canonical-metrics.ts";
 
 const url = process.env.SAFE_SUPABASE_URL;
 const key = process.env.SAFE_SUPABASE_KEY;
@@ -87,36 +92,19 @@ const rows = annotateInternalTransfers(
 );
 
 const now = new Date("2026-07-23T12:00:00.000Z");
-const start30 = new Date(now.getTime() - 30 * 86400000);
-const start60 = new Date(now.getTime() - 60 * 86400000);
-const periodRows = rows.filter(
-  (row) => new Date(`${row.date}T00:00:00Z`) >= start30,
-);
-const priorRows = rows.filter((row) => {
-  const date = new Date(`${row.date}T00:00:00Z`);
-  return date >= start60 && date < start30;
+const canonical = buildCanonicalScopedFinancialMetrics(rows, {
+  now,
+  removedExcluded: (transactionResult.data || []).filter(
+    (row) => row.removed_at !== null,
+  ).length,
 });
-const sum = (source: MoneyTransaction[], kind: "inflow" | "outflow") =>
-  source
-    .filter((row) => classifyTransaction(row) === kind)
-    .reduce(
-      (total, row) =>
-        total + (kind === "inflow" ? Math.abs(row.amount) : row.amount),
-      0,
-    );
+const periodRows = canonical.currentRows;
 const picture = buildMoneyPicture(rows, now);
 const periodAnalytics = buildAccountAnalytics(periodRows);
 
 const metrics = {
   generatedAt: now.toISOString(),
-  period: {
-    currentStart: start30.toISOString().slice(0, 10),
-    currentEnd: now.toISOString().slice(0, 10),
-    priorStart: start60.toISOString().slice(0, 10),
-    priorEnd: new Date(start30.getTime() - 86400000)
-      .toISOString()
-      .slice(0, 10),
-  },
+  period: canonical.metrics.period,
   transactionCount: rows.length,
   pendingCount: rows.filter((row) => row.pending).length,
   removedCount: (transactionResult.data || []).filter(
@@ -128,10 +116,10 @@ const metrics = {
   internalTransferCount: rows.filter(
     (row) => classifyTransaction(row) === "internal_transfer",
   ).length,
-  identifiedInflows: sum(periodRows, "inflow"),
-  identifiedOutflows: sum(periodRows, "outflow"),
-  priorInflows: sum(priorRows, "inflow"),
-  priorOutflows: sum(priorRows, "outflow"),
+  identifiedInflows: canonical.metrics.current.inflows,
+  identifiedOutflows: canonical.metrics.current.outflows,
+  priorInflows: canonical.metrics.prior.inflows,
+  priorOutflows: canonical.metrics.prior.outflows,
   largestExpense:
     periodRows
       .filter((row) => classifyTransaction(row) === "outflow")
@@ -171,8 +159,12 @@ const metrics = {
     syncResult.data?.last_sync_completed_at ||
     item.last_successful_sync_at ||
     null,
+  canonicalCashFlow: canonical.metrics,
 };
 const result = runMoneyPictureIntelligence(metrics);
+const explanations = result.observations
+  .map((observation) => buildObservationExplanation(observation, rows))
+  .filter((payload) => payload !== null);
 const storedStrings = activeRows.filter(
   (row) => typeof row.category_data === "string",
 ).length;
@@ -216,6 +208,7 @@ console.log(
         periodCategorizedOutflow: Number(
           metrics.categorizedOutflow.toFixed(2),
         ),
+        canonicalCashFlow: canonical.metrics,
       },
       preview: {
         candidateCount: result.candidateCount,
@@ -234,6 +227,45 @@ console.log(
           confidence: observation.confidence,
           score: observation.score,
         })),
+        explanations: explanations.map((payload) => ({
+          observationId: payload.observationId,
+          ruleId: payload.ruleId,
+          period: payload.period,
+          accountScope: payload.accountScope,
+          confidence: payload.confidence,
+          supportingMetrics: payload.supportingMetrics,
+          supportingCategories: payload.supportingCategories,
+          supportingMerchants: payload.supportingMerchants.map(
+            (merchant, index) => ({
+              ...merchant,
+              key: `merchant-${index + 1}`,
+              label: `Merchant ${index + 1}`,
+            }),
+          ),
+          supportingAccounts: payload.supportingAccounts,
+          supportingTransactions: payload.supportingTransactions,
+          signals: payload.signals,
+          explanationBullets: payload.explanationBullets,
+          supportedQuestions: payload.supportedQuestions,
+        })),
+        conversationExamples: explanations.flatMap((payload) =>
+          payload.supportedQuestions
+            .filter((question) =>
+              [
+                "categories_changed",
+                "income_or_spending",
+                "one_purchase",
+                "operating_account",
+                "bills_from_account",
+              ].includes(question.id),
+            )
+            .slice(0, 2)
+            .map((question) => ({
+              observationId: payload.observationId,
+              question: question.label,
+              answer: answerObservationQuestion(payload, question.id),
+            })),
+        ),
       },
     },
     null,
