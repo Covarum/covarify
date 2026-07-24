@@ -219,6 +219,7 @@ export function MoneyPictureObservations({
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const restoreFocusRef = useRef(false);
   const visible = initial.filter(
     (observation) => !dismissed.has(observation.observationId),
   );
@@ -234,13 +235,19 @@ export function MoneyPictureObservations({
     );
   };
   const closeExplanation = () => {
+    restoreFocusRef.current = true;
     setActiveExplanation(null);
     setAnswer(null);
-    requestAnimationFrame(() => triggerRef.current?.focus());
   };
 
   useEffect(() => {
-    if (!activeExplanation) return;
+    if (!activeExplanation) {
+      if (restoreFocusRef.current) {
+        restoreFocusRef.current = false;
+        requestAnimationFrame(() => triggerRef.current?.focus());
+      }
+      return;
+    }
     closeRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
