@@ -3,17 +3,40 @@ import Link from "next/link";
 
 export function Brand({ footer = false }: { footer?: boolean }) {
   return (
-    <Link className={`brand ${footer ? "brand-footer" : ""}`} href="/" aria-label="Covarify home">
-      <span className="brand-logo-frame">
+    <Link
+      className={`brand ${footer ? "brand-footer" : ""}`}
+      href="/"
+      aria-label="Covarify home"
+      style={footer ? { background: "#fff", borderRadius: 12, padding: "8px 10px" } : undefined}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          display: "block",
+          width: footer ? 210 : "clamp(178px, 22vw, 230px)",
+          aspectRatio: "828.09 / 207.335",
+          overflow: "hidden",
+          position: "relative",
+          flexShrink: 0,
+        }}
+      >
         <Image
-          className="brand-logo"
           src="/brand/covarify-primary.svg"
-          alt="Covarify - Financial Clarity"
+          alt=""
           width={1080}
           height={1080}
           priority={!footer}
+          style={{
+            position: "absolute",
+            width: "130.42%",
+            height: "auto",
+            maxWidth: "none",
+            left: "-15.21%",
+            top: "-210.45%",
+          }}
         />
       </span>
+      <span className="sr-only">Covarify - Financial Clarity</span>
     </Link>
   );
 }
