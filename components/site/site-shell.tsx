@@ -7,13 +7,13 @@ export function Brand({ footer = false }: { footer?: boolean }) {
       className={`brand ${footer ? "brand-footer" : ""}`}
       href="/"
       aria-label="Covarify home"
-      style={footer ? { background: "#fff", borderRadius: 12, padding: "8px 10px" } : undefined}
+      style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}
     >
       <span
         aria-hidden="true"
         style={{
           display: "block",
-          width: footer ? 210 : "clamp(178px, 22vw, 230px)",
+          width: footer ? "clamp(230px, 22vw, 285px)" : "clamp(225px, 24vw, 285px)",
           aspectRatio: "828.09 / 207.335",
           overflow: "hidden",
           position: "relative",
@@ -33,6 +33,7 @@ export function Brand({ footer = false }: { footer?: boolean }) {
             maxWidth: "none",
             left: "-15.21%",
             top: "-210.45%",
+            filter: footer ? "brightness(0) invert(1)" : undefined,
           }}
         />
       </span>
@@ -46,5 +47,5 @@ export function SiteHeader() {
 }
 
 export function SiteFooter() {
-  return <footer className="site-footer"><div className="shell footer-grid"><div><Brand footer /><p>Financial Clarity</p><p>From Complexity to Confidence.</p></div><nav aria-label="Legal"><Link href="/privacy">Privacy</Link><Link href="/security">Security</Link><Link href="/terms">Terms</Link></nav><a href="mailto:security@covarify.com">security@covarify.com</a></div><div className="shell copyright">© {new Date().getFullYear()} Covarify. Built quietly, with intention.</div></footer>;
+  return <footer className="site-footer"><div className="shell footer-grid"><div><Brand footer /><p style={{ marginTop: 22 }}>From Complexity to Confidence.</p></div><nav aria-label="Legal"><Link href="/privacy">Privacy</Link><Link href="/security">Security</Link><Link href="/terms">Terms</Link></nav><a href="mailto:security@covarify.com">security@covarify.com</a></div><div className="shell copyright">© {new Date().getFullYear()} Covarify. Built quietly, with intention.</div></footer>;
 }
