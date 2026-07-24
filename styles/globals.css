@@ -55,3 +55,31 @@
 .auth-secondary-link{justify-self:center;font-size:12px}
 .connect-meta{margin:42px 0 0;padding-top:24px;border-top:1px solid var(--border);color:#948a99;font-size:11px;line-height:1.6;text-align:center}
 @media(max-width:640px){.connect-page{padding:22px 16px 60px}.connect-header{gap:29px;padding-bottom:34px}.connect-brand-row{align-items:flex-start;gap:12px}.connect-pilot{max-width:145px;text-align:center;line-height:1.35}.connect-heading{gap:13px}.connect-heading h1{font-size:clamp(42px,13vw,58px)}.connect-heading .connect-lede{font-size:16px}.connect-consent{gap:36px;padding-top:35px}.connect-trust h2,.connect-learn h2{font-size:27px}.connect-trust-grid{grid-template-columns:1fr}.connect-trust-grid>div{min-height:auto}.connect-accordions summary{padding-block:18px}.connect-consent-action{padding-top:30px}.auth-consent{grid-template-columns:20px 1fr;gap:12px;padding:18px;font-size:12px}.auth-consent input{width:18px;height:18px}}
+
+/* Approved Covarify identity */
+.site-header{height:76px}
+.brand{width:232px;display:inline-flex;align-items:center;flex:0 0 auto;gap:0;color:inherit;font-size:0;letter-spacing:normal}
+.brand-logo{width:100%;height:auto;display:block}
+.site-footer{padding-top:64px}
+.footer-grid{grid-template-columns:minmax(260px,1fr) auto minmax(200px,auto);align-items:center;gap:clamp(36px,6vw,80px)}
+.site-footer .brand{width:252px}
+.footer-brand p{margin:16px 0 0;color:#8f8197;font-size:13px}
+.footer-security{display:grid;gap:5px;justify-self:end}
+.footer-security span{color:#776b7d;font-size:9px;font-weight:750;letter-spacing:.12em;text-transform:uppercase}
+.copyright{margin-top:52px}
+.auth-story .brand{width:242px}
+.auth-loading-symbol{width:58px;height:auto;margin-bottom:8px}
+
+@media(max-width:800px){
+  .site-header{height:68px}
+  .site-header .brand{width:206px}
+  .hero{padding-top:56px}
+  .footer-grid{grid-template-columns:1fr;align-items:start}
+  .footer-security{justify-self:start}
+}
+
+@media(max-width:480px){
+  .site-header .brand{width:152px}
+  .hero{padding-top:42px}
+  .site-footer .brand{width:232px}
+}

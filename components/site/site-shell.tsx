@@ -1,45 +1,9 @@
-import Image from "next/image";
 import Link from "next/link";
+import Image from "next/image";
 
-export function Brand({ footer = false }: { footer?: boolean }) {
-  return (
-    <Link
-      className={`brand ${footer ? "brand-footer" : ""}`}
-      href="/"
-      aria-label="Covarify home"
-      style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          display: "block",
-          width: footer ? "clamp(230px, 22vw, 285px)" : "clamp(225px, 24vw, 285px)",
-          aspectRatio: "828.09 / 207.335",
-          overflow: "hidden",
-          position: "relative",
-          flexShrink: 0,
-        }}
-      >
-        <Image
-          src="/brand/covarify-primary.svg"
-          alt=""
-          width={1080}
-          height={1080}
-          priority={!footer}
-          style={{
-            position: "absolute",
-            width: "130.42%",
-            height: "auto",
-            maxWidth: "none",
-            left: "-15.21%",
-            top: "-210.45%",
-            filter: footer ? "brightness(0) invert(1)" : undefined,
-          }}
-        />
-      </span>
-      <span className="sr-only">Covarify - Financial Clarity</span>
-    </Link>
-  );
+export function Brand({ variant = "primary" }: { variant?: "primary" | "light" }) {
+  const src = variant === "light" ? "/covarify-primary-light.svg" : "/covarify-primary-horizontal.svg";
+  return <Link className={`brand brand-${variant}`} href="/" aria-label="Covarify home"><Image className="brand-logo" src={src} alt="Covarify — Financial Clarity" width={832} height={212} priority /></Link>;
 }
 
 export function SiteHeader() {
@@ -47,5 +11,5 @@ export function SiteHeader() {
 }
 
 export function SiteFooter() {
-  return <footer className="site-footer"><div className="shell footer-grid"><div><Brand footer /><p style={{ marginTop: 22 }}>From Complexity to Confidence.</p></div><nav aria-label="Legal"><Link href="/privacy">Privacy</Link><Link href="/security">Security</Link><Link href="/terms">Terms</Link></nav><a href="mailto:security@covarify.com">security@covarify.com</a></div><div className="shell copyright">© {new Date().getFullYear()} Covarify. Built quietly, with intention.</div></footer>;
+  return <footer className="site-footer"><div className="shell footer-grid"><div className="footer-brand"><Brand variant="light" /><p>From Complexity to Confidence.</p></div><nav aria-label="Legal"><Link href="/privacy">Privacy</Link><Link href="/security">Security</Link><Link href="/terms">Terms</Link></nav><a className="footer-security" href="mailto:security@covarify.com"><span>Security</span>security@covarify.com</a></div><div className="shell copyright">© {new Date().getFullYear()} Covarify. Built quietly, with intention.</div></footer>;
 }

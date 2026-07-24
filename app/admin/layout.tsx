@@ -15,7 +15,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!isFounderAdmin(user, process.env.COVARIFY_ADMIN_EMAILS)) redirect("/account");
   return <div className="admin-shell">
     <aside className="admin-sidebar">
-      <Brand />
+      <Brand variant="light" />
       <div><p className="admin-overline">Founder console</p><strong>Waitlist CRM</strong></div>
       <nav aria-label="Admin navigation">
         <Link href="/admin"><LayoutDashboard size={17} /> Overview</Link>

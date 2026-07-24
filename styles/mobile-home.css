@@ -7,7 +7,7 @@
 
   .site-header.shell {
     width: 100%;
-    height: 66px;
+    height: 64px;
     gap: 16px;
     padding-right: max(14px, env(safe-area-inset-right));
     padding-left: max(14px, env(safe-area-inset-left));
@@ -80,8 +80,7 @@
   }
 
   .site-header .brand {
-    gap: 8px;
-    font-size: 18px;
+    width: 148px;
   }
 
   .site-header .button-small {
