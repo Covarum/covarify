@@ -80,6 +80,7 @@
 
 @media(max-width:480px){
   .site-header .brand{width:152px}
+  .site-header .button-small{width:auto;min-width:max-content;flex:0 0 auto}
   .hero{padding-top:42px}
   .site-footer .brand{width:232px}
 }

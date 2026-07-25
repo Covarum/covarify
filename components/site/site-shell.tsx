@@ -3,7 +3,7 @@ import Image from "next/image";
 
 export function Brand({ variant = "primary" }: { variant?: "primary" | "light" }) {
   const src = variant === "light" ? "/covarify-primary-light.svg" : "/covarify-primary-horizontal.svg";
-  return <Link className={`brand brand-${variant}`} href="/" aria-label="Covarify home"><Image className="brand-logo" src={src} alt="Covarify — Financial Clarity" width={832} height={212} priority /></Link>;
+  return <Link className={`brand brand-${variant}`} href="/" aria-label="Covarify home"><Image className="brand-logo" src={src} alt="Covarify — Financial Clarity" width={910} height={221} priority /></Link>;
 }
 
 export function SiteHeader() {
