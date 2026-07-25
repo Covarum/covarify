@@ -30,18 +30,18 @@ export default function Home() {
         <div className="hero-orb" aria-hidden="true" />
         <div className="hero-copy">
           <p className="eyebrow"><Sparkles size={14} /> Private beta opening soon</p>
-          <h1>Financial clarity<br />is coming.</h1>
-          <p className="hero-lede">Covarify is building a calmer, clearer way to understand your money — and what to do next.</p>
-          <p className="hero-support">Most financial tools show you more data. Covarify is being built to help you make better decisions.</p>
+          <h1>Understand what matters.</h1>
+          <p className="hero-lede">Covarify helps you understand your financial life by identifying what matters, explaining why it matters, and helping you decide what to do next.</p>
+          <p className="hero-support">Most financial apps show you transactions and data. Covarify helps you understand the story your money is telling.</p>
           <Link className="button button-primary" href="/early-access">Request Early Access <ArrowRight size={17} /></Link>
           <p className="microcopy">Private beta opening soon.</p>
         </div>
         <div className="clarity-card" aria-label="Covarify concept preview">
-          <div className="card-top"><span>YOUR NEXT MOVE</span><span className="status-dot" /></div>
+          <div className="card-top"><span>YOUR MONEY PICTURE</span><span className="status-dot" /></div>
           <div className="clarity-icon"><Check size={24} /></div>
           <p className="card-kicker">CLARITY, NOT MORE NOISE</p>
-          <h2>Know what matters first.</h2>
-          <p>A calm, considered view of your financial picture — shaped around the decision in front of you.</p>
+          <h2>Understand what matters.</h2>
+          <p>A calm, considered view of your financial life, shaped around the decisions in front of you.</p>
           <div className="soft-lines"><i /><i /><i /></div>
         </div>
       </section>
