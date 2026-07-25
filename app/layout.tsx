@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "@/styles/globals.css";
-import "@/styles/brand.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://covarify.com"),
