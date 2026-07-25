@@ -11,7 +11,7 @@ const sections = [
   },
   {
     eyebrow: "Financial clarity",
-    title: "Not another budgeting app.",
+    title: "Your money has a story. We help you understand it.",
     body: <>Covarify is not being built to judge your spending or bury you in charts.<br /><br />It is being built to help you understand your financial picture, identify what needs attention, and move forward with more confidence.</>,
     statement: <>Covarify is not a financial data company.<br />It is a financial decision company.</>,
   },
@@ -56,7 +56,7 @@ export default function Home() {
       </div>
 
       <section className="cta-panel shell">
-        <div><p className="eyebrow plain">By invitation</p><h2>Early access will be limited.</h2><p>Join the list to be notified when the first private beta opens.</p></div>
+        <div><p className="eyebrow plain">By invitation</p><h2>Be among the first to experience Financial Clarity.</h2><p>Join the list to be notified when the first private beta opens.</p></div>
         <Link className="button button-light" href="/early-access">Request Early Access <ArrowRight size={17} /></Link>
       </section>
 
