@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { ArrowRight, Check, Sparkles } from "lucide-react";
+import { ArrowRight, Sparkles } from "lucide-react";
+import { RotatingObservationCard } from "@/components/site/rotating-observation-card";
 import { SiteFooter, SiteHeader } from "@/components/site/site-shell";
 import "@/styles/mobile-home.css";
 
@@ -36,14 +37,7 @@ export default function Home() {
           <Link className="button button-primary" href="/early-access">Request Early Access <ArrowRight size={17} /></Link>
           <p className="microcopy">Private beta opening soon.</p>
         </div>
-        <div className="clarity-card" aria-label="Covarify concept preview">
-          <div className="card-top"><span>YOUR MONEY PICTURE</span><span className="status-dot" /></div>
-          <div className="clarity-icon"><Check size={24} /></div>
-          <p className="card-kicker">CLARITY, NOT MORE NOISE</p>
-          <h2>Understand what matters.</h2>
-          <p>A calm, considered view of your financial life, shaped around the decisions in front of you.</p>
-          <div className="soft-lines"><i /><i /><i /></div>
-        </div>
+        <RotatingObservationCard />
       </section>
 
       <div className="section-list">
