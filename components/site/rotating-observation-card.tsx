@@ -38,15 +38,20 @@ const observations: readonly Observation[] = [
   },
 ];
 
-const rotationInterval = 6000;
+const rotationInterval = 4500;
 
 export function RotatingObservationCard() {
   const reduceMotion = Boolean(useReducedMotion());
   const [activeIndex, setActiveIndex] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
   const [hasFocus, setHasFocus] = useState(false);
-  const isPaused = isHovered || hasFocus;
+  const [isManuallyPaused, setIsManuallyPaused] = useState(false);
+  const isPaused = isManuallyPaused || isHovered || hasFocus;
   const observation = observations[activeIndex];
+
+  const toggleManualPause = () => {
+    setIsManuallyPaused((paused) => !paused);
+  };
 
   useEffect(() => {
     if (reduceMotion || isPaused) return;
@@ -61,17 +66,28 @@ export function RotatingObservationCard() {
   return (
     <div
       className="clarity-card"
-      aria-label="Rotating Covarify money observations"
+      aria-label={isManuallyPaused ? "Resume rotating financial observations" : "Pause rotating financial observations"}
+      aria-pressed={isManuallyPaused}
       data-observation-index={activeIndex}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setHasFocus(false);
       }}
+      onClick={() => {
+        setHasFocus(false);
+        toggleManualPause();
+      }}
       onFocus={() => setHasFocus(true)}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        toggleManualPause();
+      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      role="button"
       tabIndex={0}
     >
-      <div className="card-top"><span>YOUR MONEY PICTURE</span><span className="status-dot" /></div>
+      <div className="card-top"><span>YOUR MONEY PICTURE</span><span className={`status-dot${isManuallyPaused ? " is-paused" : ""}`} /></div>
       <div className="clarity-icon"><Check size={24} /></div>
       <div className="observation-stage" aria-live="off" aria-atomic="true">
         <AnimatePresence initial={false} mode="wait">
