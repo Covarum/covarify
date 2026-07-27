@@ -13,28 +13,26 @@ import { buildFinancialEventLayer } from "../lib/financial-events.ts";
 const now = new Date("2026-07-27T15:00:00Z");
 
 const expected = {
-  "last-30-days": ["2026-06-28", "2026-07-27"],
-  "last-60-days": ["2026-05-29", "2026-07-27"],
-  "last-90-days": ["2026-04-29", "2026-07-27"],
-  "last-6-months": ["2026-01-28", "2026-07-27"],
-  "last-12-months": ["2025-07-28", "2026-07-27"],
-  "this-month": ["2026-07-01", "2026-07-27"],
-  "last-month": ["2026-06-01", "2026-06-30"],
-  "this-quarter": ["2026-07-01", "2026-07-27"],
-  "last-quarter": ["2026-04-01", "2026-06-30"],
-  "year-to-date": ["2026-01-01", "2026-07-27"],
-  "last-calendar-year": ["2025-01-01", "2025-12-31"],
+  "last-30-days": ["2026-06-28", "2026-07-27", "2026-05-29", "2026-06-27"],
+  "last-60-days": ["2026-05-29", "2026-07-27", "2026-03-30", "2026-05-28"],
+  "last-90-days": ["2026-04-29", "2026-07-27", "2026-01-29", "2026-04-28"],
+  "last-6-months": ["2026-01-28", "2026-07-27", "2025-07-31", "2026-01-27"],
+  "last-12-months": ["2025-07-28", "2026-07-27", "2024-07-28", "2025-07-27"],
+  "this-month": ["2026-07-01", "2026-07-27", "2026-06-01", "2026-06-27"],
+  "last-month": ["2026-06-01", "2026-06-30", "2026-05-01", "2026-05-31"],
+  "this-quarter": ["2026-07-01", "2026-07-27", "2026-04-01", "2026-04-27"],
+  "last-quarter": ["2026-04-01", "2026-06-30", "2026-01-01", "2026-03-31"],
+  "year-to-date": ["2026-01-01", "2026-07-27", "2025-01-01", "2025-07-27"],
+  "last-calendar-year": ["2025-01-01", "2025-12-31", "2024-01-01", "2024-12-31"],
 };
 
-for (const [key, [start, end]] of Object.entries(expected)) {
+for (const [key, [start, end, priorStart, priorEnd]] of Object.entries(expected)) {
   test(`${key} resolves to inclusive UTC boundaries`, () => {
     const period = resolveFinancialPeriod({ key }, now);
     assert.equal(period.start, start);
     assert.equal(period.end, end);
-    assert.equal(
-      new Date(`${period.priorEnd}T00:00:00Z`).getTime() + 86_400_000,
-      new Date(`${period.start}T00:00:00Z`).getTime(),
-    );
+    assert.equal(period.priorStart, priorStart);
+    assert.equal(period.priorEnd, priorEnd);
   });
 }
 
@@ -49,7 +47,7 @@ test("leap-year and year boundaries remain valid", () => {
       label: "Last month",
       start: "2024-02-01",
       end: "2024-02-29",
-      priorStart: "2024-01-03",
+      priorStart: "2024-01-01",
       priorEnd: "2024-01-31",
       asOf: "2024-03-15",
       futureKind: "preset",
@@ -98,7 +96,7 @@ test("custom ranges validate order, dates, and future boundaries", () => {
 
 test("unknown query values default safely and empty periods stay empty", () => {
   assert.deepEqual(parseFinancialPeriodSelection({ period: "unknown" }), {
-    key: "last-30-days",
+    key: "this-month",
   });
   const period = resolveFinancialPeriod({ key: "this-month" }, now);
   assert.equal(

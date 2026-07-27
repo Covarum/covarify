@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
-  CALENDAR_PERIODS,
-  QUICK_PERIODS,
+  CURRENT_PERIODS,
+  HISTORICAL_PERIODS,
+  RECENT_PERIODS,
+  formatFinancialPeriodDateRange,
   type ResolvedFinancialPeriod,
 } from "@/lib/financial-periods";
 import styles from "./money-picture.module.css";
@@ -52,7 +54,7 @@ export function FinancialPeriodSelector({
           <h2 id="period-heading">Choose the period you want to understand</h2>
         </div>
         <strong>
-          {period.label}: {period.start} through {period.end}
+          {period.label}: {formatFinancialPeriodDateRange(period)}
         </strong>
         <Link href={`/account/events/review?${periodQuery.toString()}`}>
           Review {financialEventCount} Financial Event
@@ -61,9 +63,9 @@ export function FinancialPeriodSelector({
       </header>
       <div className={styles.periodGroups}>
         <fieldset>
-          <legend>Quick ranges</legend>
+          <legend>Current</legend>
           <div>
-            {QUICK_PERIODS.map(([key, label]) => (
+            {CURRENT_PERIODS.map(([key, label]) => (
               <button
                 key={key}
                 type="button"
@@ -76,15 +78,25 @@ export function FinancialPeriodSelector({
           </div>
         </fieldset>
         <fieldset>
-          <legend>Calendar ranges</legend>
+          <legend>Recent</legend>
           <div>
-            {CALENDAR_PERIODS.map(([key, label]) => (
+            {RECENT_PERIODS.map(([key, label]) => (
               <button
                 key={key}
                 type="button"
                 aria-pressed={period.key === key}
                 onClick={() => choose(key)}
               >
+                {label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Historical</legend>
+          <div>
+            {HISTORICAL_PERIODS.map(([key, label]) => (
+              <button key={key} type="button" aria-pressed={period.key === key} onClick={() => choose(key)}>
                 {label}
               </button>
             ))}
@@ -113,7 +125,7 @@ export function FinancialPeriodSelector({
               />
             </label>
             <button type="button" onClick={applyCustom}>
-              Apply custom range
+              Apply custom date range
             </button>
           </div>
           {error && <p role="alert">{error}</p>}

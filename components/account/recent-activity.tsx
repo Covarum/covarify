@@ -200,7 +200,7 @@ export function RecentActivity({
               setFilters({ ...filters, search: event.target.value })
             }
             onKeyDown={(event) => {
-              if (event.key === "Enter") void request(null, filters, true);
+              if (event.key === "Enter") void request(null, { ...filters, search: event.currentTarget.value }, true);
             }}
           />
         </label>

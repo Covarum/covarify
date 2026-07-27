@@ -26,7 +26,7 @@ export async function saveFinancialEventReview(formData: FormData) {
     String(formData.get("context") || "").trim() ||
     String(formData.get("contextSuggestion") || "").trim();
   const period = resolveFinancialPeriod({
-    key: String(formData.get("periodKey") || "last-30-days") as FinancialPeriodKey,
+    key: String(formData.get("periodKey") || "this-month") as FinancialPeriodKey,
     start: String(formData.get("periodStart") || "") || undefined,
     end: String(formData.get("periodEnd") || "") || undefined,
   });

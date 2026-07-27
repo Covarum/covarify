@@ -1,4 +1,10 @@
-export const QUICK_PERIODS = [
+export const CURRENT_PERIODS = [
+  ["this-month", "This month"],
+  ["this-quarter", "This quarter"],
+  ["year-to-date", "Year to date"],
+] as const;
+
+export const RECENT_PERIODS = [
   ["last-30-days", "Last 30 days"],
   ["last-60-days", "Last 60 days"],
   ["last-90-days", "Last 90 days"],
@@ -6,18 +12,16 @@ export const QUICK_PERIODS = [
   ["last-12-months", "Last 12 months"],
 ] as const;
 
-export const CALENDAR_PERIODS = [
-  ["this-month", "This month"],
+export const HISTORICAL_PERIODS = [
   ["last-month", "Last month"],
-  ["this-quarter", "This quarter"],
   ["last-quarter", "Last quarter"],
-  ["year-to-date", "Year to date"],
   ["last-calendar-year", "Last calendar year"],
 ] as const;
 
 export type FinancialPeriodKey =
-  | (typeof QUICK_PERIODS)[number][0]
-  | (typeof CALENDAR_PERIODS)[number][0]
+  | (typeof CURRENT_PERIODS)[number][0]
+  | (typeof RECENT_PERIODS)[number][0]
+  | (typeof HISTORICAL_PERIODS)[number][0]
   | "custom";
 
 export type FinancialPeriodSelection = {
@@ -76,16 +80,16 @@ const validIsoDate = (value?: string) =>
   );
 
 function labelFor(key: FinancialPeriodKey) {
-  return [...QUICK_PERIODS, ...CALENDAR_PERIODS].find(
+  return [...CURRENT_PERIODS, ...RECENT_PERIODS, ...HISTORICAL_PERIODS].find(
     ([candidate]) => candidate === key,
-  )?.[1] || "Custom";
+  )?.[1] || "Custom period";
 }
 
 export function parseFinancialPeriodSelection(
   input: Record<string, string | string[] | undefined>,
 ): FinancialPeriodSelection {
   const requested = Array.isArray(input.period) ? input.period[0] : input.period;
-  const known = [...QUICK_PERIODS, ...CALENDAR_PERIODS].some(
+  const known = [...CURRENT_PERIODS, ...RECENT_PERIODS, ...HISTORICAL_PERIODS].some(
     ([key]) => key === requested,
   );
   if (requested === "custom") {
@@ -95,7 +99,7 @@ export function parseFinancialPeriodSelection(
       end: Array.isArray(input.end) ? input.end[0] : input.end,
     };
   }
-  return { key: known ? (requested as FinancialPeriodKey) : "last-30-days" };
+  return { key: known ? (requested as FinancialPeriodKey) : "this-month" };
 }
 
 export function resolveFinancialPeriod(
@@ -157,8 +161,40 @@ export function resolveFinancialPeriod(
   }
 
   const durationDays = Math.round((end.getTime() - start.getTime()) / DAY) + 1;
-  const priorEnd = addDays(start, -1);
-  const priorStart = addDays(priorEnd, -(durationDays - 1));
+  let priorEnd = addDays(start, -1);
+  let priorStart = addDays(priorEnd, -(durationDays - 1));
+  if (selection.key === "this-month") {
+    priorStart = startOfMonth(priorEnd);
+    priorEnd = new Date(
+      Date.UTC(
+        priorStart.getUTCFullYear(),
+        priorStart.getUTCMonth(),
+        Math.min(today.getUTCDate(), endOfMonth(priorStart).getUTCDate()),
+      ),
+    );
+  } else if (selection.key === "last-month") {
+    priorEnd = addDays(start, -1);
+    priorStart = startOfMonth(priorEnd);
+  } else if (selection.key === "this-quarter") {
+    priorEnd = addDays(start, -1);
+    priorStart = startOfQuarter(priorEnd);
+    priorEnd = addDays(priorStart, durationDays - 1);
+  } else if (selection.key === "last-quarter") {
+    priorEnd = addDays(start, -1);
+    priorStart = startOfQuarter(priorEnd);
+  } else if (selection.key === "year-to-date") {
+    priorStart = new Date(Date.UTC(today.getUTCFullYear() - 1, 0, 1));
+    priorEnd = new Date(
+      Date.UTC(
+        today.getUTCFullYear() - 1,
+        today.getUTCMonth(),
+        Math.min(today.getUTCDate(), endOfMonth(new Date(Date.UTC(today.getUTCFullYear() - 1, today.getUTCMonth(), 1))).getUTCDate()),
+      ),
+    );
+  } else if (selection.key === "last-calendar-year") {
+    priorStart = new Date(Date.UTC(start.getUTCFullYear() - 1, 0, 1));
+    priorEnd = new Date(Date.UTC(start.getUTCFullYear() - 1, 11, 31));
+  }
   return {
     key: selection.key,
     label: labelFor(selection.key),
@@ -169,6 +205,18 @@ export function resolveFinancialPeriod(
     asOf: iso(today),
     futureKind: selection.key === "custom" ? "custom" : "preset",
   };
+}
+
+export function formatFinancialPeriodDateRange(
+  period: Pick<ResolvedFinancialPeriod, "start" | "end">,
+) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  return `${formatter.format(new Date(`${period.start}T00:00:00Z`))} through ${formatter.format(new Date(`${period.end}T00:00:00Z`))}`;
 }
 
 export function transactionInPeriod(

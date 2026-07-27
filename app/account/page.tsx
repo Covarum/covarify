@@ -18,7 +18,7 @@ export default async function AccountPage({ searchParams }: { searchParams: Prom
   const periodSelection = parseFinancialPeriodSelection(await searchParams);
   let period;
   try { period = resolveFinancialPeriod(periodSelection); }
-  catch { redirect("/account?period=last-30-days"); }
+  catch { redirect("/account?period=this-month"); }
   const supabase = await createSupabaseServerClient();
   const { data: item } = await supabase.from("plaid_items").select("id,status,institution_name,last_successful_sync_at").eq("user_id", user.id).eq("environment", "production").maybeSingle();
   let financialData = null;
