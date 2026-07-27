@@ -6,6 +6,10 @@ import {
   annotateInternalTransfers,
   type MoneyTransaction,
 } from "@/lib/money-picture";
+import {
+  transactionInPeriod,
+  type ResolvedFinancialPeriod,
+} from "@/lib/financial-periods";
 import { buildFinancialEventLayer } from "@/lib/financial-events";
 import {
   groupedReviewPriority,
@@ -95,7 +99,10 @@ function mapTransaction(
   };
 }
 
-export async function loadFinancialEventReviewQueue(userId: string) {
+export async function loadFinancialEventReviewQueue(
+  userId: string,
+  period?: ResolvedFinancialPeriod,
+) {
   const supabase = await createSupabaseServerClient();
   const { data: item, error: itemError } = await supabase
     .from("plaid_items")
@@ -141,7 +148,7 @@ export async function loadFinancialEventReviewQueue(userId: string) {
         ),
       )
       .filter((row) => labels.has(row.plaidAccountId)),
-  );
+  ).filter((row) => !period || transactionInPeriod(row.date, period));
   const layer = buildFinancialEventLayer(rows, {
     institutionsByAccountId: Object.fromEntries(
       [...labels.keys()].map((id) => [id, item.institution_name]),

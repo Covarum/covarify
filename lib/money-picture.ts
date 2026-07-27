@@ -1,5 +1,5 @@
 export type MoneyTransaction = { id: string; plaidAccountId: string; accountLabel: string; name: string; amount: number; currency: string; date: string; pending: boolean; pendingTransactionId: string | null; category: string; detailedCategory: string | null; direction: "inflow" | "outflow" | "neutral"; transferRelationship: "internal" | "external" | null };
-export type TransactionFilters = { accountId?: string; category?: string; dateRange?: "30" | "90" | "all"; search?: string };
+export type TransactionFilters = { accountId?: string; category?: string; periodStart?: string; periodEnd?: string; search?: string };
 
 const categoryLabel = (value: string) => value === "Uncategorized" ? value : value.toLowerCase().split("_").map((word) => word[0]?.toUpperCase() + word.slice(1)).join(" ");
 const monthKey = (date: Date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -22,10 +22,125 @@ export function annotateInternalTransfers(transactions: MoneyTransaction[]) {
   return transactions.map((transaction) => ({ ...transaction, transferRelationship: internal.has(transaction.id) ? "internal" as const : isTransfer(transaction) ? "external" as const : null }));
 }
 
-export function filterTransactions(transactions: MoneyTransaction[], filters: TransactionFilters, now = new Date()) {
-  const cutoff = filters.dateRange && filters.dateRange !== "all" ? new Date(now.getTime() - Number(filters.dateRange) * 86400000) : null;
+export function filterTransactions(transactions: MoneyTransaction[], filters: TransactionFilters) {
   const search = filters.search?.trim().toLowerCase();
-  return transactions.filter((transaction) => (!filters.accountId || transaction.plaidAccountId === filters.accountId) && (!filters.category || transaction.category === filters.category) && (!cutoff || new Date(`${transaction.date}T00:00:00Z`) >= cutoff) && (!search || transaction.name.toLowerCase().includes(search)));
+  return transactions.filter((transaction) => (!filters.accountId || transaction.plaidAccountId === filters.accountId) && (!filters.category || transaction.category === filters.category) && (!filters.periodStart || transaction.date >= filters.periodStart) && (!filters.periodEnd || transaction.date <= filters.periodEnd) && (!search || transaction.name.toLowerCase().includes(search)));
+}
+
+export function buildScopedMoneyPicture(
+  currentRows: MoneyTransaction[],
+  priorRows: MoneyTransaction[],
+  period: { label: string; start: string; end: string },
+) {
+  const complete = currentRows.filter(
+    (transaction) => classifyTransaction(transaction) !== "pending",
+  );
+  const priorComplete = priorRows.filter(
+    (transaction) => classifyTransaction(transaction) !== "pending",
+  );
+  const outflows = complete.filter(
+    (transaction) => classifyTransaction(transaction) === "outflow",
+  );
+  const inflows = complete.filter(
+    (transaction) => classifyTransaction(transaction) === "inflow",
+  );
+  const spending = outflows.reduce(
+    (sum, transaction) => sum + transaction.amount,
+    0,
+  );
+  const income = inflows.reduce(
+    (sum, transaction) => sum + Math.abs(transaction.amount),
+    0,
+  );
+  const categories = new Map<string, number>();
+  for (const transaction of outflows) {
+    const category = transaction.category || "Uncategorized";
+    categories.set(category, (categories.get(category) || 0) + transaction.amount);
+  }
+  const spendingByCategory = [...categories]
+    .map(([category, amount]) => ({
+      category: categoryLabel(category),
+      amount,
+      percentage: spending ? (amount / spending) * 100 : 0,
+    }))
+    .sort((a, b) => b.amount - a.amount);
+  const priorSpending = priorComplete
+    .filter((transaction) => classifyTransaction(transaction) === "outflow")
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const change = priorSpending
+    ? ((spending - priorSpending) / priorSpending) * 100
+    : null;
+  const insights = [] as Array<{
+    title: string;
+    body: string;
+    range: string;
+    support: string;
+    question: string;
+  }>;
+  if (spending || priorSpending) {
+    insights.push({
+      title: "Spending pattern",
+      body:
+        change === null
+          ? "This is your first complete comparison period."
+          : `Estimated spending ${change >= 0 ? "increased" : "decreased"} ${Math.abs(change).toFixed(0)}% compared with the previous period.`,
+      range: `${period.label} vs. the preceding equivalent period`,
+      support: `${spendingByCategory[0]?.category || "Uncategorized"} is the largest category in this period.`,
+      question: "What changed in my recent spending?",
+    });
+  }
+  if (spending > income) {
+    insights.push({
+      title: "Period cash flow",
+      body: "Identified outflow is higher than identified inflow in this period.",
+      range: period.label,
+      support: `Difference: ${Math.abs(income - spending).toLocaleString("en-US", { style: "currency", currency: "USD" })}.`,
+      question: "Which expenses are affecting this period’s cash flow?",
+    });
+  }
+  const monthStarts: Date[] = [];
+  const cursor = new Date(`${period.start.slice(0, 7)}-01T00:00:00Z`);
+  const finalMonth = period.end.slice(0, 7);
+  while (monthKey(cursor) <= finalMonth && monthStarts.length < 12) {
+    monthStarts.push(new Date(cursor));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  const trend = monthStarts.map((date) => {
+    const key = monthKey(date);
+    const rows = complete.filter(
+      (transaction) =>
+        monthKey(new Date(`${transaction.date}T00:00:00Z`)) === key,
+    );
+    const moneyIn = rows
+      .filter((transaction) => classifyTransaction(transaction) === "inflow")
+      .reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0);
+    const moneyOut = rows
+      .filter((transaction) => classifyTransaction(transaction) === "outflow")
+      .reduce((sum, transaction) => sum + transaction.amount, 0);
+    return {
+      label: new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        timeZone: "UTC",
+      }).format(date),
+      inflow: moneyIn,
+      outflow: moneyOut,
+      net: moneyIn - moneyOut,
+    };
+  });
+  return {
+    spendingByCategory,
+    spending,
+    income,
+    net: income - spending,
+    currentMonth: { inflow: income, outflow: spending, net: income - spending },
+    largestExpenses: outflows
+      .slice()
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 5),
+    trend,
+    insights,
+    categories: [...new Set(currentRows.map((transaction) => transaction.category))].sort(),
+  };
 }
 
 export function buildMoneyPicture(transactions: MoneyTransaction[], now = new Date()) {

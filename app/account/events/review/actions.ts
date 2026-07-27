@@ -5,6 +5,10 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireFounderReviewUser } from "@/lib/founder-review-auth";
 import { loadFinancialEventReviewQueue } from "@/lib/financial-event-review-server";
 import {
+  resolveFinancialPeriod,
+  type FinancialPeriodKey,
+} from "@/lib/financial-periods";
+import {
   GROUPING_CONFIRMATION_TYPES,
   RECURRING_CONFIRMATION_TYPES,
   groupingDecision,
@@ -21,11 +25,16 @@ export async function saveFinancialEventReview(formData: FormData) {
   const context =
     String(formData.get("context") || "").trim() ||
     String(formData.get("contextSuggestion") || "").trim();
+  const period = resolveFinancialPeriod({
+    key: String(formData.get("periodKey") || "last-30-days") as FinancialPeriodKey,
+    start: String(formData.get("periodStart") || "") || undefined,
+    end: String(formData.get("periodEnd") || "") || undefined,
+  });
   if (!eventId || !conditionSignature || context.length > 120) {
     throw new Error("INVALID_EVENT_REVIEW");
   }
 
-  const queue = await loadFinancialEventReviewQueue(user.id);
+  const queue = await loadFinancialEventReviewQueue(user.id, period);
   const current = queue.find(
     (card) =>
       card.eventId === eventId &&
@@ -84,7 +93,7 @@ export async function saveFinancialEventReview(formData: FormData) {
     });
   if (error) throw new Error("EVENT_REVIEW_SAVE_FAILED");
   revalidatePath("/account/events/review");
-  const refreshedQueue = await loadFinancialEventReviewQueue(user.id);
+  const refreshedQueue = await loadFinancialEventReviewQueue(user.id, period);
   const next = refreshedQueue.find(
     (card) =>
       card.reviewTier === "primary" && card.eventId !== current.eventId,

@@ -2,6 +2,7 @@ import {
   classifyTransaction,
   type MoneyTransaction,
 } from "./money-picture.ts";
+import type { ResolvedFinancialPeriod } from "./financial-periods.ts";
 
 const DAY = 86400000;
 
@@ -73,15 +74,27 @@ export function buildCanonicalScopedFinancialMetrics(
   transactions: MoneyTransaction[],
   input: {
     now: Date;
+    period?: Pick<
+      ResolvedFinancialPeriod,
+      "start" | "end" | "priorStart" | "priorEnd"
+    >;
     accountScope?: string[];
     removedExcluded?: number;
     confidence?: number;
   },
 ) {
-  const currentEnd = utcDay(input.now);
-  const currentStart = new Date(currentEnd.getTime() - 30 * DAY);
-  const priorStart = new Date(currentEnd.getTime() - 60 * DAY);
-  const priorEnd = new Date(currentStart.getTime() - DAY);
+  const currentEnd = input.period
+    ? new Date(`${input.period.end}T00:00:00Z`)
+    : utcDay(input.now);
+  const currentStart = input.period
+    ? new Date(`${input.period.start}T00:00:00Z`)
+    : new Date(currentEnd.getTime() - 30 * DAY);
+  const priorStart = input.period
+    ? new Date(`${input.period.priorStart}T00:00:00Z`)
+    : new Date(currentEnd.getTime() - 60 * DAY);
+  const priorEnd = input.period
+    ? new Date(`${input.period.priorEnd}T00:00:00Z`)
+    : new Date(currentStart.getTime() - DAY);
   const accountScope = (
     input.accountScope?.length
       ? input.accountScope

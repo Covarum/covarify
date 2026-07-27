@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Check, ChevronRight, Clock3, ShieldCheck, Sparkles } from "lucide-react";
 import { saveFinancialEventReview } from "@/app/account/events/review/actions";
 import type { FinancialEventReviewCard } from "@/lib/financial-event-review-server";
+import type { ResolvedFinancialPeriod } from "@/lib/financial-periods";
 import styles from "./financial-events-review.module.css";
 
 const recurringOptions = [
@@ -92,13 +93,23 @@ export function FinancialEventsReview({
   preview = false,
   mobilePreview = false,
   initialIndex,
+  period,
 }: {
   cards: FinancialEventReviewCard[];
   preview?: boolean;
   mobilePreview?: boolean;
   initialIndex?: number;
+  period?: ResolvedFinancialPeriod;
 }) {
   const router = useRouter();
+  const accountHref = period
+    ? `/account?${new URLSearchParams({
+        period: period.key,
+        ...(period.key === "custom"
+          ? { start: period.start, end: period.end }
+          : {}),
+      }).toString()}`
+    : "/account";
   const primaryCards = cards.filter((card) => card.reviewTier === "primary");
   const initialPrimary =
     (initialIndex !== undefined ? cards[initialIndex] : undefined) ??
@@ -152,7 +163,7 @@ export function FinancialEventsReview({
       style={{ overflowX: "clip" }}
     >
       <header className={styles.topbar}>
-        <Link href="/account" aria-label="Return to Money Picture">covarify</Link>
+        <Link href={accountHref} aria-label="Return to Money Picture">covarify</Link>
         <span><ShieldCheck size={16} /> Founder review</span>
       </header>
       <div className={styles.shell}>
@@ -177,7 +188,7 @@ export function FinancialEventsReview({
             <Check size={24} />
             <h2>You&apos;re all caught up.</h2>
             <p>Covarify will bring patterns back here when your input is useful.</p>
-            <Link href="/account">Return to your Money Picture</Link>
+            <Link href={accountHref}>Return to your Money Picture</Link>
           </section>
         ) : (
           <section className={styles.reviewGrid}>
@@ -273,6 +284,13 @@ export function FinancialEventsReview({
               <form action={saveAndContinue}>
                 <input type="hidden" name="eventId" value={active.eventId} />
                 <input type="hidden" name="conditionSignature" value={active.conditionSignature} />
+                {period && (
+                  <>
+                    <input type="hidden" name="periodKey" value={period.key} />
+                    <input type="hidden" name="periodStart" value={period.start} />
+                    <input type="hidden" name="periodEnd" value={period.end} />
+                  </>
+                )}
                 <fieldset>
                   <legend>{active.kind === "recurring" ? "What kind of recurring payment is this?" : "Are these purchases related?"}</legend>
                   <div className={styles.choices}>

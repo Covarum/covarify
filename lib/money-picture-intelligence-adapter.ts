@@ -1,6 +1,7 @@
 import {
   buildAccountAnalytics,
   buildMoneyPicture,
+  buildScopedMoneyPicture,
   classifyTransaction,
   type MoneyTransaction,
 } from "./money-picture.ts";
@@ -10,32 +11,40 @@ import {
 } from "./money-picture-intelligence.ts";
 import { buildObservationExplanation } from "./money-picture-explanations.ts";
 import { buildCanonicalScopedFinancialMetrics } from "./money-picture-canonical-metrics.ts";
+import type { ResolvedFinancialPeriod } from "./financial-periods.ts";
 
 export function buildMoneyPictureIntelligence(
   transactions: MoneyTransaction[],
-  input: { syncStatus: string; lastSyncAt: string | null; now?: Date },
+  input: { syncStatus: string; lastSyncAt: string | null; now?: Date; period?: ResolvedFinancialPeriod },
 ) {
   const now = input.now || new Date();
   const canonical = buildCanonicalScopedFinancialMetrics(transactions, {
     now,
+    period: input.period,
   });
-  const { currentRows } = canonical;
+  const { currentRows, priorRows } = canonical;
   const analytics = buildAccountAnalytics(currentRows);
-  const picture = buildMoneyPicture(transactions, now);
+  const picture = input.period
+    ? buildScopedMoneyPicture(currentRows, priorRows, {
+        label: input.period.label,
+        start: input.period.start,
+        end: input.period.end,
+      })
+    : buildMoneyPicture(transactions, now);
 
   const metrics: IntelligenceMetrics = {
     generatedAt: now.toISOString(),
     period: canonical.metrics.period,
-    transactionCount: transactions.length,
-    pendingCount: transactions.filter((transaction) => transaction.pending)
+    transactionCount: currentRows.length,
+    pendingCount: currentRows.filter((transaction) => transaction.pending)
       .length,
     removedCount: 0,
-    transferCount: transactions.filter((transaction) =>
+    transferCount: currentRows.filter((transaction) =>
       ["transfer", "internal_transfer"].includes(
         classifyTransaction(transaction),
       ),
     ).length,
-    internalTransferCount: transactions.filter(
+    internalTransferCount: currentRows.filter(
       (transaction) =>
         classifyTransaction(transaction) === "internal_transfer",
     ).length,
@@ -92,7 +101,7 @@ export function buildMoneyPictureIntelligence(
 
 export function buildMoneyPictureIntelligenceBundle(
   transactions: MoneyTransaction[],
-  input: { syncStatus: string; lastSyncAt: string | null; now?: Date },
+  input: { syncStatus: string; lastSyncAt: string | null; now?: Date; period?: ResolvedFinancialPeriod },
 ) {
   const intelligence = buildMoneyPictureIntelligence(transactions, input);
   const explanations = [
