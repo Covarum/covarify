@@ -97,6 +97,7 @@ test("pending and empty filtered summaries remain explicit", () => {
   const component = readFileSync("components/account/recent-activity.tsx", "utf8");
   assert.match(component, /No transactions match these filters/);
   assert.match(component, /rows\.length \? <FilteredSummary/);
+  assert.match(component, /search: event\.currentTarget\.value/);
 });
 
 test("Money Picture empty and partial states do not invent balances", () => {
