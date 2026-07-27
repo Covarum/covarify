@@ -1,7 +1,7 @@
 import type { MoneyTransaction } from "./money-picture.ts";
 
 export const FINANCIAL_EVENTS_RULE_VERSION =
-  "financial-events-v1.1-2026-07-27";
+  "financial-events-v2-preview-2026-07-27";
 
 export const FINANCIAL_EVENT_TYPES = [
   "payroll",
@@ -21,6 +21,7 @@ export const FINANCIAL_EVENT_TYPES = [
   "travel_booking",
   "travel_spending",
   "medical_expense",
+  "related_purchases",
   "tax_payment",
   "refund",
   "returned_payment",
@@ -298,6 +299,8 @@ const TAXONOMY = {
   grocery: /\b(GROCERY|SUPERMARKET|FOOD MARKET)\b/,
   dining: /\b(RESTAURANT|CAFE|COFFEE|DINER|PIZZA|GRILL)\b/,
 } as const;
+const MIXED_USE_MERCHANT =
+  /\b(CVS|WALGREENS|RITE AID|WALMART|TARGET|COSTCO|SAM'?S CLUB)\b/;
 
 function median(values: number[]) {
   if (!values.length) return 0;
@@ -461,6 +464,20 @@ function classify(
     direction === "outflow" &&
     (category === "MEDICAL" || TAXONOMY.medical.test(combined))
   ) {
+    if (MIXED_USE_MERCHANT.test(merchant)) {
+      return {
+        layer: "event",
+        type: "related_purchases",
+        transaction,
+        ruleId: "activity.mixed_use_merchant",
+        signals: [
+          "mixed-use merchant",
+          "merchant and broad category do not establish purchase meaning",
+        ],
+        confidence: "medium",
+        reasons: ["grouped_activity"],
+      };
+    }
     return {
       layer: "event",
       type: "medical_expense",
@@ -821,6 +838,7 @@ function titleFor(type: FinancialEventType) {
       travel_booking: "Travel booking",
       travel_spending: "Travel spending",
       medical_expense: "Medical expense",
+      related_purchases: "Possible related purchases",
       tax_payment: "Tax payment",
       refund: "Refund",
       returned_payment: "Returned payment",
@@ -1003,7 +1021,7 @@ function groupInternalTransfers(inferences: Inference[]) {
 
 function groupEpisodes(
   inferences: Inference[],
-  type: "medical_expense" | "travel_booking",
+  type: "medical_expense" | "related_purchases" | "travel_booking",
   windowDays: number,
 ) {
   const candidates = inferences
@@ -1222,13 +1240,40 @@ export function buildFinancialEventLayer(
       ]),
     ),
   );
+  const relatedPurchases = groupEpisodes(
+    afterInternal,
+    "related_purchases",
+    7,
+  );
+  relatedPurchases.groups.forEach((group) =>
+    events.push(
+      makeEvent(group, "related_purchases", null, context, [
+        "grouped_activity",
+      ]),
+    ),
+  );
   const groupedConsumed = new Set([
     ...travel.consumed,
     ...medical.consumed,
+    ...relatedPurchases.consumed,
   ]);
-  const ungrouped = afterInternal.filter(
-    (inference) => !groupedConsumed.has(inference.transaction.id),
-  );
+  const ungrouped = afterInternal
+    .filter((inference) => !groupedConsumed.has(inference.transaction.id))
+    .map((inference): Inference =>
+      inference.layer === "event" && inference.type === "related_purchases"
+        ? {
+            layer: "activity",
+            type: "general_merchandise",
+            transaction: inference.transaction,
+            ruleId: "activity.mixed_use_merchant",
+            signals: [
+              "mixed-use merchant",
+              "no same-merchant relationship was established",
+            ],
+            confidence: "medium",
+          }
+        : inference,
+    );
   for (const inference of ungrouped) {
     if (inference.layer !== "event") continue;
     events.push(makeEvent([inference], inference.type, null, context));

@@ -10,10 +10,15 @@ import {
 import {
   confirmationIsStale,
   effectiveEventType,
+  effectiveDisplayTitle,
   groupingDecision,
   isExactFounderAllowlistMatch,
   nextUnreviewedIndex,
   recurringDecision,
+  recurringReviewPriority,
+  groupedReviewPriority,
+  REVIEW_QUEUE_THRESHOLD,
+  reviewTierForCard,
 } from "../lib/financial-event-confirmations.ts";
 
 const tx = (id, patch = {}) => ({
@@ -279,8 +284,8 @@ test("save and continue advances to the next unreviewed card and wraps the queue
   );
 });
 
-test("medical grouping confirmation and separation remain distinct", () => {
-  assert.deepEqual(groupingDecision("confirm_group"), {
+test("relationship confirmation and separation remain distinct", () => {
+  assert.deepEqual(groupingDecision("related"), {
     groupingConfirmed: true,
     groupingRejected: false,
   });
@@ -288,6 +293,102 @@ test("medical grouping confirmation and separation remain distinct", () => {
     groupingConfirmed: false,
     groupingRejected: true,
   });
+});
+
+test("mixed-use pharmacy merchants stay neutral and ask relationship before meaning", () => {
+  const layer = buildFinancialEventLayer([
+    tx("cvs-1", { name: "CVS", category: "MEDICAL", date: "2026-07-01" }),
+    tx("cvs-2", { name: "CVS", category: "MEDICAL", date: "2026-07-05" }),
+    tx("walgreens-1", { name: "Walgreens", category: "MEDICAL", date: "2026-07-10" }),
+    tx("walgreens-2", { name: "Walgreens", category: "MEDICAL", date: "2026-07-13" }),
+  ]);
+  const groups = layer.events.filter((event) => event.type === "related_purchases");
+  assert.equal(groups.length, 2);
+  assert.equal(layer.events.some((event) => event.type === "medical_expense"), false);
+  assert.equal(groups.every((event) => event.title === "Possible related purchases"), true);
+  const component = readFileSync(
+    new URL("../components/account/financial-events-review.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(component, /Are these purchases related\?/);
+  assert.match(component, /What would you call this\?/);
+  assert.ok(
+    component.indexOf("Are these purchases related?") <
+      component.indexOf("What would you call this?"),
+  );
+  assert.doesNotMatch(
+    component,
+    /diagnosis|medical condition|treatment|procedure|family member|prescription details/i,
+  );
+});
+
+test("queue priority suppresses low-value noise and retains material clarification", () => {
+  const lowValue = recurringReviewPriority({
+    confidence: "medium",
+    typicalAmount: 12,
+    observationCount: 3,
+    proposedType: "unresolved_recurring_payment",
+  });
+  const material = recurringReviewPriority({
+    confidence: "high",
+    typicalAmount: 75,
+    observationCount: 4,
+    proposedType: "unresolved_recurring_payment",
+  });
+  const grouped = groupedReviewPriority({
+    transactionCount: 2,
+    aggregateAmount: 80,
+  });
+  assert.ok(lowValue.score < REVIEW_QUEUE_THRESHOLD);
+  assert.ok(material.score >= REVIEW_QUEUE_THRESHOLD);
+  assert.ok(grouped.score >= REVIEW_QUEUE_THRESHOLD);
+  assert.equal(reviewTierForCard("CVS", 10, false), "primary");
+  assert.equal(reviewTierForCard("Walgreens", 10, false), "primary");
+  assert.equal(reviewTierForCard("Expedia", 10, false), "primary");
+  assert.equal(reviewTierForCard("Lemonade Insurance", 10, false), "primary");
+  assert.equal(reviewTierForCard("Home Depot", 10, false), "primary");
+  assert.equal(reviewTierForCard("Aff Viome", 55, false), "primary");
+  assert.equal(reviewTierForCard("Aff Viome", 54, false), null);
+  assert.equal(reviewTierForCard("Zoom", 90, false), "later");
+  assert.equal(reviewTierForCard("Amazon Prime Video", 90, false), "later");
+  assert.equal(reviewTierForCard("Lee Pressofatlanticcity", 90, false), null);
+  assert.equal(reviewTierForCard("Olukai", 90, false), null);
+  assert.equal(reviewTierForCard("Zeely App", 90, true), "history");
+  assert.equal(reviewTierForCard("Aff Gopetl", 90, true), "history");
+});
+
+test("v2 persistence keeps context separate, append-only, and preserves re-review reason", () => {
+  const action = readFileSync(
+    new URL("../app/account/events/review/actions.ts", import.meta.url),
+    "utf8",
+  );
+  const migration = readFileSync(
+    new URL(
+      "../supabase/migrations/20260728100000_financial_event_context_v2.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(action, /user_context_label: context/);
+  assert.match(action, /relationship_decision/);
+  assert.match(action, /re_review_reason/);
+  assert.match(migration, /inference_model_refined/);
+  assert.doesNotMatch(action, /\.update\(|\.upsert\(|\.delete\(/);
+  assert.doesNotMatch(action, /plaid_transactions|transactionsSync|access_token/i);
+  assert.equal(
+    effectiveDisplayTitle({
+      userContextLabel: "Birthday gift",
+      deterministicTitle: "Possible related purchases",
+    }),
+    "Birthday gift",
+  );
+  assert.equal(
+    effectiveDisplayTitle({
+      userContextLabel: null,
+      deterministicTitle: "Possible related purchases",
+    }),
+    "Possible related purchases",
+  );
 });
 
 test("effective type uses a current user confirmation and otherwise deterministic inference", () => {

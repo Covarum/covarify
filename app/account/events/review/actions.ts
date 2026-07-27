@@ -18,8 +18,10 @@ export async function saveFinancialEventReview(formData: FormData) {
   const eventId = String(formData.get("eventId") || "");
   const conditionSignature = String(formData.get("conditionSignature") || "");
   const decision = String(formData.get("decision") || "");
-  const title = String(formData.get("title") || "").trim();
-  if (!eventId || !conditionSignature || title.length > 80) {
+  const context =
+    String(formData.get("context") || "").trim() ||
+    String(formData.get("contextSuggestion") || "").trim();
+  if (!eventId || !conditionSignature || context.length > 120) {
     throw new Error("INVALID_EVENT_REVIEW");
   }
 
@@ -66,7 +68,12 @@ export async function saveFinancialEventReview(formData: FormData) {
       inferred_type: current.inferredType,
       selected_decision: decision,
       user_confirmed_type: values.userConfirmedType || null,
-      user_confirmed_title: title || null,
+      user_confirmed_title: null,
+      user_context_label: context || null,
+      relationship_decision: current.kind === "grouped" ? decision : null,
+      re_review_reason: current.reReviewReason,
+      review_priority_score: current.priorityScore,
+      review_priority_reason: current.priorityReason,
       recurrence_confirmed: values.recurrenceConfirmed ?? null,
       recurrence_rejected: values.recurrenceRejected || false,
       grouping_confirmed: values.groupingConfirmed ?? null,

@@ -1,10 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Check, ChevronRight, Clock3, ShieldCheck, Sparkles } from "lucide-react";
 import { saveFinancialEventReview } from "@/app/account/events/review/actions";
-import { nextUnreviewedIndex } from "@/lib/financial-event-confirmations";
 import type { FinancialEventReviewCard } from "@/lib/financial-event-review-server";
 import styles from "./financial-events-review.module.css";
 
@@ -22,16 +21,32 @@ const recurringOptions = [
 ] as const;
 
 const groupingOptions = [
-  ["confirm_group", "Confirm as one medical event"],
-  ["separate", "Separate into individual transactions"],
-  ["rename", "Rename event"],
-  ["unsure", "Unsure"],
+  ["related", "Yes"],
+  ["separate", "No"],
+  ["unsure", "I’m not sure"],
+] as const;
+const contextSuggestions = [
+  "Prescription or medication",
+  "Medical supplies",
+  "Personal care",
+  "Household purchase",
+  "One-time shopping",
+  "Other",
+] as const;
+const recurringContextSuggestions = [
+  "Business software",
+  "Personal membership",
+  "Household bill",
+  "Child-related expense",
+  "Travel",
+  "Other",
 ] as const;
 
 const inferredLabels: Record<string, string> = {
   unresolved_recurring_payment: "Recurring payment — needs your input",
   insurance_premium: "Insurance premium",
-  medical_expense: "Medical event grouping",
+  medical_expense: "Prior broad-category inference",
+  related_purchases: "Possible related purchases",
 };
 const decisionLabels = Object.fromEntries([
   ...recurringOptions,
@@ -74,30 +89,48 @@ function Evidence({ card }: { card: FinancialEventReviewCard }) {
 export function FinancialEventsReview({
   cards,
   preview = false,
+  mobilePreview = false,
+  initialIndex,
 }: {
   cards: FinancialEventReviewCard[];
   preview?: boolean;
+  mobilePreview?: boolean;
+  initialIndex?: number;
 }) {
+  const primaryIndices = cards
+    .map((card, index) => ({ card, index }))
+    .filter(({ card }) => card.reviewTier === "primary")
+    .map(({ index }) => index);
+  const initialPrimaryIndex = primaryIndices[0] ?? -1;
   const [activeIndex, setActiveIndex] = useState(
-    Math.max(0, cards.findIndex((card) => !card.reviewed || card.stale)),
+    initialIndex ?? initialPrimaryIndex,
   );
   const active = cards[activeIndex];
-  const reviewed = cards.filter((card) => card.reviewed && !card.stale).length;
-  const sections = useMemo(
-    () => ({
-      recurring: cards.filter((card) => card.kind === "recurring").length,
-      grouped: cards.filter((card) => card.kind === "grouped").length,
-    }),
-    [cards],
-  );
+  const primaryCards = primaryIndices.map((index) => cards[index]);
+  const laterCards = cards.filter((card) => card.reviewTier === "later");
+  const historyCards = cards.filter((card) => card.reviewTier === "history");
+  const reviewed = primaryCards.filter(
+    (card) => card.reviewed && !card.stale,
+  ).length;
+  const sections = {
+    recurring: primaryCards.filter((card) => card.kind === "recurring").length,
+    grouped: primaryCards.filter((card) => card.kind === "grouped").length,
+  };
   const saveAndContinue = async (formData: FormData) => {
     await saveFinancialEventReview(formData);
-    const nextIndex = nextUnreviewedIndex(cards, activeIndex);
-    if (nextIndex !== null) setActiveIndex(nextIndex);
+    const currentPosition = primaryIndices.indexOf(activeIndex);
+    const nextIndex =
+      primaryIndices[(currentPosition + 1) % primaryIndices.length];
+    if (nextIndex !== undefined && nextIndex !== activeIndex) {
+      setActiveIndex(nextIndex);
+    }
   };
 
   return (
-    <main className={styles.page} style={{ overflowX: "clip" }}>
+    <main
+      className={`${styles.page} ${mobilePreview ? styles.mobilePreview : ""}`}
+      style={{ overflowX: "clip" }}
+    >
       <header className={styles.topbar}>
         <Link href="/account" aria-label="Return to Money Picture">covarify</Link>
         <span><ShieldCheck size={16} /> Founder review</span>
@@ -112,10 +145,10 @@ export function FinancialEventsReview({
           </p>
           <div className={styles.progress}>
             <div>
-              <strong>{reviewed} of {cards.length} reviewed</strong>
-              <span>{sections.recurring} recurring · {sections.grouped} grouped</span>
+              <strong>{reviewed} of {primaryCards.length} reviewed</strong>
+              <span>{sections.recurring} recurring · {sections.grouped} possible groups</span>
             </div>
-            <i><b style={{ width: `${cards.length ? (reviewed / cards.length) * 100 : 0}%` }} /></i>
+            <i><b style={{ width: `${primaryCards.length ? (reviewed / primaryCards.length) * 100 : 0}%` }} /></i>
           </div>
         </section>
 
@@ -130,23 +163,56 @@ export function FinancialEventsReview({
           <section className={styles.reviewGrid}>
             <aside aria-label="Review queue">
               <h2>Review queue</h2>
-              {cards.map((card, index) => (
+              {primaryIndices.map((index, position) => {
+                const card = cards[index];
+                return (
                 <button
                   key={card.eventId}
                   onClick={() => setActiveIndex(index)}
                   className={index === activeIndex ? styles.activeItem : undefined}
                 >
-                  <span>{index + 1}</span>
-                  <div><strong>{card.displayName}</strong><small>{card.kind === "recurring" ? "Recurring payment" : "Grouped event"}</small></div>
+                  <span>{position + 1}</span>
+                  <div><strong>{card.displayName}</strong><small>{card.kind === "recurring" ? "Recurring payment" : "Possible related purchases"}</small></div>
                   {card.reviewed && !card.stale ? <Check size={16} /> : <ChevronRight size={16} />}
                 </button>
-              ))}
+                );
+              })}
+              {laterCards.length > 0 && (
+                <details className={styles.secondaryQueue}>
+                  <summary>Review later ({laterCards.length})</summary>
+                  {laterCards.map((card) => {
+                    const index = cards.indexOf(card);
+                    return (
+                      <button key={card.eventId} onClick={() => setActiveIndex(index)}>
+                        <span>·</span>
+                        <div><strong>{card.displayName}</strong><small>Available when useful</small></div>
+                        <ChevronRight size={16} />
+                      </button>
+                    );
+                  })}
+                </details>
+              )}
+              {historyCards.length > 0 && (
+                <details className={styles.secondaryQueue}>
+                  <summary>Confirmation history ({historyCards.length})</summary>
+                  {historyCards.map((card) => {
+                    const index = cards.indexOf(card);
+                    return (
+                      <button key={card.eventId} onClick={() => setActiveIndex(index)}>
+                        <span><Check size={13} /></span>
+                        <div><strong>{card.displayName}</strong><small>Prior answer preserved</small></div>
+                        <ChevronRight size={16} />
+                      </button>
+                    );
+                  })}
+                </details>
+              )}
             </aside>
 
             <article className={styles.card}>
               <div className={styles.cardHeader}>
                 <div>
-                  <span className={styles.kind}>{active.kind === "recurring" ? "Recurring payment" : "Grouped event"}</span>
+                  <span className={styles.kind}>{active.kind === "recurring" ? "Recurring payment" : "Possible related purchases"}</span>
                   <h2 style={{ overflowWrap: "anywhere" }}>{active.displayName}</h2>
                   <p style={{ overflowWrap: "anywhere" }}>{active.accountLabel}</p>
                 </div>
@@ -156,6 +222,13 @@ export function FinancialEventsReview({
                 <div className={styles.stale}>
                   <Clock3 size={18} />
                   Covarify noticed this pattern changed. Please confirm whether this label still fits.
+                </div>
+              )}
+              {active.reReviewReason === "inference_model_refined" && (
+                <div className={styles.stale}>
+                  <Clock3 size={18} />
+                  This item is back for review because Covarify refined how it
+                  interprets mixed-use merchants. Earlier history is preserved.
                 </div>
               )}
               {active.reviewed && !active.stale && (
@@ -173,30 +246,78 @@ export function FinancialEventsReview({
               )}
               <Evidence card={active} />
               <div className={styles.explanation}>
-                <strong>Why Covarify noticed this</strong>
-                <p>{active.reason}</p>
-                <small>Current inference: {inferredLabels[active.inferredType] || active.inferredType.replaceAll("_", " ")}</small>
+                <strong>{active.kind === "recurring" ? "Covarify noticed this payment repeats" : "Why Covarify noticed this"}</strong>
+                <p>{active.kind === "recurring" ? "This charge has appeared on a regular pattern." : active.reason}</p>
+                <small>
+                  Current inference: {inferredLabels[active.inferredType] || active.inferredType.replaceAll("_", " ")}
+                  {" · "}Queue priority {active.priorityScore}: {active.priorityReason}
+                </small>
               </div>
               <form action={preview ? undefined : saveAndContinue}>
                 <input type="hidden" name="eventId" value={active.eventId} />
                 <input type="hidden" name="conditionSignature" value={active.conditionSignature} />
                 <fieldset>
-                  <legend>{active.kind === "recurring" ? "What kind of recurring payment is this?" : "Do these charges belong to the same financial event?"}</legend>
+                  <legend>{active.kind === "recurring" ? "What kind of recurring payment is this?" : "Are these purchases related?"}</legend>
                   <div className={styles.choices}>
                     {(active.kind === "recurring" ? recurringOptions : groupingOptions).map(([value, label]) => (
                       <label key={value}>
-                        <input type="radio" name="decision" value={value} required />
+                        <input
+                          type="radio"
+                          name="decision"
+                          value={value}
+                          required
+                        />
                         <span>{label}</span>
                       </label>
                     ))}
                   </div>
                 </fieldset>
-                <label className={styles.label}>
-                  <span>Optional label</span>
-                  <input name="title" maxLength={80} placeholder={active.kind === "recurring" ? "Example: Phone bill" : "Example: Medical visit"} />
-                </label>
+                {active.kind === "recurring" && (
+                  <fieldset className={styles.optionalContext}>
+                    <legend>What do you use this for? <small>Optional</small></legend>
+                    <div className={styles.choices}>
+                      {recurringContextSuggestions.map((label) => (
+                        <label key={label}>
+                          <input type="radio" name="contextSuggestion" value={label} />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <label className={styles.label}>
+                      <span>Or add your own label</span>
+                      <input name="context" maxLength={120} placeholder="Use your own words" />
+                    </label>
+                  </fieldset>
+                )}
+                {active.kind === "grouped" && (
+                    <fieldset className={styles.contextStep}>
+                      <legend>What would you call this? <small>Optional</small></legend>
+                      <div className={styles.choices}>
+                        {contextSuggestions.map((label) => (
+                          <label key={label}>
+                            <input type="radio" name="contextSuggestion" value={label} />
+                            <span>{label}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <label className={styles.label}>
+                        <span>Or add your own label</span>
+                        <input name="context" maxLength={120} placeholder="Use your own words" />
+                      </label>
+                    </fieldset>
+                )}
                 <div className={styles.actions}>
-                  <button type="button" className={styles.skip} onClick={() => setActiveIndex((activeIndex + 1) % cards.length)}>Skip for now</button>
+                  <button
+                    type="button"
+                    className={styles.skip}
+                    onClick={() => {
+                      const position = primaryIndices.indexOf(activeIndex);
+                      const next = primaryIndices[(position + 1) % primaryIndices.length];
+                      if (next !== undefined) setActiveIndex(next);
+                    }}
+                  >
+                    Skip for now
+                  </button>
                   <button type={preview ? "button" : "submit"} className={styles.save}>Save and continue <ChevronRight size={17} /></button>
                 </div>
               </form>

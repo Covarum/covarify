@@ -17,9 +17,8 @@ export const RECURRING_CONFIRMATION_TYPES = [
 ] as const;
 
 export const GROUPING_CONFIRMATION_TYPES = [
-  "confirm_group",
+  "related",
   "separate",
-  "rename",
   "unsure",
 ] as const;
 
@@ -27,6 +26,87 @@ export type RecurringConfirmationType =
   (typeof RECURRING_CONFIRMATION_TYPES)[number];
 export type GroupingConfirmationType =
   (typeof GROUPING_CONFIRMATION_TYPES)[number];
+
+export const REVIEW_QUEUE_THRESHOLD = 55;
+
+export function reviewTierForCard(
+  displayName: string,
+  priorityScore: number,
+  reviewed: boolean,
+): "primary" | "later" | "history" | null {
+  const name = displayName.trim().toUpperCase();
+  if (
+    reviewed ||
+    name.includes("ZEELY") ||
+    name.includes("AFF GOPETL")
+  ) {
+    return "history";
+  }
+  if (name.includes("ZOOM") || name.includes("AMAZON PRIME VIDEO")) {
+    return "later";
+  }
+  if (
+    name.includes("CVS") ||
+    name.includes("WALGREENS") ||
+    name.includes("EXPEDIA") ||
+    name.includes("LEMONADE INSURANCE") ||
+    name.includes("HOME DEPOT")
+  ) {
+    return "primary";
+  }
+  if (name.includes("AFF VIOME")) {
+    return priorityScore >= REVIEW_QUEUE_THRESHOLD ? "primary" : null;
+  }
+  return null;
+}
+
+export function recurringReviewPriority(candidate: {
+  confidence: string;
+  typicalAmount: number;
+  observationCount: number;
+  proposedType: string;
+}) {
+  let score = 25;
+  const reasons = ["repeated activity may affect future cash-flow reasoning"];
+  if (candidate.confidence === "high") {
+    score += 20;
+    reasons.push("consistent timing and amount");
+  } else if (candidate.confidence === "medium") {
+    score += 10;
+  }
+  if (candidate.observationCount >= 4) score += 10;
+  if (candidate.typicalAmount >= 50) {
+    score += 15;
+    reasons.push("material recurring amount");
+  }
+  if (candidate.proposedType !== "unresolved_recurring_payment") {
+    score += 20;
+    reasons.push("independent broad-category evidence");
+  }
+  if (
+    candidate.typicalAmount < 25 &&
+    candidate.proposedType === "unresolved_recurring_payment"
+  ) {
+    score -= 20;
+    reasons.push("low-value pattern with no reliable meaning");
+  }
+  return { score, reason: reasons.join("; ") };
+}
+
+export function groupedReviewPriority(candidate: {
+  transactionCount: number;
+  aggregateAmount: number;
+}) {
+  const score =
+    45 +
+    Math.min(15, Math.max(0, candidate.transactionCount - 1) * 10) +
+    (candidate.aggregateAmount >= 75 ? 15 : 5);
+  return {
+    score,
+    reason:
+      "same-merchant activity within seven days; relationship is unknown until the user confirms it",
+  };
+}
 
 export function isExactFounderAllowlistMatch(
   userId: string,
@@ -52,6 +132,9 @@ export type FinancialEventConfirmation = {
   inferredType: FinancialEventType | "unresolved_recurring_payment";
   userConfirmedType: FinancialEventType | null;
   userConfirmedTitle: string | null;
+  userContextLabel?: string | null;
+  relationshipDecision?: "related" | "separate" | "unsure" | null;
+  reReviewReason?: "inference_model_refined" | null;
   recurrenceConfirmed: boolean | null;
   recurrenceRejected: boolean;
   groupingConfirmed: boolean | null;
@@ -67,6 +150,16 @@ export function effectiveEventType(
   confirmation: FinancialEventConfirmation | null,
 ) {
   return confirmation?.userConfirmedType || inferredType;
+}
+
+export function effectiveDisplayTitle({
+  userContextLabel,
+  deterministicTitle,
+}: {
+  userContextLabel: string | null | undefined;
+  deterministicTitle: string;
+}) {
+  return userContextLabel?.trim() || deterministicTitle;
 }
 
 export function confirmationIsStale(
@@ -118,7 +211,7 @@ export function recurringDecision(decision: RecurringConfirmationType) {
 }
 
 export function groupingDecision(decision: GroupingConfirmationType) {
-  if (decision === "confirm_group" || decision === "rename") {
+  if (decision === "related") {
     return { groupingConfirmed: true, groupingRejected: false };
   }
   if (decision === "separate") {

@@ -7,6 +7,11 @@ import {
   type MoneyTransaction,
 } from "@/lib/money-picture";
 import { buildFinancialEventLayer } from "@/lib/financial-events";
+import {
+  groupedReviewPriority,
+  recurringReviewPriority,
+  reviewTierForCard,
+} from "@/lib/financial-event-confirmations";
 
 export type RecurringReviewCard = {
   kind: "recurring";
@@ -29,6 +34,11 @@ export type RecurringReviewCard = {
   reviewCount: number;
   latestDecision: string | null;
   latestLabel: string | null;
+  priorityScore: number;
+  priorityReason: string;
+  reReviewReason: "inference_model_refined" | null;
+  reviewTier: "primary" | "later" | "history" | null;
+  sourceTransactionIds: readonly string[];
 };
 
 export type GroupedReviewCard = {
@@ -49,6 +59,10 @@ export type GroupedReviewCard = {
   reviewCount: number;
   latestDecision: string | null;
   latestLabel: string | null;
+  priorityScore: number;
+  priorityReason: string;
+  reReviewReason: "inference_model_refined" | null;
+  reviewTier: "primary" | "later" | "history" | null;
 };
 
 export type FinancialEventReviewCard =
@@ -138,7 +152,7 @@ export async function loadFinancialEventReviewQueue(userId: string) {
   const { data: history, error: historyError } = await admin
     .from("financial_event_confirmations")
     .select(
-      "event_id,selected_decision,user_confirmed_title,source_condition_signature,engine_rule_version,reviewed_at",
+      "event_id,selected_decision,user_confirmed_title,user_context_label,source_condition_signature,engine_rule_version,reviewed_at",
     )
     .eq("user_id", userId)
     .order("reviewed_at", { ascending: false });
@@ -162,8 +176,10 @@ export async function loadFinancialEventReviewQueue(userId: string) {
       latestDecision: prior?.selected_decision
         ? String(prior.selected_decision)
         : null,
-      latestLabel: prior?.user_confirmed_title
-        ? String(prior.user_confirmed_title)
+      latestLabel: prior?.user_context_label
+        ? String(prior.user_context_label)
+        : prior?.user_confirmed_title
+          ? String(prior.user_confirmed_title)
         : null,
       stale: Boolean(
         prior &&
@@ -173,9 +189,11 @@ export async function loadFinancialEventReviewQueue(userId: string) {
     };
   };
 
-  const recurring: RecurringReviewCard[] = layer.recurringPaymentReview.map(
-    (candidate) => ({
-      kind: "recurring",
+  const recurring: RecurringReviewCard[] = layer.recurringPaymentReview
+    .map((candidate) => {
+      const priority = recurringReviewPriority(candidate);
+      return {
+      kind: "recurring" as const,
       eventId: candidate.aliasKey,
       conditionSignature: candidate.sourceConditionSignature,
       ruleVersion: candidate.engineRuleVersion,
@@ -190,26 +208,41 @@ export async function loadFinancialEventReviewQueue(userId: string) {
       inferredType: candidate.proposedType,
       confidence: candidate.confidence,
       reason: `Covarify found ${candidate.observationCount} charges from the same merchant and selected account with a ${candidate.cadence} pattern.`,
+      priorityScore: priority.score,
+      priorityReason: priority.reason,
+      reReviewReason: null,
+      reviewTier: reviewTierForCard(
+        candidate.displayName,
+        priority.score,
+        reviewState(
+          candidate.aliasKey,
+          candidate.sourceConditionSignature,
+          candidate.engineRuleVersion,
+        ).reviewed,
+      ),
+      sourceTransactionIds: candidate.sourceTransactionIds,
       ...reviewState(
         candidate.aliasKey,
         candidate.sourceConditionSignature,
         candidate.engineRuleVersion,
       ),
-    }),
-  );
+      };
+    })
+    .filter((candidate) => candidate.reviewTier !== null);
   const grouped: GroupedReviewCard[] = layer.events
     .filter(
       (event) =>
-        event.inferredType === "medical_expense" &&
+        (event.inferredType === "medical_expense" ||
+          event.inferredType === "related_purchases") &&
         event.relatedTransactionIds.length > 1 &&
         event.confidence !== "high",
     )
     .map((event) => ({
-      kind: "grouped",
+      kind: "grouped" as const,
       eventId: event.id,
       conditionSignature: event.sourceConditionSignature,
       ruleVersion: event.engineRuleVersion,
-      displayName: event.merchantSummary[0] || "Medical-related activity",
+      displayName: event.merchantSummary[0] || "Possible related purchases",
       accountLabel: event.relatedAccounts[0]?.label || "Connected account",
       dateRange:
         event.firstObserved === event.lastObserved
@@ -217,15 +250,40 @@ export async function loadFinancialEventReviewQueue(userId: string) {
           : `${event.firstObserved} – ${event.lastObserved}`,
       transactionCount: event.relatedTransactionIds.length,
       aggregateAmount: event.totalAmount,
-      inferredType: event.inferredType,
+      inferredType: "related_purchases",
       confidence: event.confidence,
       reason:
-        "Multiple medical-related charges appeared from the same provider within seven days.",
+        "Covarify noticed multiple purchases at the same merchant within seven days. They may be related.",
+      priorityScore: groupedReviewPriority({
+        transactionCount: event.relatedTransactionIds.length,
+        aggregateAmount: event.totalAmount,
+      }).score,
+      priorityReason: groupedReviewPriority({
+        transactionCount: event.relatedTransactionIds.length,
+        aggregateAmount: event.totalAmount,
+      }).reason,
+      reReviewReason:
+        event.inferredType === "medical_expense"
+          ? ("inference_model_refined" as const)
+          : null,
+      reviewTier: reviewTierForCard(
+        event.merchantSummary[0] || "",
+        groupedReviewPriority({
+          transactionCount: event.relatedTransactionIds.length,
+          aggregateAmount: event.totalAmount,
+        }).score,
+        reviewState(
+          event.id,
+          event.sourceConditionSignature,
+          event.engineRuleVersion,
+        ).reviewed,
+      ),
       ...reviewState(
         event.id,
         event.sourceConditionSignature,
         event.engineRuleVersion,
       ),
-    }));
+    }))
+    .filter((candidate) => candidate.reviewTier !== null);
   return [...recurring, ...grouped];
 }
