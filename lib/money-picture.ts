@@ -1,5 +1,13 @@
 export type MoneyTransaction = { id: string; plaidAccountId: string; accountLabel: string; name: string; amount: number; currency: string; date: string; pending: boolean; pendingTransactionId: string | null; category: string; detailedCategory: string | null; direction: "inflow" | "outflow" | "neutral"; transferRelationship: "internal" | "external" | null };
 export type TransactionFilters = { accountId?: string; category?: string; periodStart?: string; periodEnd?: string; search?: string };
+export type FilteredTransactionSummary = {
+  count: number;
+  kind: "inflow" | "spending" | "transfer" | "refund" | "mixed";
+  aggregateAmount: number;
+  identifiedInflows: number;
+  identifiedOutflows: number;
+  currency: string;
+};
 
 const categoryLabel = (value: string) => value === "Uncategorized" ? value : value.toLowerCase().split("_").map((word) => word[0]?.toUpperCase() + word.slice(1)).join(" ");
 const monthKey = (date: Date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -25,6 +33,68 @@ export function annotateInternalTransfers(transactions: MoneyTransaction[]) {
 export function filterTransactions(transactions: MoneyTransaction[], filters: TransactionFilters) {
   const search = filters.search?.trim().toLowerCase();
   return transactions.filter((transaction) => (!filters.accountId || transaction.plaidAccountId === filters.accountId) && (!filters.category || transaction.category === filters.category) && (!filters.periodStart || transaction.date >= filters.periodStart) && (!filters.periodEnd || transaction.date <= filters.periodEnd) && (!search || transaction.name.toLowerCase().includes(search)));
+}
+
+export function summarizeFilteredTransactions(
+  transactions: MoneyTransaction[],
+): FilteredTransactionSummary {
+  const currencyAmount = (value: number) => Math.round(value * 100) / 100;
+  const classifications = transactions.map(classifyTransaction);
+  const identifiedInflows = transactions.reduce(
+    (sum, transaction, index) =>
+      classifications[index] === "inflow"
+        ? sum + Math.abs(transaction.amount)
+        : sum,
+    0,
+  );
+  const identifiedOutflows = transactions.reduce(
+    (sum, transaction, index) =>
+      classifications[index] === "outflow"
+        ? sum + Math.abs(transaction.amount)
+        : sum,
+    0,
+  );
+  const meaningful = new Set(
+    classifications.filter(
+      (classification) =>
+        classification !== "pending" && classification !== "neutral",
+    ),
+  );
+  const kind =
+    meaningful.size === 1 && meaningful.has("inflow")
+      ? "inflow"
+      : meaningful.size === 1 && meaningful.has("outflow")
+        ? "spending"
+        : meaningful.size > 0 &&
+            [...meaningful].every((classification) =>
+              ["transfer", "internal_transfer"].includes(classification),
+            )
+          ? "transfer"
+          : meaningful.size === 1 && meaningful.has("refund")
+            ? "refund"
+            : "mixed";
+  const aggregateAmount =
+    kind === "inflow"
+      ? identifiedInflows
+      : kind === "spending"
+        ? identifiedOutflows
+        : kind === "transfer" || kind === "refund"
+          ? transactions.reduce(
+              (sum, transaction) => sum + Math.abs(transaction.amount),
+              0,
+            )
+          : transactions.reduce(
+              (sum, transaction) => sum + transaction.amount,
+              0,
+            );
+  return {
+    count: transactions.length,
+    kind,
+    aggregateAmount: currencyAmount(aggregateAmount),
+    identifiedInflows: currencyAmount(identifiedInflows),
+    identifiedOutflows: currencyAmount(identifiedOutflows),
+    currency: transactions[0]?.currency || "USD",
+  };
 }
 
 export function buildScopedMoneyPicture(
