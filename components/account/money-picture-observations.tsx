@@ -64,11 +64,11 @@ function ObservationCard({
 }
 
 const money = (value: number) =>
-  new Intl.NumberFormat("en-US", {
+  `${value < 0 ? "−" : ""}${new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(Math.abs(value))}`;
 
 function GuidedExplanation({
   payload,
@@ -85,70 +85,75 @@ function GuidedExplanation({
     const largest = payload.signals.largestExpense;
     const incomeIsDriver =
       Math.abs(inflows?.change || 0) > Math.abs(outflows?.change || 0);
+    const netChange = net?.change || 0;
     return (
       <div className={styles.guided}>
         <section>
           <p className={styles.sectionLabel}>Evidence</p>
           <h3>What changed</h3>
-          <p className={styles.leadMetric}>
-            {money(net?.prior || 0)} <span>to</span>{" "}
-            <strong>{money(net?.current || 0)}</strong>
+          <p>
+            Your identified net cash flow moved from approximately{" "}
+            <strong>{money(net?.prior || 0)}</strong> in the previous period to
+            approximately <strong>{money(net?.current || 0)}</strong> in the
+            current period.
           </p>
           <p>
-            Your identified net cash flow moved between the previous and
-            current comparison periods.
+            That is a {netChange < 0 ? "decrease" : "increase"} of approximately{" "}
+            <strong>{money(Math.abs(netChange))}</strong>.
           </p>
         </section>
         <section>
           <h3>What drove it</h3>
           <p>
-            The larger change came from{" "}
-            {incomeIsDriver
-              ? "lower identified inflows"
-              : "identified outflows"}
-            .
+            The primary driver was{" "}
+            {incomeIsDriver ? "lower identified inflows" : "identified outflows"}.
           </p>
-          <ul>
-            <li>
-              Identified inflows{" "}
-              {(inflows?.change || 0) >= 0 ? "increased" : "decreased"} by
-              approximately {money(Math.abs(inflows?.change || 0))}.
-            </li>
-            <li>
-              Identified outflows{" "}
-              {(outflows?.change || 0) >= 0 ? "increased" : "decreased"} by
-              approximately {money(Math.abs(outflows?.change || 0))}.
-            </li>
-            {largest != null && (
-              <li>
-                No single purchase explains the full change. The largest
-                identified expense was approximately {money(largest)}.
-              </li>
-            )}
-          </ul>
+          <p>
+            Identified inflows{" "}
+            {(inflows?.change || 0) >= 0 ? "increased" : "decreased"} by
+            approximately <strong>{money(Math.abs(inflows?.change || 0))}</strong>.
+          </p>
+          <p>
+            Identified outflows also{" "}
+            {(outflows?.change || 0) >= 0 ? "increased" : "decreased"} by
+            approximately <strong>{money(Math.abs(outflows?.change || 0))}</strong>
+            {incomeIsDriver && (outflows?.change || 0) < 0
+              ? ", so increased overall spending was not the cause."
+              : "."}
+          </p>
+          {largest != null && (
+            <p>
+              No single purchase explains the full change. The largest
+              identified expense was approximately{" "}
+              <strong>{money(largest)}</strong>.
+            </p>
+          )}
         </section>
         <section>
           <p className={styles.sectionLabel}>Meaning</p>
-          <h3>Why it matters</h3>
+          <h3>What this may mean</h3>
           <p>
-            The change appears to be driven more by{" "}
+            The change appears to reflect{" "}
             {incomeIsDriver
-              ? "reduced money coming in than by increased overall spending"
-              : "a change in identified spending than by money coming in"}
+              ? "less money coming in rather than more money going out"
+              : "a change in identified spending rather than money coming in"}
             .
           </p>
           <p>
-            Understanding whether this was temporary, expected, or part of a
-            changing pattern may help you plan with greater clarity.
+            Understanding whether the lower inflows were expected, temporary,
+            or part of a changing income pattern may help you plan with greater
+            clarity.
           </p>
         </section>
         <section>
           <p className={styles.sectionLabel}>Possible actions</p>
           <h3>What may be worth reviewing</h3>
-          <p>
-            Explore the income and spending changes separately, compare the
-            two periods, or review which categories contributed most.
-          </p>
+          <ul>
+            <li>Confirm whether any expected income was delayed or missing.</li>
+            <li>Compare the deposits received during each period.</li>
+            <li>Review which spending categories changed most.</li>
+            <li>Identify whether the change appears temporary or recurring.</li>
+          </ul>
         </section>
       </div>
     );
@@ -343,14 +348,23 @@ export function MoneyPictureObservations({
             >
               <X size={18} aria-hidden="true" />
             </button>
-            <p className={styles.panelEyebrow}>Your Money Picture explains</p>
+            <p className={styles.panelEyebrow}>Understand your Money Picture</p>
             <h2 id="money-picture-explanation-heading">
               {initial.find(
                 (item) =>
                   item.observationId === activeExplanation.observationId,
               )?.title || "Observation explanation"}
             </h2>
-            <p className={styles.panelPeriod}>{activeExplanation.period}</p>
+            <p className={styles.panelPeriod}>
+              {activeExplanation.period.split(", compared with ").map(
+                (period, index) => (
+                  <span key={period}>
+                    {index === 1 && <em>compared with</em>}
+                    {period}
+                  </span>
+                ),
+              )}
+            </p>
             <GuidedExplanation payload={activeExplanation} />
 
             {answer && (
@@ -389,9 +403,9 @@ export function MoneyPictureObservations({
               ))}
             </div>
             <p className={styles.safety}>
-              Covarify explains connected activity and supports your decisions.
-              It does not provide investment, tax, insurance, borrowing, or
-              legal advice.
+              Covarify explains your connected financial activity and supports
+              more informed decisions. It does not provide investment, tax,
+              insurance, borrowing, or legal advice.
             </p>
           </section>
         </div>

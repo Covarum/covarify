@@ -155,6 +155,24 @@ test("conversation UI is contextual and contains no general-purpose chat input",
   assert.doesNotMatch(source, /<input|<textarea|contentEditable/);
 });
 
+test("cash-flow drawer uses the approved Guided Understanding copy", () => {
+  const source = readFileSync(
+    new URL(
+      "../components/account/money-picture-observations.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(source, /Understand your Money Picture/);
+  assert.match(source, /Your identified net cash flow moved from approximately/);
+  assert.match(source, /The primary driver was/);
+  assert.match(source, /What this may mean/);
+  assert.match(source, /Confirm whether any expected income was delayed or missing/);
+  assert.match(source, /Covarify explains your connected financial activity/);
+  assert.match(source, /value < 0 \? "−" : ""/);
+  assert.doesNotMatch(source, /Your Money Picture explains/);
+});
+
 test("guided explanation precedes bounded follow-up options and restores focus", () => {
   const source = readFileSync(
     new URL(
