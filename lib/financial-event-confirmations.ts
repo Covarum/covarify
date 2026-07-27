@@ -35,15 +35,14 @@ export function reviewTierForCard(
   reviewed: boolean,
 ): "primary" | "later" | "history" | null {
   const name = displayName.trim().toUpperCase();
-  if (
-    reviewed ||
-    name.includes("ZEELY") ||
-    name.includes("AFF GOPETL")
-  ) {
+  if (name.includes("ZEELY") || name.includes("AFF GOPETL")) {
     return "history";
   }
   if (name.includes("ZOOM") || name.includes("AMAZON PRIME VIDEO")) {
     return "later";
+  }
+  if (reviewed) {
+    return "history";
   }
   if (
     name.includes("CVS") ||

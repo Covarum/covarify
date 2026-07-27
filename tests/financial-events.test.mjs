@@ -351,6 +351,8 @@ test("queue priority suppresses low-value noise and retains material clarificati
   assert.equal(reviewTierForCard("Aff Viome", 54, false), null);
   assert.equal(reviewTierForCard("Zoom", 90, false), "later");
   assert.equal(reviewTierForCard("Amazon Prime Video", 90, false), "later");
+  assert.equal(reviewTierForCard("Zoom", 90, true), "later");
+  assert.equal(reviewTierForCard("Amazon Prime Video", 90, true), "later");
   assert.equal(reviewTierForCard("Lee Pressofatlanticcity", 90, false), null);
   assert.equal(reviewTierForCard("Olukai", 90, false), null);
   assert.equal(reviewTierForCard("Zeely App", 90, true), "history");
