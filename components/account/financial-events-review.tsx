@@ -91,7 +91,7 @@ export function FinancialEventsReview({
   );
 
   return (
-    <main className={styles.page}>
+    <main className={styles.page} style={{ overflowX: "clip" }}>
       <header className={styles.topbar}>
         <Link href="/account" aria-label="Return to Money Picture">covarify</Link>
         <span><ShieldCheck size={16} /> Founder review</span>
@@ -141,8 +141,8 @@ export function FinancialEventsReview({
               <div className={styles.cardHeader}>
                 <div>
                   <span className={styles.kind}>{active.kind === "recurring" ? "Recurring payment" : "Grouped event"}</span>
-                  <h2>{active.displayName}</h2>
-                  <p>{active.accountLabel}</p>
+                  <h2 style={{ overflowWrap: "anywhere" }}>{active.displayName}</h2>
+                  <p style={{ overflowWrap: "anywhere" }}>{active.accountLabel}</p>
                 </div>
                 <span className={styles.confidence}>{active.confidence} confidence</span>
               </div>
