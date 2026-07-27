@@ -12,6 +12,7 @@ import {
   effectiveEventType,
   groupingDecision,
   isExactFounderAllowlistMatch,
+  nextUnreviewedIndex,
   recurringDecision,
 } from "../lib/financial-event-confirmations.ts";
 
@@ -258,6 +259,24 @@ test("recurring review preserves a user label and distinguishes confirmation fro
   });
   const label = "Family streaming";
   assert.equal(label, "Family streaming");
+});
+
+test("save and continue advances to the next unreviewed card and wraps the queue", () => {
+  const cards = [
+    { reviewed: true, stale: false },
+    { reviewed: false, stale: false },
+    { reviewed: true, stale: false },
+    { reviewed: false, stale: false },
+  ];
+  assert.equal(nextUnreviewedIndex(cards, 1), 3);
+  assert.equal(nextUnreviewedIndex(cards, 3), 1);
+  assert.equal(
+    nextUnreviewedIndex(
+      cards.map(() => ({ reviewed: true, stale: false })),
+      1,
+    ),
+    null,
+  );
 });
 
 test("medical grouping confirmation and separation remain distinct", () => {

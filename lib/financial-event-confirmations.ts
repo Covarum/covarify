@@ -35,6 +35,18 @@ export function isExactFounderAllowlistMatch(
   return allowedUserIds.size === 1 && allowedUserIds.has(userId);
 }
 
+export function nextUnreviewedIndex(
+  cards: ReadonlyArray<{ reviewed: boolean; stale: boolean }>,
+  currentIndex: number,
+) {
+  if (!cards.length) return null;
+  for (let offset = 1; offset < cards.length; offset += 1) {
+    const index = (currentIndex + offset) % cards.length;
+    if (!cards[index].reviewed || cards[index].stale) return index;
+  }
+  return null;
+}
+
 export type FinancialEventConfirmation = {
   eventId: string;
   inferredType: FinancialEventType | "unresolved_recurring_payment";

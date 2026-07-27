@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Check, ChevronRight, Clock3, ShieldCheck, Sparkles } from "lucide-react";
 import { saveFinancialEventReview } from "@/app/account/events/review/actions";
+import { nextUnreviewedIndex } from "@/lib/financial-event-confirmations";
 import type { FinancialEventReviewCard } from "@/lib/financial-event-review-server";
 import styles from "./financial-events-review.module.css";
 
@@ -89,6 +90,11 @@ export function FinancialEventsReview({
     }),
     [cards],
   );
+  const saveAndContinue = async (formData: FormData) => {
+    await saveFinancialEventReview(formData);
+    const nextIndex = nextUnreviewedIndex(cards, activeIndex);
+    if (nextIndex !== null) setActiveIndex(nextIndex);
+  };
 
   return (
     <main className={styles.page} style={{ overflowX: "clip" }}>
@@ -171,7 +177,7 @@ export function FinancialEventsReview({
                 <p>{active.reason}</p>
                 <small>Current inference: {inferredLabels[active.inferredType] || active.inferredType.replaceAll("_", " ")}</small>
               </div>
-              <form action={preview ? undefined : saveFinancialEventReview}>
+              <form action={preview ? undefined : saveAndContinue}>
                 <input type="hidden" name="eventId" value={active.eventId} />
                 <input type="hidden" name="conditionSignature" value={active.conditionSignature} />
                 <fieldset>
