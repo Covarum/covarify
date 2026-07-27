@@ -13,7 +13,7 @@ import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plai
 import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SYNC_JOB_RETENTION_DAYS, WEBHOOK_RETENTION_DAYS } from "../lib/account-deletion/policy.ts";
 import { assertFounderPilotItemLimit } from "../lib/plaid/production/item-limit.ts";
 import { sanitizeLinkDiagnostic } from "../lib/plaid/production/link-diagnostics.ts";
-import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions } from "../lib/money-picture.ts";
+import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions, summarizeFilteredTransactions } from "../lib/money-picture.ts";
 
 const productionEnvironment = () => ({
   PLAID_CLIENT_ID: "client-id", PLAID_SANDBOX_SECRET: "sandbox-secret", PLAID_PRODUCTION_SECRET: "production-secret",
@@ -55,6 +55,48 @@ test("Money Picture filters preserve deterministic newest-first input without du
   const rows = Array.from({ length: 50 }, (_, index) => ({ id: String(50 - index), plaidAccountId: index % 2 ? "a" : "b", name: `Merchant ${index}`, amount: index + 1, currency: "USD", date: `2026-07-${String(22 - Math.floor(index / 3)).padStart(2, "0")}`, pending: false, pendingTransactionId: null, category: index % 2 ? "FOOD_AND_DRINK" : "TRAVEL", detailedCategory: null }));
   const filtered = filterTransactions(rows, { accountId: "a", category: "FOOD_AND_DRINK" }, new Date("2026-07-22T00:00:00Z"));
   assert.equal(filtered.length, 25); assert.equal(new Set(filtered.map((row) => row.id)).size, filtered.length); assert.deepEqual(filtered.map((row) => row.id), rows.filter((row) => row.plaidAccountId === "a").map((row) => row.id));
+});
+
+test("filtered summaries honor direction, account, date, category, and search", () => {
+  const base = { plaidAccountId: "a", accountLabel: "Checking • 1111", currency: "USD", pending: false, pendingTransactionId: null, detailedCategory: null, transferRelationship: null };
+  const rows = [
+    { ...base, id: "1", name: "Payroll A", amount: -1017.6, date: "2026-07-20", category: "INCOME", direction: "inflow" },
+    { ...base, id: "2", name: "Payroll B", amount: -729.74, date: "2026-07-10", category: "INCOME", direction: "inflow" },
+    { ...base, id: "3", name: "Payroll C", amount: -236.5, date: "2026-07-01", category: "INCOME", direction: "inflow" },
+    { ...base, id: "4", name: "Grocer", amount: 80, date: "2026-07-15", category: "FOOD_AND_DRINK", direction: "outflow" },
+    { ...base, id: "5", plaidAccountId: "b", name: "Other grocer", amount: 20, date: "2026-04-15", category: "FOOD_AND_DRINK", direction: "outflow" },
+  ];
+  const income = summarizeFilteredTransactions(filterTransactions(rows, { category: "INCOME" }, new Date("2026-07-27T00:00:00Z")));
+  assert.deepEqual({ count: income.count, kind: income.kind, amount: income.aggregateAmount }, { count: 3, kind: "inflow", amount: 1983.84 });
+  const spending = summarizeFilteredTransactions(filterTransactions(rows, { accountId: "a", category: "FOOD_AND_DRINK" }, new Date("2026-07-27T00:00:00Z")));
+  assert.deepEqual({ count: spending.count, kind: spending.kind, amount: spending.aggregateAmount }, { count: 1, kind: "spending", amount: 80 });
+  const searched = summarizeFilteredTransactions(filterTransactions(rows, { dateRange: "30", search: "payroll" }, new Date("2026-07-27T00:00:00Z")));
+  assert.equal(searched.count, 3);
+  assert.equal(searched.aggregateAmount, 1983.84);
+  const mixed = summarizeFilteredTransactions(filterTransactions(rows, { accountId: "a", dateRange: "30" }, new Date("2026-07-27T00:00:00Z")));
+  assert.equal(mixed.kind, "mixed");
+  assert.equal(mixed.aggregateAmount, -1903.84);
+  assert.equal(mixed.identifiedInflows, 1983.84);
+  assert.equal(mixed.identifiedOutflows, 80);
+});
+
+test("filtered summary uses all matching rows and remains stable across pagination", () => {
+  const rows = Array.from({ length: 40 }, (_, index) => ({ id: String(index), plaidAccountId: "a", accountLabel: "Checking • 1111", name: `Income ${index}`, amount: -10, currency: "USD", date: "2026-07-20", pending: false, pendingTransactionId: null, category: "INCOME", detailedCategory: null, direction: "inflow", transferRelationship: null }));
+  const full = summarizeFilteredTransactions(rows);
+  assert.equal(rows.slice(0, 25).length, 25);
+  assert.equal(full.count, 40);
+  assert.equal(full.aggregateAmount, 400);
+  assert.deepEqual(summarizeFilteredTransactions(rows), full);
+});
+
+test("pending and empty filtered summaries remain explicit", () => {
+  const pending = summarizeFilteredTransactions([{ id: "pending", plaidAccountId: "a", accountLabel: "Checking • 1111", name: "Pending purchase", amount: 25, currency: "USD", date: "2026-07-20", pending: true, pendingTransactionId: null, category: "FOOD_AND_DRINK", detailedCategory: null, direction: "outflow", transferRelationship: null }]);
+  assert.equal(pending.kind, "mixed");
+  assert.equal(pending.count, 1);
+  assert.equal(summarizeFilteredTransactions([]).count, 0);
+  const component = readFileSync("components/account/recent-activity.tsx", "utf8");
+  assert.match(component, /No transactions match these filters/);
+  assert.match(component, /rows\.length \? <FilteredSummary/);
 });
 
 test("Money Picture empty and partial states do not invent balances", () => {

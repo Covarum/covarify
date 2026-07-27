@@ -1,5 +1,13 @@
 export type MoneyTransaction = { id: string; plaidAccountId: string; accountLabel: string; name: string; amount: number; currency: string; date: string; pending: boolean; pendingTransactionId: string | null; category: string; detailedCategory: string | null; direction: "inflow" | "outflow" | "neutral"; transferRelationship: "internal" | "external" | null };
 export type TransactionFilters = { accountId?: string; category?: string; dateRange?: "30" | "90" | "all"; search?: string };
+export type FilteredTransactionSummary = {
+  count: number;
+  kind: "inflow" | "spending" | "transfer" | "refund" | "mixed";
+  aggregateAmount: number;
+  identifiedInflows: number;
+  identifiedOutflows: number;
+  currency: string;
+};
 
 const categoryLabel = (value: string) => value === "Uncategorized" ? value : value.toLowerCase().split("_").map((word) => word[0]?.toUpperCase() + word.slice(1)).join(" ");
 const monthKey = (date: Date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -26,6 +34,55 @@ export function filterTransactions(transactions: MoneyTransaction[], filters: Tr
   const cutoff = filters.dateRange && filters.dateRange !== "all" ? new Date(now.getTime() - Number(filters.dateRange) * 86400000) : null;
   const search = filters.search?.trim().toLowerCase();
   return transactions.filter((transaction) => (!filters.accountId || transaction.plaidAccountId === filters.accountId) && (!filters.category || transaction.category === filters.category) && (!cutoff || new Date(`${transaction.date}T00:00:00Z`) >= cutoff) && (!search || transaction.name.toLowerCase().includes(search)));
+}
+
+export function summarizeFilteredTransactions(
+  transactions: MoneyTransaction[],
+): FilteredTransactionSummary {
+  const classifications = transactions.map(classifyTransaction);
+  const cents = (value: number) => Math.round(value * 100) / 100;
+  const identifiedInflows = transactions.reduce(
+    (sum, row, index) =>
+      classifications[index] === "inflow" ? sum + Math.abs(row.amount) : sum,
+    0,
+  );
+  const identifiedOutflows = transactions.reduce(
+    (sum, row, index) =>
+      classifications[index] === "outflow" ? sum + Math.abs(row.amount) : sum,
+    0,
+  );
+  const meaningful = new Set(
+    classifications.filter((value) => value !== "pending" && value !== "neutral"),
+  );
+  const kind =
+    meaningful.size === 1 && meaningful.has("inflow")
+      ? "inflow"
+      : meaningful.size === 1 && meaningful.has("outflow")
+        ? "spending"
+        : meaningful.size > 0 &&
+            [...meaningful].every((value) =>
+              ["transfer", "internal_transfer"].includes(value),
+            )
+          ? "transfer"
+          : meaningful.size === 1 && meaningful.has("refund")
+            ? "refund"
+            : "mixed";
+  const aggregateAmount =
+    kind === "inflow"
+      ? identifiedInflows
+      : kind === "spending"
+        ? identifiedOutflows
+        : kind === "transfer" || kind === "refund"
+          ? transactions.reduce((sum, row) => sum + Math.abs(row.amount), 0)
+          : transactions.reduce((sum, row) => sum + row.amount, 0);
+  return {
+    count: transactions.length,
+    kind,
+    aggregateAmount: cents(aggregateAmount),
+    identifiedInflows: cents(identifiedInflows),
+    identifiedOutflows: cents(identifiedOutflows),
+    currency: transactions[0]?.currency || "USD",
+  };
 }
 
 export function buildMoneyPicture(transactions: MoneyTransaction[], now = new Date()) {
