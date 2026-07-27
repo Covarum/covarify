@@ -84,4 +84,13 @@ export async function saveFinancialEventReview(formData: FormData) {
     });
   if (error) throw new Error("EVENT_REVIEW_SAVE_FAILED");
   revalidatePath("/account/events/review");
+  const refreshedQueue = await loadFinancialEventReviewQueue(user.id);
+  const next = refreshedQueue.find(
+    (card) =>
+      card.reviewTier === "primary" && card.eventId !== current.eventId,
+  );
+  return {
+    savedEventId: current.eventId,
+    nextEventId: next?.eventId ?? null,
+  };
 }

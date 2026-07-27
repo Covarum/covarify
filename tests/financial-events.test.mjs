@@ -284,6 +284,24 @@ test("save and continue advances to the next unreviewed card and wraps the queue
   );
 });
 
+test("post-save workflow returns the next item, refreshes, and retires the completed card", () => {
+  const action = readFileSync(
+    new URL("../app/account/events/review/actions.ts", import.meta.url),
+    "utf8",
+  );
+  const component = readFileSync(
+    new URL("../components/account/financial-events-review.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(action, /const refreshedQueue = await loadFinancialEventReviewQueue/);
+  assert.match(action, /nextEventId: next\?\.eventId \?\? null/);
+  assert.match(component, /result\.nextEventId/);
+  assert.match(component, /setCompletedEventIds/);
+  assert.match(component, /setActiveEventId\(nextEventId\)/);
+  assert.match(component, /router\.refresh\(\)/);
+  assert.match(component, /You&apos;re all caught up\./);
+});
+
 test("relationship confirmation and separation remain distinct", () => {
   assert.deepEqual(groupingDecision("related"), {
     groupingConfirmed: true,

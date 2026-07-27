@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Check, ChevronRight, Clock3, ShieldCheck, Sparkles } from "lucide-react";
 import { saveFinancialEventReview } from "@/app/account/events/review/actions";
@@ -97,33 +98,52 @@ export function FinancialEventsReview({
   mobilePreview?: boolean;
   initialIndex?: number;
 }) {
-  const primaryIndices = cards
-    .map((card, index) => ({ card, index }))
-    .filter(({ card }) => card.reviewTier === "primary")
-    .map(({ index }) => index);
-  const initialPrimaryIndex = primaryIndices[0] ?? -1;
-  const [activeIndex, setActiveIndex] = useState(
-    initialIndex ?? initialPrimaryIndex,
+  const router = useRouter();
+  const primaryCards = cards.filter((card) => card.reviewTier === "primary");
+  const initialPrimary =
+    (initialIndex !== undefined ? cards[initialIndex] : undefined) ??
+    primaryCards[0];
+  const [initialPrimaryTotal] = useState(primaryCards.length);
+  const [activeEventId, setActiveEventId] = useState<string | null>(
+    initialPrimary?.eventId ?? null,
   );
-  const active = cards[activeIndex];
-  const primaryCards = primaryIndices.map((index) => cards[index]);
+  const [completedEventIds, setCompletedEventIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const availablePrimaryCards = primaryCards.filter(
+    (card) => !completedEventIds.has(card.eventId),
+  );
+  const active =
+    cards.find((card) => card.eventId === activeEventId) ??
+    availablePrimaryCards[0];
   const laterCards = cards.filter((card) => card.reviewTier === "later");
   const historyCards = cards.filter((card) => card.reviewTier === "history");
-  const reviewed = primaryCards.filter(
-    (card) => card.reviewed && !card.stale,
-  ).length;
+  const reviewed = completedEventIds.size;
   const sections = {
     recurring: primaryCards.filter((card) => card.kind === "recurring").length,
     grouped: primaryCards.filter((card) => card.kind === "grouped").length,
   };
   const saveAndContinue = async (formData: FormData) => {
-    await saveFinancialEventReview(formData);
-    const currentPosition = primaryIndices.indexOf(activeIndex);
-    const nextIndex =
-      primaryIndices[(currentPosition + 1) % primaryIndices.length];
-    if (nextIndex !== undefined && nextIndex !== activeIndex) {
-      setActiveIndex(nextIndex);
+    if (!active) return;
+    const savedEventId = active.eventId;
+    let nextEventId: string | null;
+    if (!preview) {
+      const result = await saveFinancialEventReview(formData);
+      if (result.savedEventId !== savedEventId) {
+        throw new Error("EVENT_REVIEW_ADVANCE_MISMATCH");
+      }
+      nextEventId = result.nextEventId;
+    } else {
+      nextEventId =
+        primaryCards.find(
+          (card) =>
+            card.eventId !== savedEventId &&
+            !completedEventIds.has(card.eventId),
+        )?.eventId ?? null;
     }
+    setCompletedEventIds((current) => new Set(current).add(savedEventId));
+    setActiveEventId(nextEventId);
+    if (!preview) router.refresh();
   };
 
   return (
@@ -145,17 +165,17 @@ export function FinancialEventsReview({
           </p>
           <div className={styles.progress}>
             <div>
-              <strong>{reviewed} of {primaryCards.length} reviewed</strong>
+              <strong>{reviewed} of {initialPrimaryTotal} reviewed</strong>
               <span>{sections.recurring} recurring · {sections.grouped} possible groups</span>
             </div>
-            <i><b style={{ width: `${primaryCards.length ? (reviewed / primaryCards.length) * 100 : 0}%` }} /></i>
+            <i><b style={{ width: `${initialPrimaryTotal ? (reviewed / initialPrimaryTotal) * 100 : 0}%` }} /></i>
           </div>
         </section>
 
         {!active ? (
           <section className={styles.complete}>
             <Check size={24} />
-            <h2>Nothing needs review right now</h2>
+            <h2>You&apos;re all caught up.</h2>
             <p>Covarify will bring patterns back here when your input is useful.</p>
             <Link href="/account">Return to your Money Picture</Link>
           </section>
@@ -163,13 +183,12 @@ export function FinancialEventsReview({
           <section className={styles.reviewGrid}>
             <aside aria-label="Review queue">
               <h2>Review queue</h2>
-              {primaryIndices.map((index, position) => {
-                const card = cards[index];
+              {availablePrimaryCards.map((card, position) => {
                 return (
                 <button
                   key={card.eventId}
-                  onClick={() => setActiveIndex(index)}
-                  className={index === activeIndex ? styles.activeItem : undefined}
+                  onClick={() => setActiveEventId(card.eventId)}
+                  className={card.eventId === active?.eventId ? styles.activeItem : undefined}
                 >
                   <span>{position + 1}</span>
                   <div><strong>{card.displayName}</strong><small>{card.kind === "recurring" ? "Recurring payment" : "Possible related purchases"}</small></div>
@@ -181,9 +200,8 @@ export function FinancialEventsReview({
                 <details className={styles.secondaryQueue}>
                   <summary>Review later ({laterCards.length})</summary>
                   {laterCards.map((card) => {
-                    const index = cards.indexOf(card);
                     return (
-                      <button key={card.eventId} onClick={() => setActiveIndex(index)}>
+                      <button key={card.eventId} onClick={() => setActiveEventId(card.eventId)}>
                         <span>·</span>
                         <div><strong>{card.displayName}</strong><small>Available when useful</small></div>
                         <ChevronRight size={16} />
@@ -196,9 +214,8 @@ export function FinancialEventsReview({
                 <details className={styles.secondaryQueue}>
                   <summary>Confirmation history ({historyCards.length})</summary>
                   {historyCards.map((card) => {
-                    const index = cards.indexOf(card);
                     return (
-                      <button key={card.eventId} onClick={() => setActiveIndex(index)}>
+                      <button key={card.eventId} onClick={() => setActiveEventId(card.eventId)}>
                         <span><Check size={13} /></span>
                         <div><strong>{card.displayName}</strong><small>Prior answer preserved</small></div>
                         <ChevronRight size={16} />
@@ -253,7 +270,7 @@ export function FinancialEventsReview({
                   {" · "}Queue priority {active.priorityScore}: {active.priorityReason}
                 </small>
               </div>
-              <form action={preview ? undefined : saveAndContinue}>
+              <form action={saveAndContinue}>
                 <input type="hidden" name="eventId" value={active.eventId} />
                 <input type="hidden" name="conditionSignature" value={active.conditionSignature} />
                 <fieldset>
@@ -311,14 +328,19 @@ export function FinancialEventsReview({
                     type="button"
                     className={styles.skip}
                     onClick={() => {
-                      const position = primaryIndices.indexOf(activeIndex);
-                      const next = primaryIndices[(position + 1) % primaryIndices.length];
-                      if (next !== undefined) setActiveIndex(next);
+                      const position = availablePrimaryCards.findIndex(
+                        (card) => card.eventId === active.eventId,
+                      );
+                      const next =
+                        availablePrimaryCards[
+                          (position + 1) % availablePrimaryCards.length
+                        ];
+                      if (next) setActiveEventId(next.eventId);
                     }}
                   >
                     Skip for now
                   </button>
-                  <button type={preview ? "button" : "submit"} className={styles.save}>Save and continue <ChevronRight size={17} /></button>
+                  <button type="submit" className={styles.save}>Save and continue <ChevronRight size={17} /></button>
                 </div>
               </form>
             </article>

@@ -285,5 +285,14 @@ export async function loadFinancialEventReviewQueue(userId: string) {
       ),
     }))
     .filter((candidate) => candidate.reviewTier !== null);
-  return [...recurring, ...grouped];
+  const tierOrder = { primary: 0, later: 1, history: 2 } as const;
+  return [...recurring, ...grouped].sort((a, b) => {
+    const tierDifference =
+      tierOrder[a.reviewTier!] - tierOrder[b.reviewTier!];
+    return (
+      tierDifference ||
+      b.priorityScore - a.priorityScore ||
+      a.displayName.localeCompare(b.displayName)
+    );
+  });
 }
