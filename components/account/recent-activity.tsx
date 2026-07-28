@@ -184,8 +184,8 @@ export function RecentActivity({
     >
       <div className={styles["mp-heading"]}>
         <div>
-          <p>Recent activity</p>
-          <h2 id="recent-activity-heading">Your latest transactions</h2>
+          <p>Supporting context</p>
+          <h2 id="recent-activity-heading">Recent activity</h2>
         </div>
         <span>
           Showing {rows.length} of {count} transactions

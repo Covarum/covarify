@@ -14,6 +14,7 @@ import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SY
 import { assertFounderPilotItemLimit } from "../lib/plaid/production/item-limit.ts";
 import { sanitizeLinkDiagnostic } from "../lib/plaid/production/link-diagnostics.ts";
 import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions, formatTransactionDisplayAmount, summarizeFilteredTransactions } from "../lib/money-picture.ts";
+import { RECENT_ACTIVITY_PAGE_SIZE } from "../lib/recent-activity-pagination.ts";
 
 const productionEnvironment = () => ({
   PLAID_CLIENT_ID: "client-id", PLAID_SANDBOX_SECRET: "sandbox-secret", PLAID_PRODUCTION_SECRET: "production-secret",
@@ -149,7 +150,15 @@ test("summary aggregation is independent of pagination and does not double count
     transferRelationship: null,
   }));
   const full = summarizeFilteredTransactions(rows);
-  assert.equal(rows.slice(0, 25).length, 25);
+  const first = rows.slice(0, RECENT_ACTIVITY_PAGE_SIZE);
+  const second = rows.slice(RECENT_ACTIVITY_PAGE_SIZE, RECENT_ACTIVITY_PAGE_SIZE * 2);
+  const third = rows.slice(RECENT_ACTIVITY_PAGE_SIZE * 2, RECENT_ACTIVITY_PAGE_SIZE * 3);
+  assert.equal(RECENT_ACTIVITY_PAGE_SIZE, 10);
+  assert.equal(first.length, 10);
+  assert.equal(second.length, 10);
+  assert.equal(third.length, 10);
+  assert.equal(new Set([...first, ...second, ...third].map((row) => row.id)).size, 30);
+  assert.deepEqual([...first, ...second, ...third].map((row) => row.id), rows.slice(0, 30).map((row) => row.id));
   assert.equal(full.count, 40);
   assert.equal(full.aggregateAmount, 400);
   assert.deepEqual(summarizeFilteredTransactions(rows), full);
@@ -189,6 +198,13 @@ test("Money Picture empty and partial states do not invent balances", () => {
 test("transaction browsing remains authenticated, owner-scoped, cursor ordered, and read-only", () => {
   const route = readFileSync(new URL("../app/api/account/transactions/route.ts", import.meta.url), "utf8");
   assert.match(route, /if \(!user\).*401/s); assert.match(route, /\.eq\("user_id", user\.id\)/); assert.match(route, /\.is\("removed_at", null\)/); assert.match(route, /order\("transaction_date", \{ ascending: false \}\)\.order\("id", \{ ascending: false \}\)/); assert.doesNotMatch(route, /\.(insert|update|upsert|delete)\(/);
+  assert.match(route, /slice\(start, start \+ RECENT_ACTIVITY_PAGE_SIZE\)/);
+  const accountPage = readFileSync(new URL("../app/account/page.tsx", import.meta.url), "utf8");
+  assert.match(accountPage, /currentRows\.slice\(0, RECENT_ACTIVITY_PAGE_SIZE\)/);
+  const component = readFileSync(new URL("../components/account/recent-activity.tsx", import.meta.url), "utf8");
+  assert.match(component, /id="recent-activity-heading">Recent activity</);
+  assert.match(component, /Showing \{rows\.length\} of \{count\} transactions/);
+  assert.match(component, /new Map/);
 });
 
 test("anonymous production Link token requests are rejected before configuration", async () => {

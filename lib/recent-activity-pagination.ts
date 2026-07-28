@@ -1,0 +1,1 @@
+export const RECENT_ACTIVITY_PAGE_SIZE = 10;
