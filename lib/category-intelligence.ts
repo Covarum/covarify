@@ -97,12 +97,22 @@ function categoryMeaning(
   insight: Pick<
     CategoryInsight,
     | "comparison"
+    | "categoryId"
     | "largestContributor"
     | "currentAmount"
     | "accountDistribution"
   >,
   rank: number,
 ) {
+  if (rank === 0 && insight.currentAmount > 0)
+    return "This was your largest identified spending category during the selected period.";
+  if (
+    insight.categoryId === "LOAN_PAYMENTS" &&
+    insight.accountDistribution[0] &&
+    insight.accountDistribution[0].share >= 70
+  ) {
+    return "Most identified activity came from one connected account.";
+  }
   if (
     insight.largestContributor &&
     insight.largestContributor.share >= 60
@@ -121,8 +131,6 @@ function categoryMeaning(
     return "This category declined compared with the prior equivalent period.";
   if (insight.comparison === "new")
     return "This category newly appeared in the selected period.";
-  if (rank === 0 && insight.currentAmount > 0)
-    return "This was your largest identified spending category during the selected period.";
   return "Activity was spread across multiple identified purchases.";
 }
 

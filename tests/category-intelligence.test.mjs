@@ -53,6 +53,14 @@ test("category total and shares reconcile with the canonical scoped snapshot", (
   assert.equal(payload.totalIdentifiedSpending, 100);
   assert.equal(payload.categories[0].currentShare, 60);
   assert.equal(
+    payload.categories[0].meaning,
+    "This was your largest identified spending category during the selected period.",
+  );
+  assert.equal(
+    payload.categories[1].meaning,
+    "Most identified activity came from one connected account.",
+  );
+  assert.equal(
     Math.round(
       payload.categories.reduce((sum, category) => sum + category.currentShare, 0),
     ),
