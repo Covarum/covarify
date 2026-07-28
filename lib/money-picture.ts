@@ -8,6 +8,13 @@ export type FilteredTransactionSummary = {
   identifiedOutflows: number;
   currency: string;
 };
+export type TransactionDisplayAmount = {
+  displayAmount: string;
+  direction: "in" | "out" | "neutral";
+  semanticLabel: "Money in" | "Money out" | "Refund" | "Transfer in" | "Transfer out" | "No movement";
+  accessibleText: string;
+  tone: "inflow" | "outflow" | "refund" | "transfer" | "neutral";
+};
 
 const categoryLabel = (value: string) => value === "Uncategorized" ? value : value.toLowerCase().split("_").map((word) => word[0]?.toUpperCase() + word.slice(1)).join(" ");
 const monthKey = (date: Date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -22,6 +29,48 @@ export function classifyTransaction(transaction: MoneyTransaction) {
   if (transaction.amount < 0) return "inflow" as const;
   if (transaction.amount > 0) return "outflow" as const;
   return "neutral" as const;
+}
+
+export function formatTransactionDisplayAmount(
+  transaction: MoneyTransaction,
+): TransactionDisplayAmount {
+  const classification = classifyTransaction(transaction);
+  const transfer = ["transfer", "internal_transfer"].includes(classification) || isTransfer(transaction);
+  const refund = classification === "refund" || (transaction.amount < 0 && isRefund(transaction));
+  const moneyIn = transaction.direction === "inflow" || transaction.amount < 0;
+  const direction = transaction.amount === 0 ? "neutral" : moneyIn ? "in" : "out";
+  const semanticLabel = transfer
+    ? direction === "in"
+      ? "Transfer in"
+      : "Transfer out"
+    : refund
+      ? "Refund"
+      : direction === "in"
+        ? "Money in"
+        : direction === "out"
+          ? "Money out"
+          : "No movement";
+  const tone = transfer
+    ? "transfer"
+    : refund
+      ? "refund"
+      : direction === "in"
+        ? "inflow"
+        : direction === "out"
+          ? "outflow"
+          : "neutral";
+  const formatted = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: transaction.currency,
+  }).format(Math.abs(transaction.amount));
+  const sign = direction === "in" ? "+" : direction === "out" ? "−" : "";
+  return {
+    displayAmount: `${sign}${formatted}`,
+    direction,
+    semanticLabel,
+    accessibleText: `${semanticLabel}: ${formatted}`,
+    tone,
+  };
 }
 
 export function annotateInternalTransfers(transactions: MoneyTransaction[]) {
@@ -84,7 +133,7 @@ export function summarizeFilteredTransactions(
               0,
             )
           : transactions.reduce(
-              (sum, transaction) => sum + transaction.amount,
+              (sum, transaction) => sum - transaction.amount,
               0,
             );
   return {

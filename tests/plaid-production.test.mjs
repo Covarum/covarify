@@ -13,7 +13,7 @@ import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plai
 import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SYNC_JOB_RETENTION_DAYS, WEBHOOK_RETENTION_DAYS } from "../lib/account-deletion/policy.ts";
 import { assertFounderPilotItemLimit } from "../lib/plaid/production/item-limit.ts";
 import { sanitizeLinkDiagnostic } from "../lib/plaid/production/link-diagnostics.ts";
-import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions, summarizeFilteredTransactions } from "../lib/money-picture.ts";
+import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions, formatTransactionDisplayAmount, summarizeFilteredTransactions } from "../lib/money-picture.ts";
 
 const productionEnvironment = () => ({
   PLAID_CLIENT_ID: "client-id", PLAID_SANDBOX_SECRET: "sandbox-secret", PLAID_PRODUCTION_SECRET: "production-secret",
@@ -41,6 +41,26 @@ test("Money Picture classification excludes transfers and pending rows from spen
   assert.equal(classifyTransaction({ ...base, name: "Purchase refund", amount: -25, pending: false, category: "GENERAL_MERCHANDISE" }), "refund");
   const picture = buildMoneyPicture([{ ...base, amount: 25, pending: false, category: "FOOD_AND_DRINK" }, { ...base, id: "2", amount: 100, pending: false, category: "TRANSFER_OUT" }, { ...base, id: "3", amount: 12, pending: true, category: "FOOD_AND_DRINK" }], new Date("2026-07-22T00:00:00Z"));
   assert.equal(picture.spending, 25); assert.equal(picture.spendingByCategory[0].amount, 25);
+});
+
+test("transaction display amounts translate Plaid signs without changing source values", () => {
+  const base = { id: "display", plaidAccountId: "account", accountLabel: "Checking • 1111", name: "Entry", currency: "USD", date: "2026-07-20", pending: false, pendingTransactionId: null, detailedCategory: null, transferRelationship: null };
+  const cases = [
+    [{ ...base, amount: -1017.6, category: "INCOME", direction: "inflow" }, "+$1,017.60", "Money in: $1,017.60"],
+    [{ ...base, amount: 48.55, category: "FOOD_AND_DRINK", direction: "outflow" }, "−$48.55", "Money out: $48.55"],
+    [{ ...base, name: "Purchase refund", amount: -25, category: "GENERAL_MERCHANDISE", direction: "inflow" }, "+$25.00", "Refund: $25.00"],
+    [{ ...base, amount: -100, category: "TRANSFER_IN", direction: "inflow" }, "+$100.00", "Transfer in: $100.00"],
+    [{ ...base, amount: 100, category: "TRANSFER_OUT", direction: "outflow" }, "−$100.00", "Transfer out: $100.00"],
+    [{ ...base, amount: -0.01, category: "INCOME", direction: "inflow" }, "+$0.01", "Money in: $0.01"],
+  ];
+  for (const [transaction, displayAmount, accessibleText] of cases) {
+    const originalAmount = transaction.amount;
+    const display = formatTransactionDisplayAmount(transaction);
+    assert.equal(display.displayAmount, displayAmount);
+    assert.equal(display.accessibleText, accessibleText);
+    assert.equal(transaction.amount, originalAmount);
+    assert.doesNotMatch(display.displayAmount, /^[+−]-/);
+  }
 });
 
 test("account analytics retain provenance and exclude matched internal transfers", () => {
@@ -107,7 +127,7 @@ test("filtered summaries use human-readable direction and the full filtered resu
     }),
   );
   assert.equal(mixed.kind, "mixed");
-  assert.equal(mixed.aggregateAmount, -1903.84);
+  assert.equal(mixed.aggregateAmount, 1903.84);
   assert.equal(mixed.identifiedInflows, 1983.84);
   assert.equal(mixed.identifiedOutflows, 80);
 });
@@ -153,7 +173,7 @@ test("pending-only and empty filtered views remain explicit", () => {
   }]);
   assert.equal(pending.count, 1);
   assert.equal(pending.kind, "mixed");
-  assert.equal(pending.aggregateAmount, 25);
+  assert.equal(pending.aggregateAmount, -25);
   assert.equal(summarizeFilteredTransactions([]).count, 0);
   const component = readFileSync("components/account/recent-activity.tsx", "utf8");
   assert.match(component, /No transactions match these filters/);

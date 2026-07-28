@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatTransactionDisplayAmount } from "@/lib/money-picture";
 import type {
   FilteredTransactionSummary,
   MoneyTransaction,
@@ -13,6 +14,19 @@ const money = (amount: number, currency: string) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency }).format(
     amount,
   );
+
+function TransactionAmount({ transaction }: { transaction: MoneyTransaction }) {
+  const amount = formatTransactionDisplayAmount(transaction);
+  return (
+    <strong
+      className={styles[`mp-amount-${amount.tone}`]}
+      title={amount.semanticLabel}
+    >
+      <span className="sr-only">{amount.accessibleText}</span>
+      <span aria-hidden="true">{amount.displayAmount}</span>
+    </strong>
+  );
+}
 
 const countLabel = (summary: FilteredTransactionSummary) => {
   const noun =
@@ -221,7 +235,7 @@ export function RecentActivity({
                 </span>
                 <span>{transaction.accountLabel}</span>
               </div>
-              <strong>{money(transaction.amount, transaction.currency)}</strong>
+              <TransactionAmount transaction={transaction} />
             </li>
           ))}
         </ul>
