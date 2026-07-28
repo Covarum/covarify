@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatTransactionDisplayAmount } from "@/lib/money-picture";
 import type {
   FilteredTransactionSummary,
@@ -8,6 +8,7 @@ import type {
   TransactionFilters,
 } from "@/lib/money-picture";
 import type { ResolvedFinancialPeriod } from "@/lib/financial-periods";
+import { displaySeparated } from "@/lib/presentation-separators";
 import styles from "./money-picture.module.css";
 
 const money = (amount: number, currency: string) =>
@@ -114,13 +115,14 @@ export function RecentActivity({
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const requestSequence = useRef(0);
 
   async function request(
     nextCursor: string | null,
     nextFilters = filters,
     replace = false,
   ) {
-    if (loading) return;
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError(false);
     try {
@@ -131,6 +133,7 @@ export function RecentActivity({
       });
       if (!response.ok) throw new Error("request failed");
       const payload = await response.json();
+      if (sequence !== requestSequence.current) return;
       setRows((current) =>
         replace
           ? payload.transactions
@@ -147,9 +150,9 @@ export function RecentActivity({
       setSummary(payload.summary);
       setCursor(payload.cursor);
     } catch {
-      setError(true);
+      if (sequence === requestSequence.current) setError(true);
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   }
 
@@ -158,6 +161,21 @@ export function RecentActivity({
     setFilters(next);
     void request(null, next, true);
   }
+
+  useEffect(() => {
+    const handleCategoryFilter = (event: Event) => {
+      const categoryId = (
+        event as CustomEvent<{ categoryId: string | null }>
+      ).detail.categoryId;
+      change({ category: categoryId || undefined });
+    };
+    window.addEventListener("covarify:category-filter", handleCategoryFilter);
+    return () =>
+      window.removeEventListener(
+        "covarify:category-filter",
+        handleCategoryFilter,
+      );
+  });
 
   return (
     <section
@@ -226,12 +244,14 @@ export function RecentActivity({
               <div>
                 <strong>{transaction.name}</strong>
                 <span>
-                  {new Intl.DateTimeFormat("en-US", {
-                    dateStyle: "medium",
-                    timeZone: "UTC",
-                  }).format(new Date(`${transaction.date}T00:00:00Z`))}{" "}
-                  · {transaction.category}
-                  {transaction.pending ? " · Pending" : ""}
+                  {displaySeparated(
+                    new Intl.DateTimeFormat("en-US", {
+                      dateStyle: "medium",
+                      timeZone: "UTC",
+                    }).format(new Date(`${transaction.date}T00:00:00Z`)),
+                    transaction.category,
+                    transaction.pending ? "Pending" : null,
+                  )}
                 </span>
                 <span>{transaction.accountLabel}</span>
               </div>

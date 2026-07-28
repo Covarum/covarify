@@ -7,6 +7,7 @@ import { Check, ChevronRight, Clock3, ShieldCheck, Sparkles } from "lucide-react
 import { saveFinancialEventReview } from "@/app/account/events/review/actions";
 import type { FinancialEventReviewCard } from "@/lib/financial-event-review-server";
 import type { ResolvedFinancialPeriod } from "@/lib/financial-periods";
+import { DISPLAY_SEPARATOR, displaySeparated } from "@/lib/presentation-separators";
 import styles from "./financial-events-review.module.css";
 
 const recurringOptions = [
@@ -177,7 +178,7 @@ export function FinancialEventsReview({
           <div className={styles.progress}>
             <div>
               <strong>{reviewed} of {initialPrimaryTotal} reviewed</strong>
-              <span>{sections.recurring} recurring · {sections.grouped} possible groups</span>
+              <span>{displaySeparated(`${sections.recurring} recurring`, `${sections.grouped} possible groups`)}</span>
             </div>
             <i><b style={{ width: `${initialPrimaryTotal ? (reviewed / initialPrimaryTotal) * 100 : 0}%` }} /></i>
           </div>
@@ -213,7 +214,7 @@ export function FinancialEventsReview({
                   {laterCards.map((card) => {
                     return (
                       <button key={card.eventId} onClick={() => setActiveEventId(card.eventId)}>
-                        <span>·</span>
+                        <span>{DISPLAY_SEPARATOR}</span>
                         <div><strong>{card.displayName}</strong><small>Available when useful</small></div>
                         <ChevronRight size={16} />
                       </button>
@@ -264,7 +265,7 @@ export function FinancialEventsReview({
                   <strong>Latest founder confirmation</strong>
                   <p>
                     {decisionLabels[active.latestDecision || ""] || "Reviewed"}
-                    {active.latestLabel ? ` · ${active.latestLabel}` : ""}
+                    {active.latestLabel ? ` ${DISPLAY_SEPARATOR} ${active.latestLabel}` : ""}
                   </p>
                   <small>
                     {active.reviewCount} confirmation record
@@ -278,7 +279,7 @@ export function FinancialEventsReview({
                 <p>{active.kind === "recurring" ? "This charge has appeared on a regular pattern." : active.reason}</p>
                 <small>
                   Current inference: {inferredLabels[active.inferredType] || active.inferredType.replaceAll("_", " ")}
-                  {" · "}Queue priority {active.priorityScore}: {active.priorityReason}
+                  {` ${DISPLAY_SEPARATOR} `}Queue priority {active.priorityScore}: {active.priorityReason}
                 </small>
               </div>
               <form action={saveAndContinue}>

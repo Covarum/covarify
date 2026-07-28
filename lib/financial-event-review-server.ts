@@ -1,4 +1,5 @@
 import "server-only";
+import { displaySeparated } from "@/lib/presentation-separators";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { normalizePersistedPlaidCategory } from "@/lib/plaid/category-normalization";
@@ -136,7 +137,7 @@ export async function loadFinancialEventReviewQueue(
   const labels = new Map(
     (accounts.data || []).map((account) => [
       account.id,
-      `${account.official_name || account.name}${account.mask ? ` • ${account.mask}` : ""}`,
+      displaySeparated(account.official_name || account.name, account.mask || null),
     ]),
   );
   const rows = annotateInternalTransfers(
