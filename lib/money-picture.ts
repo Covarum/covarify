@@ -1,5 +1,5 @@
 import { displaySeparated } from "./presentation-separators.ts";
-export type MoneyTransaction = { id: string; plaidAccountId: string; accountLabel: string; name: string; amount: number; currency: string; date: string; pending: boolean; pendingTransactionId: string | null; category: string; detailedCategory: string | null; direction: "inflow" | "outflow" | "neutral"; transferRelationship: "internal" | "external" | null };
+export type MoneyTransaction = { id: string; plaidAccountId: string; accountLabel: string; name: string; amount: number; currency: string; date: string; pending: boolean; pendingTransactionId: string | null; category: string; sourceCategory?: string; categorySource?: "user_confirmed" | "covarify_inference" | "normalized_source"; userConfirmedMeaning?: { category: string | null; treatment: string | null; contextLabel: string | null; note: string | null; receiptNeeded: boolean } | null; detailedCategory: string | null; direction: "inflow" | "outflow" | "neutral"; transferRelationship: "internal" | "external" | null };
 export type TransactionFilters = { accountId?: string; category?: string; periodStart?: string; periodEnd?: string; search?: string };
 export type FilteredTransactionSummary = {
   count: number;

@@ -5,8 +5,18 @@ import { readProductionPlaidConfig } from "@/lib/plaid/production/config";
 import { isExactFounderAllowlistMatch } from "@/lib/financial-event-confirmations";
 
 export async function requireFounderReviewUser() {
-  const user = await getAuthenticatedUser();
-  if (!user) redirect("/login?next=/account/events/review");
+  const authenticated = await getAuthenticatedUser();
+  if (!authenticated) redirect("/login?next=/account/events/review");
+  const user = await getAuthorizedFounderUser(authenticated);
+  if (!user) redirect("/account");
+  return user;
+}
+
+export async function getAuthorizedFounderUser(
+  authenticated?: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>,
+) {
+  const user = authenticated || await getAuthenticatedUser();
+  if (!user) return null;
   let allowed = false;
   try {
     allowed = isExactFounderAllowlistMatch(
@@ -16,6 +26,5 @@ export async function requireFounderReviewUser() {
   } catch {
     allowed = false;
   }
-  if (!allowed) redirect("/account");
-  return user;
+  return allowed ? user : null;
 }

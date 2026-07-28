@@ -176,7 +176,7 @@ test("founder authorization fails closed for missing or expanded allowlists", ()
 test("preview and persistence remain founder-only, append-only, and free of Plaid calls or source mutation", () => {
   const previewPage = readFileSync(new URL("../app/account/transaction-understanding/preview/page.tsx", import.meta.url), "utf8");
   const component = readFileSync(new URL("../components/account/transaction-understanding-preview.tsx", import.meta.url), "utf8");
-  const migration = readFileSync(new URL("../supabase/migrations/20260727213000_transaction_understanding_v1.sql", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../supabase/migrations/20260728133000_transaction_understanding_v1.sql", import.meta.url), "utf8");
   const source = readFileSync(new URL("../lib/transaction-understanding.ts", import.meta.url), "utf8");
   assert.match(previewPage, /requireFounderReviewUser/);
   assert.match(previewPage, /NODE_ENV === "development"/);
@@ -184,8 +184,33 @@ test("preview and persistence remain founder-only, append-only, and free of Plai
   assert.match(component, /no production writes/i);
   assert.match(migration, /append-only structured user meaning/i);
   assert.match(migration, /grant select, insert/);
+  assert.match(migration, /transaction_understanding_no_update/);
+  assert.match(migration, /transaction_understanding_no_delete/);
+  assert.match(migration, /transaction_understanding_owned_transaction_fk/);
+  assert.match(migration, /transaction_understanding_supersession_fk/);
   assert.doesNotMatch(migration, /grant (?:update|delete)/i);
   assert.doesNotMatch(source, /plaidClient|\/api\/plaid|\.from\("plaid_transactions"\)|\.(?:update|delete|upsert)\(/);
+});
+
+test("production route and workspace enforce founder-only confirmation-before-append integration", () => {
+  const route = readFileSync(new URL("../app/api/account/transaction-understanding/route.ts", import.meta.url), "utf8");
+  const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
+  const activity = readFileSync(new URL("../components/account/recent-activity.tsx", import.meta.url), "utf8");
+  const panel = readFileSync(new URL("../components/account/transaction-understanding.tsx", import.meta.url), "utf8");
+  const page = readFileSync(new URL("../app/account/page.tsx", import.meta.url), "utf8");
+  assert.match(route, /getAuthorizedFounderUser/);
+  assert.match(route, /status: 404/);
+  assert.match(route, /operation === "interpret"/);
+  assert.match(route, /\.insert\(recordToInsert\(record\)\)/);
+  assert.doesNotMatch(route, /\.(?:update|delete|upsert)\(/);
+  assert.doesNotMatch(route, /plaidClient|\/api\/plaid/);
+  assert.match(workspace, /transactionUnderstandingEnabled/);
+  assert.match(activity, /covarify:understand-transaction/);
+  assert.match(activity, /mp-transaction-trigger/);
+  assert.match(panel, /Source category/);
+  assert.match(panel, /Effective category/);
+  assert.match(panel, /router\.refresh/);
+  assert.match(page, /applyFounderTransactionUnderstanding/);
 });
 
 test("Financial Event source provenance stays separate from user context", () => {

@@ -1,7 +1,7 @@
 import type { MoneyTransaction } from "./money-picture.ts";
 
 export const TRANSACTION_UNDERSTANDING_RULE_VERSION =
-  "transaction-understanding-v1-preview-2026-07-27";
+  "transaction-understanding-v1-production-2026-07-28";
 
 export const USER_TRANSACTION_CATEGORIES = [
   "Groceries",
@@ -392,12 +392,26 @@ export function applyEffectiveCategories(
   inferredCategories: ReadonlyMap<string, string>,
   history: TransactionUnderstandingRecord[],
 ) {
-  return transactions.map((transaction) => ({
-    ...transaction,
-    category: effectiveTransactionState(
+  return transactions.map((transaction) => {
+    const state = effectiveTransactionState(
       transaction,
       inferredCategories.get(transaction.id) || null,
       history,
-    ).effectiveCategory.toUpperCase().replace(/\s+/g, "_"),
-  }));
+    );
+    return {
+      ...transaction,
+      sourceCategory: transaction.sourceCategory || state.sourceCategory,
+      category: state.effectiveCategory.toUpperCase().replace(/\s+/g, "_"),
+      categorySource: state.categorySource,
+      userConfirmedMeaning: state.activeRecordId
+        ? {
+            category: state.effectiveCategory,
+            treatment: state.treatment,
+            contextLabel: state.contextLabel,
+            note: state.note,
+            receiptNeeded: state.receiptNeeded,
+          }
+        : null,
+    };
+  });
 }

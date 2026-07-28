@@ -6,6 +6,8 @@ import { annotateInternalTransfers, filterTransactions, summarizeFilteredTransac
 import { decodeTransactionCursor, encodeTransactionCursor } from "@/lib/transaction-pagination";
 import { RECENT_ACTIVITY_PAGE_SIZE } from "@/lib/recent-activity-pagination";
 import { normalizePersistedPlaidCategory } from "@/lib/plaid/category-normalization";
+import { getAuthorizedFounderUser } from "@/lib/founder-review-auth";
+import { applyFounderTransactionUnderstanding } from "@/lib/transaction-understanding-server";
 
 export const dynamic = "force-dynamic";
 function mapTransaction(row: Record<string, unknown>, accountLabel: string): MoneyTransaction { const category = normalizePersistedPlaidCategory(row.category_data); const amount = Number(row.amount); return { id: String(row.id), plaidAccountId: String(row.plaid_account_id), accountLabel, name: String(row.merchant_name || row.transaction_name), amount, currency: String(row.currency || "USD"), date: String(row.transaction_date), pending: Boolean(row.pending), pendingTransactionId: row.pending_transaction_id ? String(row.pending_transaction_id) : null, category: category?.primary || "Uncategorized", detailedCategory: category?.detailed || null, direction: amount < 0 ? "inflow" : amount > 0 ? "outflow" : "neutral", transferRelationship: null }; }
@@ -20,7 +22,12 @@ export async function POST(request: Request) {
     const { data: accounts, error: accountError } = await supabase.from("plaid_accounts").select("id,name,official_name,mask").eq("user_id", user.id).eq("plaid_item_id", item.id).eq("active_status", "active"); if (accountError || !accounts?.length) return NextResponse.json({ error: "ACTIVITY_UNAVAILABLE" }, { status: 503 }); const labels = new Map(accounts.map((account) => [account.id, displaySeparated(account.official_name || account.name, account.mask || null)]));
     const { data, error } = await supabase.from("plaid_transactions").select("id,plaid_account_id,transaction_name,merchant_name,amount,currency,transaction_date,pending,pending_transaction_id,category_data").eq("user_id", user.id).eq("plaid_item_id", item.id).in("plaid_account_id", [...labels.keys()]).is("removed_at", null).order("transaction_date", { ascending: false }).order("id", { ascending: false }).limit(5000);
     if (error) return NextResponse.json({ error: "ACTIVITY_UNAVAILABLE" }, { status: 503 });
-    const filtered = filterTransactions(annotateInternalTransfers((data || []).map((row) => mapTransaction(row, labels.get(String(row.plaid_account_id)) || "Connected account"))), body.filters || {});
+    const sourceRows = annotateInternalTransfers((data || []).map((row) => mapTransaction(row, labels.get(String(row.plaid_account_id)) || "Connected account")));
+    const founder = await getAuthorizedFounderUser(user);
+    const effectiveRows = founder
+      ? (await applyFounderTransactionUnderstanding(user.id, sourceRows)).transactions
+      : sourceRows;
+    const filtered = filterTransactions(effectiveRows, body.filters || {});
     let start = 0; if (body.cursor) { const cursor = decodeTransactionCursor(body.cursor); const index = filtered.findIndex((row) => row.id === cursor.id && row.date === cursor.date); start = index < 0 ? 0 : index + 1; }
     const transactions = filtered.slice(start, start + RECENT_ACTIVITY_PAGE_SIZE); const last = transactions.at(-1); const next = start + transactions.length < filtered.length && last ? encodeTransactionCursor({ date: last.date, id: last.id }) : null;
     return NextResponse.json({ transactions, total: filtered.length, cursor: next, summary: summarizeFilteredTransactions(filtered) });

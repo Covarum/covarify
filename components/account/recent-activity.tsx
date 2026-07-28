@@ -170,11 +170,22 @@ export function RecentActivity({
       change({ category: categoryId || undefined });
     };
     window.addEventListener("covarify:category-filter", handleCategoryFilter);
+    const refreshEffectiveCategories = () => void request(null, filters, true);
+    window.addEventListener(
+      "covarify:transaction-understanding-confirmed",
+      refreshEffectiveCategories,
+    );
     return () =>
-      window.removeEventListener(
+      {
+        window.removeEventListener(
         "covarify:category-filter",
         handleCategoryFilter,
-      );
+        );
+        window.removeEventListener(
+          "covarify:transaction-understanding-confirmed",
+          refreshEffectiveCategories,
+        );
+      };
   });
 
   return (
@@ -241,6 +252,21 @@ export function RecentActivity({
         <ul className={styles["mp-transaction-list"]}>
           {rows.map((transaction) => (
             <li key={transaction.id}>
+              <button
+                type="button"
+                className={styles["mp-transaction-trigger"]}
+                aria-label={`Understand ${transaction.name}, ${money(Math.abs(transaction.amount), transaction.currency)}, ${transaction.date}`}
+                onClick={(event) =>
+                  window.dispatchEvent(
+                    new CustomEvent("covarify:understand-transaction", {
+                      detail: {
+                        transaction,
+                        trigger: event.currentTarget,
+                      },
+                    }),
+                  )
+                }
+              >
               <div>
                 <strong>{transaction.name}</strong>
                 <span>
@@ -256,6 +282,7 @@ export function RecentActivity({
                 <span>{transaction.accountLabel}</span>
               </div>
               <TransactionAmount transaction={transaction} />
+              </button>
             </li>
           ))}
         </ul>
