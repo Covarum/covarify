@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Sparkles, X } from "lucide-react";
+import Link from "next/link";
 
 import type {
   InsightCandidate,
@@ -31,6 +32,7 @@ function ObservationCard({
   dismiss: (observationId: string) => void;
   explain: (observationId: string, trigger: HTMLButtonElement) => void;
 }) {
+  const connectionHealth = observation.ruleId === "stability.connection_action";
   return (
     <article
       className={styles.card}
@@ -40,7 +42,7 @@ function ObservationCard({
         className={styles.dismiss}
         type="button"
         onClick={() => dismiss(observation.observationId)}
-        aria-label={`Dismiss ${observation.title} for this session`}
+        aria-label={`${connectionHealth ? "Not now" : "Dismiss"} ${observation.title} for this session`}
       >
         <X size={15} aria-hidden="true" />
       </button>
@@ -49,16 +51,25 @@ function ObservationCard({
       <p className={styles.observed}>{observation.observed}</p>
       <p className={styles.meaning}>{observation.meaning}</p>
       <p className={styles.support}>{observation.support}</p>
-      <button
-        className={styles.question}
-        type="button"
-        onClick={(event) =>
-          explain(observation.observationId, event.currentTarget)
-        }
-      >
-        <strong>Understand this</strong>
-        <ArrowRight size={14} aria-hidden="true" />
-      </button>
+      {observation.recoveryAction === "update_mode" ? (
+        <Link className={styles.question} href="/account/connection/refresh">
+          <strong>Refresh connection</strong>
+          <ArrowRight size={14} aria-hidden="true" />
+        </Link>
+      ) : observation.recoveryAction === "passive" ? (
+        <p className={styles.passiveAction}>We&apos;ll keep checking</p>
+      ) : (
+        <button
+          className={styles.question}
+          type="button"
+          onClick={(event) =>
+            explain(observation.observationId, event.currentTarget)
+          }
+        >
+          <strong>Understand this</strong>
+          <ArrowRight size={14} aria-hidden="true" />
+        </button>
+      )}
     </article>
   );
 }

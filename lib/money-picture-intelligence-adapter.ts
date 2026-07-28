@@ -15,7 +15,7 @@ import type { ResolvedFinancialPeriod } from "./financial-periods.ts";
 
 export function buildMoneyPictureIntelligence(
   transactions: MoneyTransaction[],
-  input: { syncStatus: string; lastSyncAt: string | null; now?: Date; period?: ResolvedFinancialPeriod },
+  input: { syncStatus: string; lastSyncAt: string | null; connectionHealth?: import("./money-picture-intelligence.ts").ConnectionHealthEvidence; now?: Date; period?: ResolvedFinancialPeriod },
 ) {
   const now = input.now || new Date();
   const canonical = buildCanonicalScopedFinancialMetrics(transactions, {
@@ -93,6 +93,7 @@ export function buildMoneyPictureIntelligence(
     })),
     syncStatus: input.syncStatus,
     lastSyncAt: input.lastSyncAt,
+    connectionHealth: input.connectionHealth,
     canonicalCashFlow: canonical.metrics,
   };
 
@@ -101,7 +102,7 @@ export function buildMoneyPictureIntelligence(
 
 export function buildMoneyPictureIntelligenceBundle(
   transactions: MoneyTransaction[],
-  input: { syncStatus: string; lastSyncAt: string | null; now?: Date; period?: ResolvedFinancialPeriod },
+  input: { syncStatus: string; lastSyncAt: string | null; connectionHealth?: import("./money-picture-intelligence.ts").ConnectionHealthEvidence; now?: Date; period?: ResolvedFinancialPeriod },
 ) {
   const intelligence = buildMoneyPictureIntelligence(transactions, input);
   const explanations = [

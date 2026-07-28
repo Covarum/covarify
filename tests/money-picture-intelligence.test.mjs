@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { generateInsightCandidates, rankInsightCandidates, runMoneyPictureIntelligence, buildCashFlowComparison } from "../lib/money-picture-intelligence.ts";
+import { generateInsightCandidates, rankInsightCandidates, runMoneyPictureIntelligence, buildCashFlowComparison, connectionHealthCondition } from "../lib/money-picture-intelligence.ts";
 import { categoryFromPlaidTransaction, normalizePersistedPlaidCategory } from "../lib/plaid/category-normalization.ts";
 
 const baseMetrics = (patch = {}) => ({ generatedAt: "2026-07-23T12:00:00.000Z", period: { currentStart: "2026-06-23", currentEnd: "2026-07-23", priorStart: "2026-05-24", priorEnd: "2026-06-22" }, transactionCount: 100, pendingCount: 0, removedCount: 0, transferCount: 0, internalTransferCount: 0, identifiedInflows: 1000, identifiedOutflows: 900, priorInflows: 1000, priorOutflows: 900, largestExpense: 100, uncategorizedOutflow: 0, categorizedOutflow: 900, completeMonths: [], accounts: [{ id: "account-a", label: "Checking • 1111", transactionCount: 50, identifiedInflows: 500, identifiedOutflows: 450, spendingShare: .5, depositShare: .5, transferCount: 0, currentBalance: null, availableBalance: null, lastActivityDate: "2026-07-22" }, { id: "account-b", label: "Savings • 2222", transactionCount: 50, identifiedInflows: 500, identifiedOutflows: 450, spendingShare: .5, depositShare: .5, transferCount: 0, currentBalance: null, availableBalance: null, lastActivityDate: "2026-07-21" }], syncStatus: "complete", lastSyncAt: "2026-07-23T11:00:00.000Z", ...patch });
@@ -15,9 +15,32 @@ test("engine supports zero, one, two, and three primary observation states witho
   const three = runMoneyPictureIntelligence(baseMetrics({ uncategorizedOutflow: 0, categorizedOutflow: 1200, accounts: dominant, identifiedInflows: 200, identifiedOutflows: 1200, priorInflows: 1500, priorOutflows: 500, largestExpense: 300 })); assert.equal(three.observations.length, 3);
 });
 
-test("critical alert requires strict stale-sync urgency threshold", () => {
-  const result = runMoneyPictureIntelligence(baseMetrics({ lastSyncAt: "2026-07-14T12:00:00.000Z" })); assert.equal(result.criticalAlert?.ruleId, "stability.sync_stale"); assert.equal(result.criticalAlert?.dimensions.urgency >= .9, true);
-  const recent = runMoneyPictureIntelligence(baseMetrics({ lastSyncAt: "2026-07-21T12:00:00.000Z", syncStatus: "pending" })); assert.equal(recent.criticalAlert, null);
+test("connection health never alerts from elapsed time, inactivity, or historical periods alone", () => {
+  const healthy = { itemStatus: "active", needsUpdateMode: false, itemErrorCode: null, syncRetryCount: 0, syncErrorCode: null, activeAccountCount: 2 };
+  const fourDays = runMoneyPictureIntelligence(baseMetrics({ lastSyncAt: "2026-07-19T12:00:00.000Z", connectionHealth: healthy }));
+  assert.equal(fourDays.ranked.some((item) => item.ruleId.startsWith("stability.")), false);
+  const lowActivity = runMoneyPictureIntelligence(baseMetrics({ transactionCount: 1, accounts: [{ ...baseMetrics().accounts[0], transactionCount: 1 }], connectionHealth: healthy }));
+  assert.equal(lowActivity.ranked.some((item) => item.ruleId.startsWith("stability.")), false);
+  const historical = runMoneyPictureIntelligence(baseMetrics({ period: { currentStart: "2025-01-01", currentEnd: "2025-12-31", priorStart: "2024-01-01", priorEnd: "2024-12-31" }, connectionHealth: healthy }));
+  assert.equal(historical.ranked.some((item) => item.ruleId.startsWith("stability.")), false);
+});
+
+test("verified connection conditions create truthful recovery behavior", () => {
+  const baseHealth = { itemStatus: "active", needsUpdateMode: false, itemErrorCode: null, syncRetryCount: 0, syncErrorCode: null, activeAccountCount: 2 };
+  const login = runMoneyPictureIntelligence(baseMetrics({ connectionHealth: { ...baseHealth, needsUpdateMode: true, itemErrorCode: "ITEM_LOGIN_REQUIRED" } })).criticalAlert;
+  assert.equal(login?.title, "Your bank connection needs attention");
+  assert.equal(login?.support, "Sign-in required");
+  assert.equal(login?.recoveryAction, "update_mode");
+  const disconnected = connectionHealthCondition(baseMetrics({ connectionHealth: { ...baseHealth, itemStatus: "disconnected" } }));
+  assert.deepEqual(disconnected, { status: "Disconnected", action: "passive" });
+  const outage = runMoneyPictureIntelligence(baseMetrics({ connectionHealth: { ...baseHealth, syncErrorCode: "INSTITUTION_DOWN" } })).observations.find((item) => item.ruleId === "stability.connection_action");
+  assert.equal(outage?.support, "Institution temporarily unavailable");
+  assert.equal(outage?.recoveryAction, "passive");
+  const failed = runMoneyPictureIntelligence(baseMetrics({ syncStatus: "failed", connectionHealth: { ...baseHealth, syncRetryCount: 5, syncErrorCode: "WORKER_ERROR" } })).criticalAlert;
+  assert.equal(failed?.support, "Sync failed");
+  assert.equal(failed?.recoveryAction, "update_mode");
+  const recovered = runMoneyPictureIntelligence(baseMetrics({ connectionHealth: baseHealth }));
+  assert.equal(recovered.ranked.some((item) => item.ruleId === "stability.connection_action"), false);
 });
 
 test("ranking is deterministic and confidence and score thresholds reject weak candidates", () => {
@@ -86,5 +109,8 @@ test("cash-flow comparison omits misleading percentages for zero or negative bas
 
 test("observation UI provides session dismissal, selectable prompts, and stable-picture copy", () => {
   const source = readFileSync(new URL("../components/account/money-picture-observations.tsx", import.meta.url), "utf8");
-  assert.match(source, /useState<Set<string>>/); assert.match(source, /Dismiss .* for this session/); assert.match(source, /user-select:text|question/); assert.match(source, /Your financial picture is stable today/); assert.doesNotMatch(source, /Top 3/);
+  assert.match(source, /useState<Set<string>>/); assert.match(source, /"Not now" : "Dismiss"/); assert.match(source, /for this session/); assert.match(source, /user-select:text|question/); assert.match(source, /Your financial picture is stable today/); assert.doesNotMatch(source, /Top 3/);
+  assert.match(source, /Not now/);
+  assert.match(source, /Refresh connection/);
+  assert.match(source, /We&apos;ll keep checking/);
 });

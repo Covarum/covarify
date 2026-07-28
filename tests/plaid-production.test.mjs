@@ -233,6 +233,17 @@ test("founder pilot blocks a second production Plaid Item", () => {
   assert.throws(() => assertFounderPilotItemLimit(true), (error) => error?.code === "PRODUCTION_ITEM_LIMIT_REACHED");
 });
 
+test("connection recovery targets only the existing Item through Update Mode", () => {
+  const route = readFileSync("app/api/plaid/production/item/update-link-token/route.ts", "utf8");
+  const recovery = readFileSync("components/plaid/connection-recovery.tsx", "utf8");
+  assert.match(route, /findRecoverableOwnedItem\(profile\.userId\)/);
+  assert.match(route, /access_token: accessToken/);
+  assert.doesNotMatch(route, /publicTokenExchange|exchange-public-token|createConnection|insert\(/);
+  assert.match(recovery, /if \(busy \|\| linkToken\) return/);
+  assert.match(recovery, /window\.location\.assign\("\/account\?connection=refreshed"\)/);
+  assert.doesNotMatch(recovery, /exchange-public-token|public_token/);
+});
+
 test("Plaid Link diagnostics retain only bounded non-sensitive identifiers", () => {
   assert.deepEqual(sanitizeLinkDiagnostic({ event_name: "ERROR", error_code: "INSTITUTION_NOT_RESPONDING", error_type: "INSTITUTION_ERROR", institution_id: "ins_123", link_session_id: "session-123", request_id: "request-123", public_token: "must-not-be-retained", account: "must-not-be-retained" }), {
     eventName: "ERROR", errorCode: "INSTITUTION_NOT_RESPONDING", errorType: "INSTITUTION_ERROR", institutionId: "ins_123", linkSessionId: "session-123", requestId: "request-123",

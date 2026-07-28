@@ -18,6 +18,11 @@ type FinancialData = null | { state: "unavailable" } | { state: "ready"; connect
 const navigation = [{ label: "Money Picture", icon: LayoutDashboard, href: "#money-picture", active: true }, { label: "Insights", icon: Sparkles, href: "#insights" }, { label: "Talk to Covarify", icon: MessageCircle, href: "#talk-to-covarify" }, { label: "Settings", icon: Settings, href: "#settings" }];
 const money = (amount: number, currency = "USD") => new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
 const date = (value: string | null) => value ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "Not yet available";
+const freshness = (value: string | null) => {
+  if (!value) return "Waiting for new activity";
+  const days = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 86400000));
+  return days === 0 ? "Updated today" : `Last updated ${days} day${days === 1 ? "" : "s"} ago`;
+};
 
 export function AuthenticatedWorkspace({ firstName, email, financialData }: { firstName: string; email: string; financialData: FinancialData }) {
   const connected = financialData?.state === "ready" && financialData.connectionStatus === "active";
@@ -25,7 +30,7 @@ export function AuthenticatedWorkspace({ firstName, email, financialData }: { fi
   const allCurrent = financialData.accounts.every((account) => account.currentBalance !== null); const allAvailable = financialData.accounts.every((account) => account.availableBalance !== null); const currentTotal = financialData.accounts.reduce((sum, account) => sum + (account.currentBalance || 0), 0); const availableTotal = financialData.accounts.reduce((sum, account) => sum + (account.availableBalance || 0), 0); const maxTrend = Math.max(1, ...financialData.picture.trend.flatMap((month) => [month.inflow, month.outflow]));
   const periodDates = formatFinancialPeriodDateRange(financialData.period);
   return <div className="workspace-page"><header className="workspace-header"><div className="workspace-header-inner"><Brand /><nav className="workspace-nav" aria-label="Workspace navigation">{navigation.map(({ label, icon: Icon, href, active }) => <Link key={label} href={href} className={active ? "is-active" : undefined}><Icon size={17} /><span>{label}</span></Link>)}</nav><div className="workspace-profile"><div><span>{email}</span><small>Founder workspace</small></div><CircleUserRound size={29} /><form action={signOut}><button>Sign out</button></form></div></div></header>
-    <main className={styles.main} id="money-picture"><section className={styles.hero}><div><p className={styles.eyebrow}><Sparkles size={14} />Private financial clarity</p><h1>Your Money Picture</h1><div className={styles.activePeriod}><strong>{financialData.period.label}</strong><span>{periodDates}</span></div><p>A clear view of your connected accounts, cash flow, spending, and financial activity.</p></div><div className={styles.sync}><span><i />Connected</span><strong>{financialData.syncStatus === "complete" ? "Sync complete" : "Sync in progress"}</strong><small>Last successful sync {date(financialData.lastSync)}</small></div></section>
+    <main className={styles.main} id="money-picture"><section className={styles.hero}><div><p className={styles.eyebrow}><Sparkles size={14} />Private financial clarity</p><h1>Your Money Picture</h1><div className={styles.activePeriod}><strong>{financialData.period.label}</strong><span>{periodDates}</span></div><p>A clear view of your connected accounts, cash flow, spending, and financial activity.</p></div><div className={styles.sync}><span><i />Connection health</span><strong>Connected</strong><small>Data freshness · {freshness(financialData.lastSync)}</small></div></section>
       <FinancialPeriodSelector
         key={`${financialData.period.key}:${financialData.period.start}:${financialData.period.end}`}
         period={financialData.period}
