@@ -10,8 +10,9 @@
     "test:plaid-production": "node --conditions=react-server --experimental-strip-types --test --test-force-exit --test-isolation=none tests/plaid-production.test.mjs",
     "test:intelligence": "node --experimental-strip-types --test --test-isolation=none tests/category-intelligence.test.mjs tests/financial-periods.test.mjs tests/money-picture-intelligence.test.mjs tests/money-picture-explanations.test.mjs tests/presentation-separators.test.mjs",
     "test:financial-events": "node --experimental-strip-types --test --test-isolation=none tests/financial-events.test.mjs",
+    "test:transaction-understanding": "node --experimental-strip-types --test --test-isolation=none tests/transaction-understanding.test.mjs",
     "preview:financial-events": "node --experimental-strip-types scripts/preview-financial-events.ts",
-    "test": "pnpm run test:early-access && pnpm run test:plaid-production && pnpm run test:intelligence && pnpm run test:financial-events",
+    "test": "pnpm run test:early-access && pnpm run test:plaid-production && pnpm run test:intelligence && pnpm run test:financial-events && pnpm run test:transaction-understanding",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
