@@ -17,10 +17,11 @@ export async function POST(request: Request) {
   try {
     const body = await request.json() as { cursor?: string | null; filters?: TransactionFilters };
     const supabase = await createSupabaseServerClient();
-    const { data: item, error: itemError } = await supabase.from("plaid_items").select("id").eq("user_id", user.id).eq("environment", "production").eq("status", "active").maybeSingle();
-    if (itemError || !item) return NextResponse.json({ error: "ACTIVITY_UNAVAILABLE" }, { status: 503 });
-    const { data: accounts, error: accountError } = await supabase.from("plaid_accounts").select("id,name,official_name,mask").eq("user_id", user.id).eq("plaid_item_id", item.id).eq("active_status", "active"); if (accountError || !accounts?.length) return NextResponse.json({ error: "ACTIVITY_UNAVAILABLE" }, { status: 503 }); const labels = new Map(accounts.map((account) => [account.id, displaySeparated(account.official_name || account.name, account.mask || null)]));
-    const { data, error } = await supabase.from("plaid_transactions").select("id,plaid_account_id,transaction_name,merchant_name,amount,currency,transaction_date,pending,pending_transaction_id,category_data").eq("user_id", user.id).eq("plaid_item_id", item.id).in("plaid_account_id", [...labels.keys()]).is("removed_at", null).order("transaction_date", { ascending: false }).order("id", { ascending: false }).limit(5000);
+    const { data: items, error: itemError } = await supabase.from("plaid_items").select("id").eq("user_id", user.id).eq("environment", "production").eq("status", "active");
+    if (itemError || !items?.length) return NextResponse.json({ error: "ACTIVITY_UNAVAILABLE" }, { status: 503 });
+    const itemIds = items.map((item) => item.id);
+    const { data: accounts, error: accountError } = await supabase.from("plaid_accounts").select("id,name,official_name,mask").eq("user_id", user.id).in("plaid_item_id", itemIds).eq("active_status", "active"); if (accountError || !accounts?.length) return NextResponse.json({ error: "ACTIVITY_UNAVAILABLE" }, { status: 503 }); const labels = new Map(accounts.map((account) => [account.id, displaySeparated(account.official_name || account.name, account.mask || null)]));
+    const { data, error } = await supabase.from("plaid_transactions").select("id,plaid_account_id,transaction_name,merchant_name,amount,currency,transaction_date,pending,pending_transaction_id,category_data").eq("user_id", user.id).in("plaid_item_id", itemIds).in("plaid_account_id", [...labels.keys()]).is("removed_at", null).order("transaction_date", { ascending: false }).order("id", { ascending: false }).limit(5000);
     if (error) return NextResponse.json({ error: "ACTIVITY_UNAVAILABLE" }, { status: 503 });
     const sourceRows = annotateInternalTransfers((data || []).map((row) => mapTransaction(row, labels.get(String(row.plaid_account_id)) || "Connected account")));
     const founder = await getAuthorizedFounderUser(user);

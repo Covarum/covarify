@@ -105,21 +105,22 @@ export async function loadFinancialEventReviewQueue(
   period?: ResolvedFinancialPeriod,
 ) {
   const supabase = await createSupabaseServerClient();
-  const { data: item, error: itemError } = await supabase
+  const { data: items, error: itemError } = await supabase
     .from("plaid_items")
     .select("id,institution_name")
     .eq("user_id", userId)
     .eq("environment", "production")
-    .eq("status", "active")
-    .maybeSingle();
-  if (itemError || !item) return [];
+    .eq("status", "active");
+  if (itemError || !items?.length) return [];
+  const itemIds = items.map((item) => item.id);
+  const institutionByItemId = new Map(items.map((item) => [item.id, item.institution_name]));
 
   const [accounts, transactions] = await Promise.all([
     supabase
       .from("plaid_accounts")
-      .select("id,name,official_name,mask")
+      .select("id,plaid_item_id,name,official_name,mask")
       .eq("user_id", userId)
-      .eq("plaid_item_id", item.id)
+      .in("plaid_item_id", itemIds)
       .eq("active_status", "active"),
     supabase
       .from("plaid_transactions")
@@ -127,7 +128,7 @@ export async function loadFinancialEventReviewQueue(
         "id,plaid_account_id,transaction_name,merchant_name,amount,currency,transaction_date,pending,pending_transaction_id,category_data",
       )
       .eq("user_id", userId)
-      .eq("plaid_item_id", item.id)
+      .in("plaid_item_id", itemIds)
       .is("removed_at", null)
       .order("transaction_date", { ascending: false })
       .limit(1000),
@@ -138,6 +139,12 @@ export async function loadFinancialEventReviewQueue(
     (accounts.data || []).map((account) => [
       account.id,
       displaySeparated(account.official_name || account.name, account.mask || null),
+    ]),
+  );
+  const institutionsByAccountId = Object.fromEntries(
+    (accounts.data || []).map((account) => [
+      account.id,
+      institutionByItemId.get(account.plaid_item_id) || null,
     ]),
   );
   const rows = annotateInternalTransfers(
@@ -151,9 +158,7 @@ export async function loadFinancialEventReviewQueue(
       .filter((row) => labels.has(row.plaidAccountId)),
   ).filter((row) => !period || transactionInPeriod(row.date, period));
   const layer = buildFinancialEventLayer(rows, {
-    institutionsByAccountId: Object.fromEntries(
-      [...labels.keys()].map((id) => [id, item.institution_name]),
-    ),
+    institutionsByAccountId,
   });
 
   const admin = createSupabaseAdminClient();

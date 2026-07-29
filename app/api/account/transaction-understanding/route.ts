@@ -23,26 +23,26 @@ export const dynamic = "force-dynamic";
 
 async function loadTransactions(userId: string) {
   const supabase = await createSupabaseServerClient();
-  const { data: item, error: itemError } = await supabase
+  const { data: items, error: itemError } = await supabase
     .from("plaid_items")
     .select("id")
     .eq("user_id", userId)
     .eq("environment", "production")
-    .eq("status", "active")
-    .maybeSingle();
-  if (itemError || !item) throw new Error("ACTIVITY_UNAVAILABLE");
+    .eq("status", "active");
+  if (itemError || !items?.length) throw new Error("ACTIVITY_UNAVAILABLE");
+  const itemIds = items.map((item) => item.id);
   const [accounts, transactions] = await Promise.all([
     supabase
       .from("plaid_accounts")
       .select("id,name,official_name,mask")
       .eq("user_id", userId)
-      .eq("plaid_item_id", item.id)
+      .in("plaid_item_id", itemIds)
       .eq("active_status", "active"),
     supabase
       .from("plaid_transactions")
       .select("id,plaid_account_id,transaction_name,merchant_name,amount,currency,transaction_date,pending,pending_transaction_id,category_data")
       .eq("user_id", userId)
-      .eq("plaid_item_id", item.id)
+      .in("plaid_item_id", itemIds)
       .is("removed_at", null)
       .order("transaction_date", { ascending: false })
       .order("id", { ascending: false })

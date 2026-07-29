@@ -11,7 +11,6 @@ import { verifyPlaidWebhook } from "../lib/plaid/production/webhook-verification
 import { retryDelaySeconds, runTransactionsSyncWorker } from "../lib/plaid/production/sync-worker.ts";
 import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plaid/production/consent.ts";
 import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SYNC_JOB_RETENTION_DAYS, WEBHOOK_RETENTION_DAYS } from "../lib/account-deletion/policy.ts";
-import { assertFounderPilotItemLimit } from "../lib/plaid/production/item-limit.ts";
 import { sanitizeLinkDiagnostic } from "../lib/plaid/production/link-diagnostics.ts";
 import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions, formatTransactionDisplayAmount, summarizeFilteredTransactions } from "../lib/money-picture.ts";
 import { RECENT_ACTIVITY_PAGE_SIZE } from "../lib/recent-activity-pagination.ts";
@@ -23,13 +22,17 @@ const productionEnvironment = () => ({
   PLAID_PRODUCTION_CONNECTIONS_ENABLED: "false", PLAID_PRODUCTION_ALLOWED_USER_IDS: "founder-user",
 });
 
-test("founder workspace scopes sync state through Plaid Item RLS and renders persisted accounts", () => {
+test("founder workspace scopes and aggregates all owned Plaid Items", () => {
   const accountPage = readFileSync(new URL("../app/account/page.tsx", import.meta.url), "utf8");
   const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
-  assert.match(accountPage, /from\("transaction_sync_states"\).*\.eq\("plaid_item_id", item\.id\)\.maybeSingle\(\)/s);
+  assert.match(accountPage, /const itemIds = items\.map\(\(item\) => item\.id\)/);
+  assert.match(accountPage, /from\("transaction_sync_states"\).*\.in\("plaid_item_id", itemIds\)/s);
   assert.doesNotMatch(accountPage, /from\("transaction_sync_states"\).*\.eq\("user_id"/s);
   assert.match(accountPage, /const accountRows = \(accounts\.data \|\| \[\]\)\.map/);
+  assert.match(accountPage, /\.in\("plaid_item_id", itemIds\)/);
   assert.match(workspace, /Connected accounts/);
+  assert.match(workspace, /Add another institution/);
+  assert.match(workspace, /account\.institution/);
   assert.match(workspace, /financialData\.accounts\.map/);
 });
 
@@ -244,18 +247,21 @@ test("production rollout requires both the global gate and exact UUID allowlist 
   assert.doesNotThrow(() => assertProductionConnectionAllowed(enabled, "founder-user"));
 });
 
-test("founder pilot blocks a second production Plaid Item", () => {
-  assert.doesNotThrow(() => assertFounderPilotItemLimit(false));
-  assert.throws(() => assertFounderPilotItemLimit(true), (error) => error?.code === "PRODUCTION_ITEM_LIMIT_REACHED");
+test("authenticated founder can create Link tokens for additional production Plaid Items", () => {
+  const route = readFileSync("app/api/plaid/production/create-link-token/route.ts", "utf8");
+  assert.doesNotMatch(route, /PRODUCTION_ITEM_LIMIT_REACHED|assertFounderPilotItemLimit|hasProductionPlaidItem/);
+  assert.match(route, /assertProductionConnectionAllowed\(config, profile\.userId\)/);
+  assert.match(route, /createProductionLinkToken\(config, profile\)/);
 });
 
 test("connection recovery targets only the existing Item through Update Mode", () => {
-  const route = readFileSync("app/api/plaid/production/item/update-link-token/route.ts", "utf8");
+  const route = readFileSync("app/api/plaid/production/items/[id]/update-link-token/route.ts", "utf8");
   const recovery = readFileSync("components/plaid/connection-recovery.tsx", "utf8");
-  assert.match(route, /findRecoverableOwnedItem\(profile\.userId\)/);
+  assert.match(route, /findOwnedItem\(id, profile\.userId\)/);
   assert.match(route, /access_token: accessToken/);
   assert.doesNotMatch(route, /publicTokenExchange|exchange-public-token|createConnection|insert\(/);
   assert.match(recovery, /if \(busy \|\| linkToken\) return/);
+  assert.match(recovery, /items\/\$\{encodeURIComponent\(itemId\)\}\/update-link-token/);
   assert.match(recovery, /window\.location\.assign\("\/account\?connection=refreshed"\)/);
   assert.doesNotMatch(recovery, /exchange-public-token|public_token/);
 });

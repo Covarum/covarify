@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
 import type { PlaidLinkError } from "react-plaid-link";
 
-export function ConnectionRecovery() {
+export function ConnectionRecovery({ itemId }: { itemId: string }) {
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -40,7 +40,7 @@ export function ConnectionRecovery() {
     setBusy(true);
     setMessage(null);
     try {
-      const response = await fetch("/api/plaid/production/item/update-link-token", { method: "POST" });
+      const response = await fetch(`/api/plaid/production/items/${encodeURIComponent(itemId)}/update-link-token`, { method: "POST" });
       const result = await response.json();
       if (!response.ok || !result.link_token) throw new Error(result?.message || "The secure refresh could not start.");
       openWhenReady.current = true;
