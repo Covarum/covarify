@@ -1,0 +1,1 @@
+drop index if exists public.plaid_items_one_production_per_user_idx;

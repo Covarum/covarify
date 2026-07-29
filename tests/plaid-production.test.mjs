@@ -273,6 +273,15 @@ test("authenticated founder can create Link tokens for additional production Pla
   assert.match(route, /createProductionLinkToken\(config, profile\)/);
 });
 
+test("database schema removes the founder-era one-production-Item constraint", () => {
+  const founderLimitMigration = readFileSync("supabase/migrations/20260722214000_founder_pilot_single_production_item.sql", "utf8");
+  const multiItemMigration = readFileSync("supabase/migrations/20260729223000_allow_multiple_production_plaid_items.sql", "utf8");
+  assert.match(founderLimitMigration, /create unique index if not exists plaid_items_one_production_per_user_idx/);
+  assert.match(founderLimitMigration, /on public\.plaid_items \(user_id\)/);
+  assert.match(founderLimitMigration, /where environment = 'production'/);
+  assert.equal(multiItemMigration.trim(), "drop index if exists public.plaid_items_one_production_per_user_idx;");
+});
+
 test("connection recovery targets only the existing Item through Update Mode", () => {
   const route = readFileSync("app/api/plaid/production/items/[id]/update-link-token/route.ts", "utf8");
   const recovery = readFileSync("components/plaid/connection-recovery.tsx", "utf8");
