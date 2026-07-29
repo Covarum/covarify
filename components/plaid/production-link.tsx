@@ -9,7 +9,7 @@ import { LINK_FAILURE_MESSAGE } from "@/lib/plaid/production/link-diagnostics";
 const LINK_TOKEN_KEY = "covarify:plaid:link-token";
 const OAUTH_STATE_KEY = "covarify:plaid:oauth-state";
 
-export function ProductionPlaidLink({ available, consentVersion }: { available: boolean; consentVersion: string }) {
+export function ProductionPlaidLink({ available, consentVersion, isAdditionalConnection = false }: { available: boolean; consentVersion: string; isAdditionalConnection?: boolean }) {
   const [accepted, setAccepted] = useState(false);
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const openWhenReady = useRef(false);
@@ -80,7 +80,7 @@ export function ProductionPlaidLink({ available, consentVersion }: { available: 
       <label className="auth-consent"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} disabled={!available || busy} /> <span>I understand and consent to Covarify connecting my selected financial accounts through Plaid and using Transactions data to build and refresh my Money Picture and provide financial insights and decision support. I understand that disconnecting a financial institution stops future access but is separate from permanently deleting my Covarify account.</span></label>
       {message && <div className="auth-notice auth-notice-error" role="alert">{message}</div>}
       <div className="connect-actions">
-        <button className="auth-submit" type="button" aria-busy={busy} disabled={!available || !accepted || busy} onClick={() => void start()}>{busy ? "Preparing secure connection…" : "Continue securely with Plaid"}</button>
+        <button className="auth-submit" type="button" aria-busy={busy} disabled={!available || !accepted || busy} onClick={() => void start()}>{busy ? "Preparing secure connection…" : isAdditionalConnection ? "Connect another institution" : "Continue securely with Plaid"}</button>
         <a className="auth-secondary-link" href="/account">Not now - Return to my account</a>
       </div>
     </section>

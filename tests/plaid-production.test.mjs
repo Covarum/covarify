@@ -36,6 +36,25 @@ test("founder workspace scopes and aggregates all owned Plaid Items", () => {
   assert.match(workspace, /financialData\.accounts\.map/);
 });
 
+test("connect page preserves first-time onboarding and distinguishes additional institutions", () => {
+  const page = readFileSync(new URL("../app/connect/page.tsx", import.meta.url), "utf8");
+  const link = readFileSync(new URL("../components/plaid/production-link.tsx", import.meta.url), "utf8");
+  assert.match(page, /\.eq\("status", "active"\)/);
+  assert.match(page, /const isAdditionalConnection = connectedInstitutions\.length > 0/);
+  assert.match(page, /Build your Money Picture/);
+  assert.match(page, /Add another institution/);
+  assert.match(page, /Your existing connections stay exactly as they are/);
+  assert.match(page, /will not replace or disconnect any bank, credit card, or other connected account/);
+  assert.match(page, /institution\.name/);
+  assert.match(page, /institution\.accountCount/);
+  assert.match(page, /institution\.syncLabel/);
+  assert.doesNotMatch(page, /TD Bank/);
+  assert.match(link, /isAdditionalConnection \? "Connect another institution" : "Continue securely with Plaid"/);
+  assert.match(link, /\/api\/plaid\/production\/create-link-token/);
+  assert.match(link, /\/api\/plaid\/production\/exchange-public-token/);
+  assert.match(link, /window\.location\.assign\("\/account\?connected=1"\)/);
+});
+
 test("Money Picture classification excludes transfers and pending rows from spending", () => {
   const base = { id: "1", plaidAccountId: "account", name: "Entry", currency: "USD", date: "2026-07-20", pendingTransactionId: null, detailedCategory: null };
   assert.equal(classifyTransaction({ ...base, amount: 25, pending: false, category: "FOOD_AND_DRINK" }), "outflow");
