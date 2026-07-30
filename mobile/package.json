@@ -1,0 +1,35 @@
+{
+  "name": "@covarify/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "android": "expo start --android --dev-client",
+    "ios": "expo start --ios --dev-client",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.111.0",
+    "expo": "56.0.18",
+    "expo-constants": "~56.0.22",
+    "expo-dev-client": "~56.0.24",
+    "expo-linking": "~56.0.16",
+    "expo-router": "~56.2.17",
+    "expo-secure-store": "~56.0.4",
+    "expo-status-bar": "~56.0.4",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-url-polyfill": "4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "eslint": "^9.39.1",
+    "eslint-config-expo": "~56.0.4",
+    "expo-doctor": "1.20.1",
+    "typescript": "~6.0.0"
+  }
+}

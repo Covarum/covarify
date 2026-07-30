@@ -1,0 +1,8 @@
+.expo/
+dist/
+web-build/
+.env
+.env.*
+!.env.example
+ios/
+android/
