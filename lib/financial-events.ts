@@ -64,6 +64,7 @@ export type RecurrenceCadence =
   | "biweekly"
   | "monthly"
   | "quarterly"
+  | "semiannual"
   | "annual"
   | "irregular";
 export type EventWorthinessReason =
@@ -265,6 +266,19 @@ const merchantKey = (transaction: MoneyTransaction) =>
     .split(/\s+/)
     .slice(0, 5)
     .join(" ") || "UNRESOLVED";
+const INSTALLMENT_PROVIDER =
+  /\b(AFFIRM|KLARNA|AFTERPAY|ZIP|PAYPAL PAY IN 4|PAY IN 4)\b/;
+const recurringMerchantGroupKey = (transaction: MoneyTransaction) => {
+  const merchant = merchantKey(transaction);
+  if (!INSTALLMENT_PROVIDER.test(normalize(transaction.name))) return merchant;
+  const amountBucket = Math.round(Math.abs(transaction.amount) * 100);
+  const descriptor = normalize(transaction.description || transaction.name)
+    .replace(/\b(AFFIRM|KLARNA|AFTERPAY|ZIP|PAYPAL|PAY IN 4)\b/g, "")
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim()
+    .slice(0, 48);
+  return `${merchant}|INSTALLMENT|${amountBucket}|${descriptor || "AMBIGUOUS"}`;
+};
 const accountOf = (transaction: MoneyTransaction): FinancialEventAccount => ({
   id: transaction.plaidAccountId,
   label: transaction.accountLabel,
@@ -708,6 +722,8 @@ function recurrenceFor(
           ? "monthly"
           : everyIntervalBetween(80, 100)
             ? "quarterly"
+            : everyIntervalBetween(170, 195)
+              ? "semiannual"
             : everyIntervalBetween(350, 380)
               ? "annual"
               : "irregular";
@@ -1117,7 +1133,7 @@ export function buildFinancialEventLayer(
     ) {
       continue;
     }
-    const key = `${merchantKey(inference.transaction)}|${inference.transaction.plaidAccountId}`;
+    const key = `${recurringMerchantGroupKey(inference.transaction)}|${inference.transaction.plaidAccountId}`;
     const group = merchantGroups.get(key) || [];
     group.push(inference);
     merchantGroups.set(key, group);
