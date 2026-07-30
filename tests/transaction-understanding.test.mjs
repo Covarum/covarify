@@ -32,6 +32,11 @@ import {
   resolveTransactionIntent,
   sourceConditionSignature,
 } from "../lib/transaction-understanding.ts";
+import {
+  housingObligationType,
+  recurringObligationInput,
+  summarizeObligationPayments,
+} from "../lib/recurring-obligations.ts";
 
 const tx = (id, overrides = {}) => ({
   id,
@@ -80,6 +85,53 @@ test("subcategory text extraction supports selected and conversational requests"
   assert.equal(requestedSubcategoryFromText("Alcohol"), "Alcohol");
   assert.equal(requestedSubcategoryFromText("Classify it more specifically as Alcohol."), "Alcohol");
   assert.equal(requestedSubcategoryFromText("That was dining."), "dining");
+  assert.equal(requestedSubcategoryFromText("Always rent."), "rent");
+  assert.equal(requestedSubcategoryFromText("Rent from now on."), "Rent");
+});
+
+test("Rent and Mortgage resolve as Housing details rather than literal Shopping children", () => {
+  const housing = SYSTEM_CATEGORY_PARENTS.find((parent) => parent.displayName === "Housing");
+  const categories = [
+    { id: "rent", userId: null, parentCategoryId: housing.id, displayName: "Rent", normalizedName: "rent", aliases: ["lease"], categoryType: "system", status: "active" },
+    { id: "mortgage", userId: null, parentCategoryId: housing.id, displayName: "Mortgage", normalizedName: "mortgage", aliases: ["home loan"], categoryType: "system", status: "active" },
+  ];
+  assert.equal(parseTransactionIntent("That was rent.", { selectedTransactionId: "payment" }).category, "Rent");
+  assert.equal(suggestSubcategories("Rent", housing.id, categories)[0].category.displayName, "Rent");
+  assert.equal(suggestSubcategories("home loan", housing.id, categories)[0].category.displayName, "Mortgage");
+  assert.equal(housingObligationType("Housing", "Rent"), "rent");
+  assert.equal(housingObligationType("Shopping", "Rent"), null);
+});
+
+test("recurring obligation input never infers the expected amount from the payment", () => {
+  const input = recurringObligationInput({
+    userId: "founder",
+    transactionId: "payment",
+    payee: "The Heights Manage",
+    type: "rent",
+    actualPaymentAmount: 1700,
+    paymentDate: "2026-07-29",
+    ongoingStatus: "ongoing",
+    paymentType: "partial",
+  });
+  assert.equal(input.expectedAmount, null);
+  assert.equal(input.remainingDue, null);
+  assert.equal(input.normalizedPayee, "HEIGHTS MANAGE");
+  assert.deepEqual(
+    summarizeObligationPayments(2200, [
+      { actualPaymentAmount: 1700, remainingDue: 500 },
+    ]),
+    { expectedAmount: 2200, actualPayments: 1700, remainingDue: 500 },
+  );
+});
+
+test("housing obligation migration is owner-scoped, append-only, and transaction-linked", () => {
+  const migration = readFileSync(new URL("../supabase/migrations/20260730170000_housing_obligations.sql", import.meta.url), "utf8");
+  assert.match(migration, /'Housing'[\s\S]*'Rent'|000000000008'[\s\S]*'Rent'/);
+  assert.match(migration, /recurring_obligation_versions_append_only/);
+  assert.match(migration, /obligation_payment_records_append_only/);
+  assert.match(migration, /validate_obligation_payment_owner/);
+  assert.match(migration, /record_housing_obligation/);
+  assert.match(migration, /revoke all[\s\S]*from public, anon, authenticated/);
 });
 
 test("recurring merchant language routes deterministically without transaction lookup selectors", () => {
@@ -565,6 +617,16 @@ test("production route and workspace enforce founder-only confirmation-before-ap
   assert.match(panel, /Source category/);
   assert.match(panel, /Main category/);
   assert.match(panel, /Subcategory/);
+  assert.match(panel, /selectedParentId/);
+  assert.match(panel, /selectedSubcategoryId/);
+  assert.match(panel, /Apply classification/);
+  assert.match(panel, /Is \{result\.obligationPrompt\.payee\} your/);
+  assert.match(panel, /Expected monthly amount \(optional\)/);
+  assert.match(panel, /Partial payment/);
+  assert.match(panel, /Unlink from housing obligation/);
+  assert.match(panel, /Edit housing obligation/);
+  assert.match(route, /record_housing_obligation/);
+  assert.match(route, /unlink_housing_obligation/);
   assert.match(panel, /Use \{suggestion\.displayName\}/);
   assert.match(panel, /Create \{result\.requestedSubcategory\} instead/);
   assert.match(route, /DUPLICATE_SUBCATEGORY/);

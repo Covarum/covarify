@@ -60,14 +60,61 @@ export async function applyFounderTransactionUnderstanding(
   userId: string,
   transactions: MoneyTransaction[],
 ) {
-  const [history, merchantRules] = await Promise.all([
+  const [history, merchantRules, obligations] = await Promise.all([
     loadTransactionUnderstandingHistory(userId),
     loadMerchantCategoryRules(userId),
+    loadHousingObligations(userId, transactions.map((transaction) => transaction.id)),
   ]);
+  const effective = applyEffectiveCategories(transactions, new Map(), history, merchantRules);
   return {
     history,
-    transactions: applyEffectiveCategories(transactions, new Map(), history, merchantRules),
+    transactions: effective.map((transaction) => ({
+      ...transaction,
+      housingObligation: obligations.get(transaction.id) || null,
+    })),
   };
+}
+
+async function loadHousingObligations(userId: string, transactionIds: string[]) {
+  const result = new Map<string, NonNullable<MoneyTransaction["housingObligation"]>>();
+  if (!transactionIds.length) return result;
+  const admin = createSupabaseAdminClient();
+  const { data: payments, error } = await admin
+    .from("obligation_payment_records")
+    .select("plaid_transaction_id,obligation_version_id,payment_type,link_status,expected_amount_snapshot,remaining_due,created_at")
+    .eq("user_id", userId)
+    .in("plaid_transaction_id", transactionIds)
+    .order("created_at", { ascending: false });
+  if (error?.code === "42P01") return result;
+  if (error) throw new Error("HOUSING_OBLIGATION_LOAD_FAILED");
+  const newest = new Map<string, Record<string, unknown>>();
+  for (const payment of payments || []) {
+    const transactionId = String(payment.plaid_transaction_id);
+    if (!newest.has(transactionId)) newest.set(transactionId, payment as Record<string, unknown>);
+  }
+  const versionIds = [...new Set([...newest.values()].map((payment) => String(payment.obligation_version_id)))];
+  if (!versionIds.length) return result;
+  const { data: versions, error: versionError } = await admin
+    .from("recurring_obligation_versions")
+    .select("id,obligation_type,due_day,ongoing_status")
+    .eq("user_id", userId)
+    .in("id", versionIds);
+  if (versionError) throw new Error("HOUSING_OBLIGATION_LOAD_FAILED");
+  const byId = new Map((versions || []).map((version) => [String(version.id), version]));
+  for (const [transactionId, payment] of newest) {
+    if (payment.link_status === "unlinked") continue;
+    const version = byId.get(String(payment.obligation_version_id));
+    if (!version) continue;
+    result.set(transactionId, {
+      type: version.obligation_type as "rent" | "mortgage",
+      paymentType: payment.payment_type as NonNullable<MoneyTransaction["housingObligation"]>["paymentType"],
+      expectedAmount: payment.expected_amount_snapshot == null ? null : Number(payment.expected_amount_snapshot),
+      remainingDue: payment.remaining_due == null ? null : Number(payment.remaining_due),
+      dueDay: version.due_day == null ? null : Number(version.due_day),
+      ongoingStatus: version.ongoing_status as NonNullable<MoneyTransaction["housingObligation"]>["ongoingStatus"],
+    });
+  }
+  return result;
 }
 
 export function recordToInsert(record: TransactionUnderstandingRecord) {

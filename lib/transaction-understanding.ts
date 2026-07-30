@@ -17,6 +17,8 @@ export const USER_TRANSACTION_CATEGORIES = [
   "Medical",
   "Business expense",
   "Travel",
+  "Rent",
+  "Mortgage",
   "Transfer",
   "Refund",
   "Other",
@@ -121,6 +123,8 @@ export type TransactionEffectiveState = {
 };
 
 const CATEGORY_PATTERNS: Array<[RegExp, UserTransactionCategory]> = [
+  [/\b(?:rent|lease payment)\b/i, "Rent"],
+  [/\b(?:mortgage|home loan payment)\b/i, "Mortgage"],
   [/\bgrocer(?:y|ies)\b/i, "Groceries"],
   [/\b(dining|dinner|restaurant)\b/i, "Dining"],
   [/\bpersonal care\b/i, "Personal care"],

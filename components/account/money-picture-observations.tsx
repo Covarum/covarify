@@ -27,10 +27,12 @@ function ObservationCard({
   observation,
   dismiss,
   explain,
+  error,
 }: {
   observation: InsightCandidate;
   dismiss: (observationId: string) => void;
   explain: (observationId: string, trigger: HTMLButtonElement) => void;
+  error: string | null;
 }) {
   const connectionHealth = observation.ruleId === "stability.connection_action";
   return (
@@ -70,6 +72,7 @@ function ObservationCard({
           <ArrowRight size={14} aria-hidden="true" />
         </button>
       )}
+      {error ? <p className={styles.actionError} role="alert">{error}</p> : null}
     </article>
   );
 }
@@ -170,6 +173,43 @@ function GuidedExplanation({
     );
   }
 
+  if (payload.ruleId === "spending.large_expense") {
+    const largest = metric("largest_expense")?.current || 0;
+    const total = metric("total_outflow")?.current || 0;
+    const remaining = Math.max(0, total - largest);
+    return (
+      <div className={styles.guided}>
+        <section>
+          <p className={styles.sectionLabel}>Evidence</p>
+          <h3>How the expense affected the period</h3>
+          <p>
+            The largest identified expense was approximately{" "}
+            <strong>{money(largest)}</strong>, compared with approximately{" "}
+            <strong>{money(total)}</strong> of estimated outflow.
+          </p>
+          {total > 0 && (
+            <p>
+              That is about <strong>{Math.round((largest / total) * 100)}%</strong>{" "}
+              of identified outflow for the period.
+            </p>
+          )}
+        </section>
+        <section>
+          <p className={styles.sectionLabel}>Context</p>
+          <h3>What the period looks like without it</h3>
+          <p>
+            The remaining identified outflow would be approximately{" "}
+            <strong>{money(remaining)}</strong>.
+          </p>
+          <p>
+            This is an explanation of connected activity, not a judgment about
+            whether the purchase was necessary or affordable.
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   const primary = payload.supportingAccounts[0];
   return (
     <div className={styles.guided}>
@@ -232,6 +272,7 @@ export function MoneyPictureObservations({
   const [activeExplanation, setActiveExplanation] =
     useState<ObservationExplanationPayload | null>(null);
   const [answer, setAnswer] = useState<ConversationAnswer | null>(null);
+  const [explanationError, setExplanationError] = useState<{ observationId: string; message: string } | null>(null);
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -244,11 +285,18 @@ export function MoneyPictureObservations({
   const explain = (observationId: string, trigger: HTMLButtonElement) => {
     triggerRef.current = trigger;
     setAnswer(null);
-    setActiveExplanation(
-      explanations.find(
-        (explanation) => explanation.observationId === observationId,
-      ) || null,
+    const explanation = explanations.find(
+      (candidate) => candidate.observationId === observationId,
     );
+    if (!explanation) {
+      setExplanationError({
+        observationId,
+        message: "Supporting detail is temporarily unavailable. The observation remains open.",
+      });
+      return;
+    }
+    setExplanationError(null);
+    setActiveExplanation(explanation);
   };
   const closeExplanation = () => {
     restoreFocusRef.current = true;
@@ -316,6 +364,9 @@ export function MoneyPictureObservations({
               observation={observation}
               dismiss={dismiss}
               explain={explain}
+              error={explanationError?.observationId === observation.observationId
+                ? explanationError.message
+                : null}
             />
           ))}
         </div>
