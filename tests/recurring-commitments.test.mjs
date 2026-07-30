@@ -125,6 +125,10 @@ test("user decisions are reversible projections and attention states stay truthf
   assert.match(attention.attentionReasons.join(" "), /unrecognized/);
   assert.match(attention.attentionReasons.join(" "), /Cancellation requested for review/);
   assert.doesNotMatch(attention.attentionReasons.join(" "), /canceled|cancelled/);
+  const review = new Map([[initial.patternKey, { ...confirmed.get(initial.patternKey), disposition: "review" }]]);
+  assert.equal(buildRecurringCommitments(monthly(), review)[0].status, "needs_attention");
+  const keepPossible = new Map([[initial.patternKey, { ...confirmed.get(initial.patternKey), recurringStatus: "possible", disposition: "keep" }]]);
+  assert.equal(buildRecurringCommitments(monthly(), keepPossible)[0].status, "possible");
 });
 
 test("Affirm and Klarna are possible installments and distinct amount plans stay separate", () => {
@@ -194,17 +198,18 @@ test("migration enforces owner-scoped evidence and append-only decision chains",
 
 test("consumer UI is real, cautious, password-free, and responsive", () => {
   const page = readFileSync(new URL("../app/account/recurring/page.tsx", import.meta.url), "utf8");
+  const review = readFileSync(new URL("../app/account/recurring/recurring-workspace.tsx", import.meta.url), "utf8");
   const css = readFileSync(new URL("../app/account/recurring/recurring.module.css", import.meta.url), "utf8");
   const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
-  assert.match(page, /Recurring Commitments/);
-  assert.match(page, /Cancellation requested for review|marks cancellation intent/);
-  assert.match(page, /Provided by you/);
-  assert.match(page, /I can&apos;t find the login/);
-  assert.doesNotMatch(page, /name=["']password/i);
-  assert.match(page, /name="mode" value="editor"/);
-  assert.doesNotMatch(page, /Gmail|scan email/i);
-  assert.match(page, /Supporting transactions/);
-  assert.match(page, />View supporting transactions</);
+  assert.match(page, /getAuthenticatedUser/);
+  assert.match(review, /Recurring Commitments/);
+  assert.match(review, /does not report fraud or cancel anything/);
+  assert.match(review, /Provided by you/);
+  assert.match(review, /I can’t find the login/);
+  assert.doesNotMatch(review, /name=["']password/i);
+  assert.doesNotMatch(review, /Gmail|scan email/i);
+  assert.match(review, /Supporting transactions/);
+  assert.match(review, /Add installment details/);
   assert.match(workspace, /href="\/account\/recurring"/);
   assert.match(css, /@media\(max-width:560px\)/);
   assert.doesNotMatch(css, /min-width:\s*[4-9]\d\dpx/);
@@ -213,8 +218,44 @@ test("consumer UI is real, cautious, password-free, and responsive", () => {
 test("identity notes reject credential-like values and editor fields can be cleared", () => {
   const action = readFileSync(new URL("../app/account/recurring/actions.ts", import.meta.url), "utf8");
   assert.match(action, /CREDENTIALS_NOT_ALLOWED/);
-  assert.match(action, /isEditor \? identityNote/);
-  assert.match(action, /manualCurrentBalance:\s+isEditor\s+\?\s+manualCurrentBalance/);
+  assert.match(action, /identityNote: assertNoCredential/);
+  assert.match(action, /manualCurrentBalance: optionalNumber/);
   assert.match(action, /INVALID_USER_PROVIDED_COUNT/);
   assert.match(action, /INVALID_USER_PROVIDED_DATE/);
+});
+
+test("review choices are progressive, visibly selected, and saved once", () => {
+  const review = readFileSync(new URL("../app/account/recurring/recurring-workspace.tsx", import.meta.url), "utf8");
+  assert.match(review, /1\. Does this charge repeat\?/);
+  assert.match(review, /2\. Do you recognize this charge\?/);
+  assert.match(review, /3\. What would you like to do\?/);
+  assert.match(review, /Yes, it’s recurring/);
+  assert.match(review, /No, it isn’t recurring/);
+  assert.match(review, /Yes, I recognize it/);
+  assert.match(review, /No, I don’t recognize it/);
+  assert.match(review, /aria-pressed=\{selected\}/);
+  assert.match(review, /type="button"/);
+  assert.match(review, /type="submit"/);
+  assert.match(review, /disabled=\{!changed \|\| pending\}/);
+  assert.match(review, /pending \? "Saving…" : "Save"/);
+  assert.equal((review.match(/action=\{formAction\}/g) || []).length, 1);
+  assert.doesNotMatch(review, /<form action=\{saveRecurringCommitmentDecision\}/);
+});
+
+test("save feedback, section movement, errors, and undo remain explicit", () => {
+  const review = readFileSync(new URL("../app/account/recurring/recurring-workspace.tsx", import.meta.url), "utf8");
+  const action = readFileSync(new URL("../app/account/recurring/actions.ts", import.meta.url), "utf8");
+  assert.match(review, /state\.status === "error"/);
+  assert.match(action, /Your selections are still here/);
+  assert.match(review, /state\.status === "saved"/);
+  assert.match(review, /setTimeout\(\(\) =>/);
+  assert.match(review, /1000/);
+  assert.match(review, /undoRecurringCommitmentDecision/);
+  assert.match(review, /Previous understanding restored\. Decision history was preserved\./);
+  assert.match(action, /moved to Confirmed Recurring/);
+  assert.match(action, /removed from recurring suggestions/);
+  assert.match(action, /moved to Needs Attention/);
+  assert.match(action, /remains in Possible Recurring/);
+  assert.match(action, /supersedes_version_id/);
+  assert.match(action, /record_recurring_commitment_decision/);
 });
