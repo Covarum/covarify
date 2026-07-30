@@ -4,7 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MessageCircle, X } from "lucide-react";
 import type { MoneyTransaction } from "@/lib/money-picture";
-import type { TransactionIntent } from "@/lib/transaction-understanding";
+import {
+  applySavedClassificationToTransaction,
+  type SavedTransactionClassification,
+  type TransactionIntent,
+} from "@/lib/transaction-understanding";
 import styles from "./transaction-understanding.module.css";
 
 type Candidate = Pick<MoneyTransaction, "id" | "name" | "amount" | "currency" | "date" | "pending" | "accountLabel"> & {
@@ -14,7 +18,12 @@ type Result =
   | { kind: "clear"; message: string; transaction: Candidate; proposedCategory: string | null; parentCategory: { id: string; displayName: string }; requestedSubcategory: string | null; suggestions: Array<{ id: string; displayName: string; match: "exact" | "alias" }>; parentSubcategories: Array<{ id: string; displayName: string }>; intent: TransactionIntent; sourceSignature: string }
   | { kind: "ambiguous"; message: string; candidates: Candidate[]; intent: TransactionIntent }
   | { kind: "no_match"; message: string }
-  | { kind: "confirmed"; message: string };
+  | {
+      kind: "confirmed";
+      message: string;
+      savedClassification: SavedTransactionClassification | null;
+      merchantMemory: { scope: "transaction_only" | "future" | "past_and_future"; saved: boolean };
+    };
 
 const money = (amount: number, currency = "USD") =>
   new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Math.abs(amount));
@@ -32,6 +41,7 @@ export function TransactionUnderstanding() {
   const [showAllSubcategories, setShowAllSubcategories] = useState(false);
   const trigger = useRef<HTMLElement | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const resultRegion = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const open = (event: Event) => {
@@ -47,6 +57,15 @@ export function TransactionUnderstanding() {
     window.addEventListener("covarify:understand-transaction", open);
     return () => window.removeEventListener("covarify:understand-transaction", open);
   }, []);
+
+  useEffect(() => {
+    if (!result || (result.kind !== "confirmed" && result.kind !== "no_match")) return;
+    const region = resultRegion.current;
+    if (!region) return;
+    region.focus({ preventScroll: true });
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    region.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
+  }, [result]);
 
   async function interpret(selectedTransactionId?: string) {
     const statement = text.trim();
@@ -94,7 +113,14 @@ export function TransactionUnderstanding() {
         }),
       });
       if (!response.ok) throw new Error();
-      const confirmed = await response.json();
+      const confirmed = await response.json() as Result;
+      if (confirmed.kind !== "confirmed") throw new Error();
+      const savedClassification = confirmed.savedClassification;
+      if (savedClassification) {
+        setSelected((current) => current
+          ? applySavedClassificationToTransaction(current, savedClassification)
+          : current);
+      }
       setResult(confirmed);
       window.dispatchEvent(new Event("covarify:transaction-understanding-confirmed"));
       router.refresh();
@@ -138,9 +164,24 @@ export function TransactionUnderstanding() {
         {busy ? "Checking…" : "Interpret safely"}
       </button>
       {result ? (
-        <div className={styles.response} role="status">
+        <div ref={resultRegion} className={styles.response} role="status" tabIndex={-1}>
           <strong>Covarify</strong>
-          <p>{result.message}</p>
+          {result.kind === "confirmed" && result.savedClassification ? (
+            <>
+              <p><strong>Understood</strong></p>
+              <p>{selected?.name || "This transaction"} is now classified as:</p>
+              <p><strong>{result.savedClassification.effectiveParentCategory} → {result.savedClassification.effectiveSubcategory}</strong></p>
+              <p>The original bank category remains {categoryLabel(result.savedClassification.sourceCategory)}.</p>
+              <p>
+                {result.merchantMemory.scope === "future"
+                  ? `Future purchases from ${selected?.name || "this merchant"} will use this classification.`
+                  : result.merchantMemory.scope === "past_and_future"
+                    ? `Past and future purchases from ${selected?.name || "this merchant"} will use this classification.`
+                    : "This classification applies to this transaction only."}
+                {!result.merchantMemory.saved ? " The merchant-memory rule could not be saved." : ""}
+              </p>
+            </>
+          ) : <p>{result.message}</p>}
           {result.kind === "ambiguous" ? (
             <div className={styles.candidates}>
               {result.candidates.map((candidate) => (

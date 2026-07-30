@@ -12,6 +12,7 @@ import {
   SYSTEM_CATEGORY_PARENTS,
 } from "../lib/category-hierarchy.ts";
 import {
+  applySavedClassificationToTransaction,
   applyEffectiveCategories,
   buildConfirmedUnderstandingRecord,
   effectiveTransactionState,
@@ -178,6 +179,46 @@ test("effective parent and subcategory are stored separately while source eviden
   assert.deepEqual(source, original);
 });
 
+test("saved classification immediately updates the open transaction view without changing source evidence", () => {
+  const original = tx("white-horse", {
+    name: "White Horse Wine",
+    category: "FOOD_AND_DRINK",
+    sourceCategory: "FOOD_AND_DRINK",
+    effectiveParentCategory: "Food & Drink",
+    effectiveSubcategory: null,
+    userConfirmedMeaning: null,
+  });
+  const updated = applySavedClassificationToTransaction(original, {
+    transactionId: original.id,
+    sourceCategory: "FOOD_AND_DRINK",
+    effectiveParentCategory: "Food & Drink",
+    effectiveSubcategory: "Liquor",
+    assignmentSource: "user_transaction",
+    merchantRuleId: null,
+  });
+  assert.equal(original.effectiveSubcategory, null);
+  assert.equal(updated.sourceCategory, "FOOD_AND_DRINK");
+  assert.equal(updated.effectiveParentCategory, "Food & Drink");
+  assert.equal(updated.effectiveSubcategory, "Liquor");
+  assert.equal(updated.userConfirmedMeaning?.parentCategory, "Food & Drink");
+  assert.equal(updated.userConfirmedMeaning?.subcategory, "Liquor");
+  assert.equal(`${updated.effectiveParentCategory} → ${updated.effectiveSubcategory}`, "Food & Drink → Liquor");
+});
+
+test("saved classification mapper ignores a response for a different open transaction", () => {
+  const original = tx("still-open", { effectiveSubcategory: null });
+  const unchanged = applySavedClassificationToTransaction(original, {
+    transactionId: "different",
+    sourceCategory: "FOOD_AND_DRINK",
+    effectiveParentCategory: "Food & Drink",
+    effectiveSubcategory: "Liquor",
+    assignmentSource: "user_transaction",
+    merchantRuleId: null,
+  });
+  assert.equal(unchanged, original);
+  assert.equal(unchanged.effectiveSubcategory, null);
+});
+
 test("merchant rules assign both parent and subcategory using normalized exact merchant matching", () => {
   const source = tx("white-horse", { name: "POS DEBIT WHITE HORSE WINE", category: "FOOD_AND_DRINK" });
   const rules = [{
@@ -289,6 +330,7 @@ test("production route and workspace enforce founder-only confirmation-before-ap
   const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
   const activity = readFileSync(new URL("../components/account/recent-activity.tsx", import.meta.url), "utf8");
   const panel = readFileSync(new URL("../components/account/transaction-understanding.tsx", import.meta.url), "utf8");
+  const panelStyles = readFileSync(new URL("../components/account/transaction-understanding.module.css", import.meta.url), "utf8");
   const page = readFileSync(new URL("../app/account/page.tsx", import.meta.url), "utf8");
   assert.match(route, /getAuthorizedFounderUser/);
   assert.match(route, /status: 404/);
@@ -309,6 +351,20 @@ test("production route and workspace enforce founder-only confirmation-before-ap
   assert.match(route, /SUBCATEGORY_NOT_AVAILABLE/);
   assert.doesNotMatch(route, /\.from\("category_parents"\)\.insert/);
   assert.match(panel, /router\.refresh/);
+  assert.match(route, /savedClassification/);
+  assert.match(route, /\.insert\(recordToInsert\(record\)\)[\s\S]*savedClassification/);
+  assert.match(panel, /applySavedClassificationToTransaction/);
+  assert.match(panel, /setSelected[\s\S]*setResult\(confirmed\)/);
+  assert.match(panel, /resultRegion\.current/);
+  assert.match(panel, /region\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(panel, /scrollIntoView/);
+  assert.match(panel, /prefers-reduced-motion: reduce/);
+  assert.match(panel, /reduceMotion \? "auto" : "smooth"/);
+  assert.match(panel, /tabIndex=\{-1\}/);
+  assert.match(panel, /The original bank category remains/);
+  assert.match(panel, /merchantMemory\.scope/);
+  assert.match(panelStyles, /@media\(max-width:700px\)/);
+  assert.match(route, /createMerchantCategoryRule/);
   assert.match(page, /applyFounderTransactionUnderstanding/);
 });
 

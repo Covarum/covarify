@@ -286,6 +286,20 @@ export async function POST(request: Request) {
       message: categoryAssignment
         ? `Got it. Covarify will classify that ${transaction.name} purchase as ${categoryAssignment.parentCategory} → ${categoryAssignment.subcategory} while preserving the original bank category.${ruleSaved ? "" : " The transaction was saved, but the merchant rule could not be added."}`
         : `Got it. Covarify will preserve the original bank category and save your transaction context.`,
+      savedClassification: categoryAssignment
+        ? {
+            transactionId: transaction.id,
+            sourceCategory: transaction.sourceCategory || transaction.category,
+            effectiveParentCategory: categoryAssignment.parentCategory,
+            effectiveSubcategory: categoryAssignment.subcategory,
+            assignmentSource: categoryAssignment.assignmentSource,
+            merchantRuleId: categoryAssignment.merchantRuleId,
+          }
+        : null,
+      merchantMemory: {
+        scope: body.subcategoryDecision?.ruleScope || "transaction_only",
+        saved: ruleSaved,
+      },
     });
   } catch {
     return NextResponse.json({ error: "TRANSACTION_UNDERSTANDING_UNAVAILABLE" }, { status: 503 });

@@ -486,3 +486,35 @@ export type MerchantCategoryRule = {
   status: "active" | "archived";
   createdAt: string;
 };
+
+export type SavedTransactionClassification = {
+  transactionId: string;
+  sourceCategory: string;
+  effectiveParentCategory: string;
+  effectiveSubcategory: string;
+  assignmentSource: "user_transaction";
+  merchantRuleId: string | null;
+};
+
+export function applySavedClassificationToTransaction(
+  transaction: MoneyTransaction,
+  saved: SavedTransactionClassification,
+): MoneyTransaction {
+  if (transaction.id !== saved.transactionId) return transaction;
+  return {
+    ...transaction,
+    sourceCategory: saved.sourceCategory,
+    effectiveParentCategory: saved.effectiveParentCategory,
+    effectiveSubcategory: saved.effectiveSubcategory,
+    categorySource: "user_confirmed",
+    userConfirmedMeaning: {
+      category: saved.effectiveParentCategory,
+      parentCategory: saved.effectiveParentCategory,
+      subcategory: saved.effectiveSubcategory,
+      treatment: transaction.userConfirmedMeaning?.treatment || null,
+      contextLabel: transaction.userConfirmedMeaning?.contextLabel || null,
+      note: transaction.userConfirmedMeaning?.note || null,
+      receiptNeeded: transaction.userConfirmedMeaning?.receiptNeeded || false,
+    },
+  };
+}
