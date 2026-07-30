@@ -154,6 +154,9 @@ export function buildRecurringCommitments(
     if (decision?.disposition === "cancellation_requested") {
       attentionReasons.push("Cancellation requested for review.");
     }
+    if (decision?.disposition === "review") {
+      attentionReasons.push("You marked this commitment to review later.");
+    }
     if (decision?.duplicateDecision === "review") {
       attentionReasons.push("Possible duplicate marked for review.");
     }
