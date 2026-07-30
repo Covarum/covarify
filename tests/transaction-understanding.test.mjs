@@ -134,6 +134,58 @@ test("housing obligation migration is owner-scoped, append-only, and transaction
   assert.match(migration, /revoke all[\s\S]*from public, anon, authenticated/);
 });
 
+test("housing obligation history is user-scoped, self-safe, and has one canonical successor", () => {
+  const migration = readFileSync(new URL("../supabase/migrations/20260730170000_housing_obligations.sql", import.meta.url), "utf8");
+  assert.match(migration, /foreign key \(user_id, supersedes_version_id\)[\s\S]*references public\.recurring_obligation_versions\(user_id, id\)/);
+  assert.match(migration, /foreign key \(user_id, supersedes_record_id\)[\s\S]*references public\.obligation_payment_records\(user_id, id\)/);
+  assert.match(migration, /unique \(user_id, id\)[\s\S]*supersedes_version_id is null or supersedes_version_id <> id/);
+  assert.match(migration, /unique \(user_id, id\)[\s\S]*supersedes_record_id is null or supersedes_record_id <> id/);
+  assert.match(migration, /recurring_obligation_versions_one_root_idx/);
+  assert.match(migration, /recurring_obligation_versions_one_successor_idx/);
+  assert.match(migration, /obligation_payment_records_one_root_idx/);
+  assert.match(migration, /obligation_payment_records_one_successor_idx/);
+  assert.match(migration, /prior\.obligation_key = new\.obligation_key/);
+  assert.match(migration, /prior\.plaid_transaction_id = new\.plaid_transaction_id/);
+});
+
+test("housing obligation writes serialize before re-reading canonical append-only state", () => {
+  const migration = readFileSync(new URL("../supabase/migrations/20260730170000_housing_obligations.sql", import.meta.url), "utf8");
+  const recordFunction = migration.slice(
+    migration.indexOf("create function public.record_housing_obligation"),
+    migration.indexOf("revoke all on function public.record_housing_obligation"),
+  );
+  const unlinkFunction = migration.slice(
+    migration.indexOf("create function public.unlink_housing_obligation"),
+    migration.indexOf("revoke all on function public.unlink_housing_obligation"),
+  );
+  for (const sql of [recordFunction, unlinkFunction]) {
+    assert.ok(sql.indexOf("pg_advisory_xact_lock") < sql.indexOf("from public.obligation_payment_records"));
+    assert.match(sql, /not exists \([\s\S]*successor\.supersedes_record_id = payment\.id/);
+  }
+  assert.match(migration, /returns jsonb[\s\S]*'obligationVersionId'[\s\S]*'paymentRecordId'[\s\S]*'linkStatus'/);
+});
+
+test("Housing seeds are replay-safe and reject conflicting canonical category state", () => {
+  const migration = readFileSync(new URL("../supabase/migrations/20260730170000_housing_obligations.sql", import.meta.url), "utf8");
+  const seed = migration.slice(0, migration.indexOf("create table public.recurring_obligation_versions"));
+  assert.match(seed, /normalized_name = v_seed\.normalized_name/);
+  assert.match(seed, /parent_category_id = v_housing_id/);
+  assert.match(seed, /continue;/);
+  assert.match(seed, /canonical % category exists in a conflicting state/);
+  assert.doesNotMatch(seed, /on conflict \(id\) do nothing/);
+});
+
+test("housing obligation loaders choose unsuperseded payment state and retry write conflicts truthfully", () => {
+  const server = readFileSync(new URL("../lib/transaction-understanding-server.ts", import.meta.url), "utf8");
+  const route = readFileSync(new URL("../app/api/account/transaction-understanding/route.ts", import.meta.url), "utf8");
+  assert.match(server, /supersededPaymentIds/);
+  assert.match(server, /if \(supersededPaymentIds\.has\(String\(payment\.id\)\)\) continue/);
+  assert.match(route, /OBLIGATION_CONFLICT_RETRY/);
+  assert.match(route, /retryable: true/);
+  assert.match(route, /obligationVersionId: data\.obligationVersionId/);
+  assert.match(route, /paymentRecordId: data\.paymentRecordId/);
+});
+
 test("recurring merchant language routes deterministically without transaction lookup selectors", () => {
   const intent = parseTransactionIntent("Walmart is always for groceries", { now });
   assert.equal(intent.intentType, "merchant_rule");

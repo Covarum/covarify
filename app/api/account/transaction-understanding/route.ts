@@ -214,10 +214,20 @@ export async function POST(request: Request) {
         p_payment_type: normalized.paymentType,
         p_remaining_due: normalized.remainingDue,
       });
-      if (error) throw new Error("OBLIGATION_APPEND_FAILED");
+      if (error) {
+        if (error.code === "23505" || error.code === "40001" || error.code === "55P03") {
+          return NextResponse.json({
+            error: "OBLIGATION_CONFLICT_RETRY",
+            retryable: true,
+          }, { status: 409 });
+        }
+        throw new Error("OBLIGATION_APPEND_FAILED");
+      }
       return NextResponse.json({
         kind: "obligation_saved",
-        obligationVersionId: data,
+        obligationVersionId: data.obligationVersionId,
+        paymentRecordId: data.paymentRecordId,
+        linkStatus: data.linkStatus,
         message: `${transaction.name} is now recorded as a ${type} obligation. The bank transaction remains unchanged.`,
       });
     }
@@ -227,13 +237,24 @@ export async function POST(request: Request) {
       if (!transaction) {
         return NextResponse.json({ error: "OWNED_TRANSACTION_REQUIRED" }, { status: 403 });
       }
-      const { error } = await createSupabaseAdminClient().rpc("unlink_housing_obligation", {
+      const { data, error } = await createSupabaseAdminClient().rpc("unlink_housing_obligation", {
         p_user_id: user.id,
         p_transaction_id: transaction.id,
       });
-      if (error) throw new Error("OBLIGATION_UNLINK_FAILED");
+      if (error) {
+        if (error.code === "23505" || error.code === "40001" || error.code === "55P03") {
+          return NextResponse.json({
+            error: "OBLIGATION_CONFLICT_RETRY",
+            retryable: true,
+          }, { status: 409 });
+        }
+        throw new Error("OBLIGATION_UNLINK_FAILED");
+      }
       return NextResponse.json({
         kind: "obligation_unlinked",
+        obligationVersionId: data.obligationVersionId,
+        paymentRecordId: data.paymentRecordId,
+        linkStatus: data.linkStatus,
         message: "The payment is no longer linked to the housing obligation. Its source transaction and classification remain unchanged.",
       });
     }

@@ -81,14 +81,21 @@ async function loadHousingObligations(userId: string, transactionIds: string[]) 
   const admin = createSupabaseAdminClient();
   const { data: payments, error } = await admin
     .from("obligation_payment_records")
-    .select("plaid_transaction_id,obligation_version_id,payment_type,link_status,expected_amount_snapshot,remaining_due,created_at")
+    .select("id,plaid_transaction_id,obligation_version_id,payment_type,link_status,expected_amount_snapshot,remaining_due,supersedes_record_id,created_at")
     .eq("user_id", userId)
     .in("plaid_transaction_id", transactionIds)
     .order("created_at", { ascending: false });
   if (error?.code === "42P01") return result;
   if (error) throw new Error("HOUSING_OBLIGATION_LOAD_FAILED");
+  const supersededPaymentIds = new Set(
+    (payments || [])
+      .map((payment) => payment.supersedes_record_id)
+      .filter(Boolean)
+      .map(String),
+  );
   const newest = new Map<string, Record<string, unknown>>();
   for (const payment of payments || []) {
+    if (supersededPaymentIds.has(String(payment.id))) continue;
     const transactionId = String(payment.plaid_transaction_id);
     if (!newest.has(transactionId)) newest.set(transactionId, payment as Record<string, unknown>);
   }
