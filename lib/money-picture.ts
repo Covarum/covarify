@@ -1,6 +1,7 @@
 import { displaySeparated } from "./presentation-separators.ts";
-export type MoneyTransaction = { id: string; plaidAccountId: string; accountLabel: string; name: string; amount: number; currency: string; date: string; pending: boolean; pendingTransactionId: string | null; category: string; sourceCategory?: string; effectiveParentCategory?: string; effectiveSubcategory?: string | null; categorySource?: "user_confirmed" | "covarify_inference" | "normalized_source"; userConfirmedMeaning?: { category: string | null; parentCategory?: string | null; subcategory?: string | null; treatment: string | null; contextLabel: string | null; note: string | null; receiptNeeded: boolean } | null; housingObligation?: { type: "rent" | "mortgage"; paymentType: "full" | "partial" | "catch_up" | "late" | "extra" | "unsure"; expectedAmount: number | null; remainingDue: number | null; dueDay: number | null; ongoingStatus: "ongoing" | "ended" | "unsure" } | null; detailedCategory: string | null; direction: "inflow" | "outflow" | "neutral"; transferRelationship: "internal" | "external" | null };
-export type TransactionFilters = { accountId?: string; category?: string; periodStart?: string; periodEnd?: string; search?: string; transactionIds?: string[] };
+export type MoneyTransaction = { id: string; plaidAccountId: string; accountLabel: string; name: string; description?: string; amount: number; currency: string; date: string; pending: boolean; pendingTransactionId: string | null; category: string; sourceCategory?: string; effectiveParentCategory?: string; effectiveSubcategory?: string | null; categorySource?: "user_confirmed" | "covarify_inference" | "normalized_source"; userConfirmedMeaning?: { category: string | null; parentCategory?: string | null; subcategory?: string | null; treatment: string | null; contextLabel: string | null; note: string | null; receiptNeeded: boolean } | null; housingObligation?: { type: "rent" | "mortgage"; paymentType: "full" | "partial" | "catch_up" | "late" | "extra" | "unsure"; expectedAmount: number | null; remainingDue: number | null; dueDay: number | null; ongoingStatus: "ongoing" | "ended" | "unsure" } | null; detailedCategory: string | null; direction: "inflow" | "outflow" | "neutral"; transferRelationship: "internal" | "external" | null };
+export type TransactionSort = "newest" | "oldest" | "highest" | "lowest";
+export type TransactionFilters = { accountId?: string; category?: string; periodStart?: string; periodEnd?: string; search?: string; transactionIds?: string[]; sort?: TransactionSort };
 export type FilteredTransactionSummary = {
   count: number;
   kind: "inflow" | "spending" | "transfer" | "refund" | "mixed";
@@ -50,6 +51,29 @@ export const formatTransactionCategoryPath = (transaction: Pick<MoneyTransaction
     subcategory: transaction.effectiveSubcategory,
     sourceCategory: transaction.sourceCategory || transaction.category,
   });
+
+const compareStableId = (left: MoneyTransaction, right: MoneyTransaction) =>
+  left.id.localeCompare(right.id);
+
+export function sortTransactions(
+  transactions: MoneyTransaction[],
+  sort: TransactionSort = "newest",
+) {
+  return [...transactions].sort((left, right) => {
+    const dateComparison = left.date.localeCompare(right.date);
+    const magnitudeComparison = Math.abs(left.amount) - Math.abs(right.amount);
+    if (sort === "oldest") {
+      return dateComparison || -magnitudeComparison || compareStableId(left, right);
+    }
+    if (sort === "highest") {
+      return -magnitudeComparison || -dateComparison || compareStableId(left, right);
+    }
+    if (sort === "lowest") {
+      return magnitudeComparison || -dateComparison || compareStableId(left, right);
+    }
+    return -dateComparison || -magnitudeComparison || compareStableId(left, right);
+  });
+}
 const monthKey = (date: Date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 const isTransfer = (transaction: MoneyTransaction) => transaction.category.toUpperCase().startsWith("TRANSFER_") || /\b(online\s+)?xfer\b|\btransfer\b/i.test(transaction.name);
 const isRefund = (transaction: MoneyTransaction) => /\brefund\b|\breversal\b|\breturned\b/i.test(transaction.name);
@@ -117,7 +141,21 @@ export function filterTransactions(transactions: MoneyTransaction[], filters: Tr
   const transactionIds = Array.isArray(filters.transactionIds)
     ? new Set(filters.transactionIds.filter((id): id is string => typeof id === "string"))
     : null;
-  return transactions.filter((transaction) => (!filters.accountId || transaction.plaidAccountId === filters.accountId) && (!filters.category || transaction.category === filters.category) && (!filters.periodStart || transaction.date >= filters.periodStart) && (!filters.periodEnd || transaction.date <= filters.periodEnd) && (!transactionIds?.size || transactionIds.has(transaction.id)) && (!search || transaction.name.toLowerCase().includes(search)));
+  return sortTransactions(
+    transactions.filter((transaction) =>
+      (!filters.accountId || transaction.plaidAccountId === filters.accountId) &&
+      (!filters.category ||
+        formatTransactionCategoryPath(transaction) === filters.category ||
+        transaction.category === filters.category ||
+        formatCategoryLabel(transaction.category) === filters.category) &&
+      (!filters.periodStart || transaction.date >= filters.periodStart) &&
+      (!filters.periodEnd || transaction.date <= filters.periodEnd) &&
+      (!transactionIds?.size || transactionIds.has(transaction.id)) &&
+      (!search ||
+        transaction.name.toLowerCase().includes(search) ||
+        transaction.description?.toLowerCase().includes(search))),
+    filters.sort,
+  );
 }
 
 export function summarizeFilteredTransactions(

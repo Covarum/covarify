@@ -2,13 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  formatCategoryLabel,
   formatCategoryPath,
   formatTransactionCategoryPath,
   formatTransactionDisplayAmount,
   type FilteredTransactionSummary,
   type MoneyTransaction,
   type TransactionFilters,
+  type TransactionSort,
 } from "@/lib/money-picture";
 import type { ResolvedFinancialPeriod } from "@/lib/financial-periods";
 import { displaySeparated } from "@/lib/presentation-separators";
@@ -120,6 +120,7 @@ export function RecentActivity({
   const [filters, setFilters] = useState<TransactionFilters>({
     periodStart: period.start,
     periodEnd: period.end,
+    sort: "newest",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -128,11 +129,15 @@ export function RecentActivity({
     state: "saved" | "undoing" | "undone" | "error";
   } | null>(null);
   const requestSequence = useRef(0);
+  const filtersRef = useRef(filters);
+  const periodIdentity = `${period.start}:${period.end}`;
+  const [dataPeriodIdentity, setDataPeriodIdentity] = useState(periodIdentity);
 
   async function request(
     nextCursor: string | null,
     nextFilters = filters,
     replace = false,
+    requestedPeriodIdentity = dataPeriodIdentity,
   ) {
     const sequence = ++requestSequence.current;
     setLoading(true);
@@ -161,6 +166,7 @@ export function RecentActivity({
       setCount(payload.total);
       setSummary(payload.summary);
       setCursor(payload.cursor);
+      setDataPeriodIdentity(requestedPeriodIdentity);
     } catch {
       if (sequence === requestSequence.current) setError(true);
     } finally {
@@ -170,9 +176,37 @@ export function RecentActivity({
 
   function change(patch: Partial<TransactionFilters>) {
     const next = { ...filters, ...patch };
+    filtersRef.current = next;
     setFilters(next);
     void request(null, next, true);
   }
+
+  const requestRef = useRef(request);
+  useEffect(() => {
+    requestRef.current = request;
+  });
+
+  useEffect(() => {
+    if (dataPeriodIdentity === periodIdentity) return;
+    const timer = window.setTimeout(() => {
+      const next = {
+        ...filtersRef.current,
+        category: categories.includes(filtersRef.current.category || "")
+          ? filtersRef.current.category
+          : undefined,
+        transactionIds: undefined,
+        periodStart: period.start,
+        periodEnd: period.end,
+      };
+      filtersRef.current = next;
+      setFilters(next);
+      setRows([]);
+      setCount(0);
+      setCursor(null);
+      void requestRef.current(null, next, true, periodIdentity);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [categories, period.end, period.start, periodIdentity, dataPeriodIdentity]);
 
   useEffect(() => {
     const handleCategoryFilter = (event: Event) => {
@@ -256,6 +290,19 @@ export function RecentActivity({
     }
   }
 
+  const sectionFiltered = Boolean(
+    filters.accountId ||
+    filters.category ||
+    filters.search?.trim() ||
+    filters.transactionIds?.length,
+  );
+  const periodRefreshing = dataPeriodIdentity !== periodIdentity;
+  const resultCount = count === 0
+    ? "No matching transactions"
+    : rows.length >= count
+      ? `Showing all ${count}${sectionFiltered ? " matching" : ""} transaction${count === 1 ? "" : "s"}`
+      : `Showing ${rows.length} of ${count}${sectionFiltered ? " matching" : ""} transactions`;
+
   return (
     <section
       className={styles["mp-section"]}
@@ -266,8 +313,8 @@ export function RecentActivity({
           <p>Supporting context</p>
           <h2 id="recent-activity-heading">Recent activity</h2>
         </div>
-        <span>
-          Showing {rows.length} of {count} transactions
+        <span aria-live="polite">
+          {periodRefreshing ? "Updating activity…" : resultCount}
         </span>
       </div>
       <div className={styles["mp-filters"]}>
@@ -297,7 +344,7 @@ export function RecentActivity({
           >
             <option value="">All categories</option>
             {categories.map((category) => (
-              <option key={category} value={category}>{formatCategoryLabel(category)}</option>
+              <option key={category} value={category}>{category}</option>
             ))}
           </select>
         </label>
@@ -307,13 +354,31 @@ export function RecentActivity({
             type="search"
             value={filters.search || ""}
             placeholder="Merchant or description"
-            onChange={(event) =>
-              setFilters({ ...filters, search: event.target.value })
-            }
+            onChange={(event) => {
+              const next = { ...filters, search: event.target.value };
+              filtersRef.current = next;
+              setFilters(next);
+            }}
             onKeyDown={(event) => {
-              if (event.key === "Enter") void request(null, { ...filters, search: event.currentTarget.value }, true);
+              if (event.key === "Enter") {
+                change({ search: event.currentTarget.value });
+              }
             }}
           />
+        </label>
+        <label>
+          Sort by
+          <select
+            value={filters.sort || "newest"}
+            onChange={(event) =>
+              change({ sort: event.target.value as TransactionSort })
+            }
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="highest">Highest amount</option>
+            <option value="lowest">Lowest amount</option>
+          </select>
         </label>
       </div>
       {classificationNotice ? (
@@ -341,7 +406,11 @@ export function RecentActivity({
           <button type="button" aria-label="Dismiss classification notice" onClick={() => setClassificationNotice(null)}>Dismiss</button>
         </aside>
       ) : null}
-      {rows.length ? (
+      {periodRefreshing ? (
+        <p className={styles["mp-empty"]} role="status">
+          Updating activity for {period.label}…
+        </p>
+      ) : rows.length ? (
         <ul className={styles["mp-transaction-list"]}>
           {rows.map((transaction) => (
             <li key={transaction.id}>
@@ -381,7 +450,9 @@ export function RecentActivity({
         </ul>
       ) : (
         <p className={styles["mp-empty"]}>
-          No transactions match these filters
+          {sectionFiltered
+            ? "No matching transactions"
+            : `No transactions in ${period.label}`}
         </p>
       )}
       {rows.length ? <FilteredSummary summary={summary} /> : null}

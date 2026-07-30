@@ -12,7 +12,7 @@ import { retryDelaySeconds, runTransactionsSyncWorker } from "../lib/plaid/produ
 import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plaid/production/consent.ts";
 import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SYNC_JOB_RETENTION_DAYS, WEBHOOK_RETENTION_DAYS } from "../lib/account-deletion/policy.ts";
 import { sanitizeLinkDiagnostic } from "../lib/plaid/production/link-diagnostics.ts";
-import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions, formatTransactionDisplayAmount, summarizeFilteredTransactions } from "../lib/money-picture.ts";
+import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions, formatTransactionDisplayAmount, sortTransactions, summarizeFilteredTransactions } from "../lib/money-picture.ts";
 import { accountTypeLabel, buildConnectedAccountSummary } from "../lib/money-picture-overview.ts";
 import { RECENT_ACTIVITY_PAGE_SIZE } from "../lib/recent-activity-pagination.ts";
 import { buildConnectionSummary } from "../lib/plaid/production/connection-summary.ts";
@@ -141,7 +141,14 @@ test("account analytics retain provenance and exclude matched internal transfers
 test("Money Picture filters preserve deterministic newest-first input without duplicates", () => {
   const rows = Array.from({ length: 50 }, (_, index) => ({ id: String(50 - index), plaidAccountId: index % 2 ? "a" : "b", name: `Merchant ${index}`, amount: index + 1, currency: "USD", date: `2026-07-${String(22 - Math.floor(index / 3)).padStart(2, "0")}`, pending: false, pendingTransactionId: null, category: index % 2 ? "FOOD_AND_DRINK" : "TRAVEL", detailedCategory: null }));
   const filtered = filterTransactions(rows, { accountId: "a", category: "FOOD_AND_DRINK" }, new Date("2026-07-22T00:00:00Z"));
-  assert.equal(filtered.length, 25); assert.equal(new Set(filtered.map((row) => row.id)).size, filtered.length); assert.deepEqual(filtered.map((row) => row.id), rows.filter((row) => row.plaidAccountId === "a").map((row) => row.id));
+  assert.equal(filtered.length, 25);
+  assert.equal(new Set(filtered.map((row) => row.id)).size, filtered.length);
+  for (let index = 1; index < filtered.length; index += 1) {
+    assert.ok(filtered[index - 1].date >= filtered[index].date);
+    if (filtered[index - 1].date === filtered[index].date) {
+      assert.ok(Math.abs(filtered[index - 1].amount) >= Math.abs(filtered[index].amount));
+    }
+  }
 });
 
 test("filtered summaries use human-readable direction and the full filtered result set", () => {
@@ -251,8 +258,57 @@ test("pending-only and empty filtered views remain explicit", () => {
   assert.equal(pending.aggregateAmount, -25);
   assert.equal(summarizeFilteredTransactions([]).count, 0);
   const component = readFileSync("components/account/recent-activity.tsx", "utf8");
-  assert.match(component, /No transactions match these filters/);
+  assert.match(component, /No matching transactions/);
   assert.match(component, /rows\.length \? <FilteredSummary/);
+});
+
+test("Recent Activity sorts the complete filtered set deterministically before limiting", () => {
+  const rows = [
+    { id: "c", plaidAccountId: "a", accountLabel: "Checking", name: "Large", description: "Rent payment", amount: 1700, currency: "USD", date: "2026-07-29", pending: false, pendingTransactionId: null, category: "RENT_AND_UTILITIES", effectiveParentCategory: "Housing", effectiveSubcategory: "Rent", detailedCategory: null, direction: "outflow", transferRelationship: null },
+    { id: "b", plaidAccountId: "a", accountLabel: "Checking", name: "Medium B", description: "Wine shop", amount: 176.43, currency: "USD", date: "2026-07-30", pending: false, pendingTransactionId: null, category: "FOOD_AND_DRINK", effectiveParentCategory: "Food & Drink", effectiveSubcategory: "Liquor", detailedCategory: null, direction: "outflow", transferRelationship: null },
+    { id: "a", plaidAccountId: "a", accountLabel: "Checking", name: "Medium A", description: "Wine shop", amount: 176.43, currency: "USD", date: "2026-07-30", pending: false, pendingTransactionId: null, category: "FOOD_AND_DRINK", effectiveParentCategory: "Food & Drink", effectiveSubcategory: "Liquor", detailedCategory: null, direction: "outflow", transferRelationship: null },
+    { id: "d", plaidAccountId: "b", accountLabel: "Card", name: "Small", description: "Corner store", amount: 12, currency: "USD", date: "2026-07-28", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", detailedCategory: null, direction: "outflow", transferRelationship: null },
+  ];
+  assert.deepEqual(sortTransactions(rows, "newest").map(({ id }) => id), ["a", "b", "c", "d"]);
+  assert.deepEqual(sortTransactions(rows, "oldest").map(({ id }) => id), ["d", "c", "a", "b"]);
+  assert.deepEqual(sortTransactions(rows, "highest").map(({ id }) => id), ["c", "a", "b", "d"]);
+  assert.deepEqual(sortTransactions(rows, "lowest").map(({ id }) => id), ["d", "a", "b", "c"]);
+  assert.deepEqual(
+    filterTransactions(rows, {
+      accountId: "a",
+      category: "Food & Drink → Liquor",
+      search: "wine",
+      sort: "highest",
+    }).map(({ id }) => id),
+    ["a", "b"],
+  );
+  assert.deepEqual(sortTransactions(rows, "highest").slice(0, 2).map(({ id }) => id), ["c", "a"]);
+});
+
+test("Money Picture exposes one accessible sticky period control and a four-control activity toolbar", () => {
+  const selector = readFileSync("components/account/financial-period-selector.tsx", "utf8");
+  const activity = readFileSync("components/account/recent-activity.tsx", "utf8");
+  const workspace = readFileSync("components/account/authenticated-workspace.tsx", "utf8");
+  const css = readFileSync("components/account/money-picture.module.css", "utf8");
+  const route = readFileSync("app/api/account/transactions/route.ts", "utf8");
+  assert.match(selector, /aria-expanded=\{expanded\}/);
+  assert.match(selector, /router\.push\(href, \{ scroll: false \}\)/);
+  assert.match(selector, /Updating period/);
+  assert.match(css, /\.periodSelector\{position:sticky;z-index:15;top:78px/);
+  assert.match(css, /@media\(max-width:1050px\)\{\.periodSelector\{top:0\}\}/);
+  assert.match(css, /@media\(max-width:600px\).*periodControlBar.*min-height:42px/s);
+  assert.match(css, /\.categoryBackdrop\{position:fixed;z-index:1000/);
+  assert.doesNotMatch(workspace, /<RecentActivity key=/);
+  assert.match(activity, /Sort by/);
+  assert.match(activity, /Newest first/);
+  assert.match(activity, /Oldest first/);
+  assert.match(activity, /Highest amount/);
+  assert.match(activity, /Lowest amount/);
+  assert.match(activity, /No matching transactions/);
+  assert.match(activity, /filtersRef/);
+  assert.match(route, /filterTransactions\(effectiveRows, body\.filters \|\| \{\}\)/);
+  assert.match(css, /\.mp-filters\{display:grid;grid-template-columns:repeat\(4/);
+  assert.match(css, /@media\(max-width:560px\).*\.mp-filters\{grid-template-columns:1fr\}/s);
 });
 
 test("Money Picture empty and partial states do not invent balances", () => {
@@ -266,10 +322,10 @@ test("transaction browsing remains authenticated, owner-scoped, cursor ordered, 
   assert.match(route, /if \(!user\).*401/s); assert.match(route, /\.eq\("user_id", user\.id\)/); assert.match(route, /\.is\("removed_at", null\)/); assert.match(route, /order\("transaction_date", \{ ascending: false \}\)\.order\("id", \{ ascending: false \}\)/); assert.doesNotMatch(route, /\.(insert|update|upsert|delete)\(/);
   assert.match(route, /slice\(start, start \+ RECENT_ACTIVITY_PAGE_SIZE\)/);
   const accountPage = readFileSync(new URL("../app/account/page.tsx", import.meta.url), "utf8");
-  assert.match(accountPage, /currentRows\.slice\(0, RECENT_ACTIVITY_PAGE_SIZE\)/);
+  assert.match(accountPage, /activityRows\.slice\(0, RECENT_ACTIVITY_PAGE_SIZE\)/);
   const component = readFileSync(new URL("../components/account/recent-activity.tsx", import.meta.url), "utf8");
   assert.match(component, /id="recent-activity-heading">Recent activity</);
-  assert.match(component, /Showing \{rows\.length\} of \{count\} transactions/);
+  assert.match(component, /Showing \$\{rows\.length\} of \$\{count\}/);
   assert.match(component, /new Map/);
 });
 

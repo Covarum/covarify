@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import {
   CURRENT_PERIODS,
   HISTORICAL_PERIODS,
@@ -25,10 +25,17 @@ export function FinancialPeriodSelector({
   );
   const [end, setEnd] = useState(period.key === "custom" ? period.end : "");
   const [error, setError] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  const navigate = (href: string) => {
+    setExpanded(false);
+    startTransition(() => router.push(href, { scroll: false }));
+  };
 
   const choose = (key: string) => {
     setError("");
-    router.push(`/account?period=${encodeURIComponent(key)}`);
+    navigate(`/account?period=${encodeURIComponent(key)}`);
   };
   const applyCustom = () => {
     if (!start || !end || start > end) {
@@ -36,7 +43,7 @@ export function FinancialPeriodSelector({
       return;
     }
     setError("");
-    router.push(
+    navigate(
       `/account?period=custom&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
     );
   };
@@ -47,15 +54,39 @@ export function FinancialPeriodSelector({
   }
 
   return (
-    <section className={styles.periodSelector} aria-labelledby="period-heading">
-      <header>
+    <section
+      className={styles.periodSelector}
+      aria-labelledby="period-control-heading"
+      aria-busy={isPending}
+    >
+      <div className={styles.periodControlBar}>
+        <div>
+          <span id="period-control-heading">Money Picture</span>
+          <strong aria-live="polite">
+            {isPending
+              ? "Updating period…"
+              : `${period.label}: ${formatFinancialPeriodDateRange(period)}`}
+          </strong>
+        </div>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls="money-picture-period-options"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? "Close period options" : "Change period"}
+        </button>
+      </div>
+      <div
+        id="money-picture-period-options"
+        className={styles.periodOptions}
+        hidden={!expanded}
+      >
+        <header>
         <div>
           <p>Time intelligence</p>
-          <h2 id="period-heading">Choose the period you want to understand</h2>
+          <h2>Choose the period you want to understand</h2>
         </div>
-        <strong>
-          {period.label}: {formatFinancialPeriodDateRange(period)}
-        </strong>
         <Link href={`/account/events/review?${periodQuery.toString()}`}>
           Review {financialEventCount} Financial Event
           {financialEventCount === 1 ? "" : "s"} in this period
@@ -130,6 +161,7 @@ export function FinancialPeriodSelector({
           </div>
           {error && <p role="alert">{error}</p>}
         </fieldset>
+      </div>
       </div>
     </section>
   );
