@@ -1,10 +1,10 @@
 import "server-only";
 import type { PlaidAuthProvider } from "./auth";
-import { createSupabaseServerClient } from "../../supabase/server";
+import { authenticateRequest } from "../../supabase/request-auth";
 export const supabasePlaidAuthProvider: PlaidAuthProvider = {
-  async getAuthenticatedProfile() {
-    const { data, error } = await (await createSupabaseServerClient()).auth.getUser();
-    if (error || !data.user) return null;
-    return { userId: data.user.id, profileId: data.user.id, roles: [] };
+  async getAuthenticatedProfile(request) {
+    const authentication = await authenticateRequest(request);
+    if (!authentication.authenticated) return null;
+    return { userId: authentication.user.id, profileId: authentication.user.id, roles: [] };
   },
 };
