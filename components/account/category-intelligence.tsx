@@ -90,7 +90,14 @@ export function CategoryIntelligence({
   function filterCategory(category: CategoryInsight | null) {
     window.dispatchEvent(
       new CustomEvent("covarify:category-filter", {
-        detail: { categoryId: category?.categoryId || null },
+        detail: category
+          ? {
+              categoryId: category.categoryId,
+              periodStart: category.activePeriod.start,
+              periodEnd: category.activePeriod.end,
+              transactionIds: category.supportingTransactionIds,
+            }
+          : { categoryId: null },
       }),
     );
     if (category) close();

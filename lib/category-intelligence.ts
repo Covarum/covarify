@@ -2,6 +2,7 @@ import type { ResolvedFinancialPeriod } from "./financial-periods.ts";
 import type { FinancialEvent } from "./financial-events.ts";
 import {
   classifyTransaction,
+  formatCategoryLabel,
   type MoneyTransaction,
 } from "./money-picture.ts";
 
@@ -36,6 +37,8 @@ export type CategoryInsight = {
   relatedEventIds: string[];
   relatedEventCount: number;
   largestContributor: { label: string; amount: number; share: number } | null;
+  dominantContributors: Array<{ label: string | null; amount: number; share: number }>;
+  supportingTransactionIds: string[];
   subcategories: CategorySubcategoryEvidence[];
   confidence: "high" | "medium";
   ruleVersion: string;
@@ -58,15 +61,20 @@ export type CategoryIntelligencePayload = {
 };
 
 const labelCategory = (value: string) =>
-  value === "Uncategorized"
-    ? value
-    : value
-        .toLowerCase()
-        .split("_")
-        .map((word) => `${word[0]?.toUpperCase() || ""}${word.slice(1)}`)
-        .join(" ");
+  formatCategoryLabel(value) || "Uncategorized";
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100;
+
+const safeMerchantDisplayName = (value: string | null | undefined) => {
+  const name = value?.trim() || "";
+  if (
+    !name ||
+    /^(?:unknown|redacted|not available|merchant)$/i.test(name) ||
+    /^(?:merchant|mrc|plaid)[_-]?[a-z0-9]{6,}$/i.test(name) ||
+    /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(name)
+  ) return null;
+  return name;
+};
 
 const categoryKey = (transaction: MoneyTransaction) =>
   transaction.category || "Uncategorized";
@@ -104,9 +112,30 @@ function categoryMeaning(
     | "largestContributor"
     | "currentAmount"
     | "accountDistribution"
+    | "displayLabel"
+    | "activePeriod"
+    | "dominantContributors"
   >,
   rank: number,
 ) {
+  const dominantShare = insight.dominantContributors.reduce(
+    (total, contributor) => total + contributor.share,
+    0,
+  );
+  if (insight.dominantContributors.length && dominantShare >= 60) {
+    const names = insight.dominantContributors
+      .map((contributor) => contributor.label)
+      .filter((label): label is string => Boolean(label));
+    const subject = names.length === insight.dominantContributors.length
+      ? names.length === 1
+        ? names[0]
+        : `${names.slice(0, -1).join(", ")} and ${names.at(-1)} together`
+      : insight.dominantContributors.length === 1
+        ? "One merchant"
+        : "Two merchants together";
+    const period = `${insight.activePeriod.label.charAt(0).toLowerCase()}${insight.activePeriod.label.slice(1)}`;
+    return `${subject} accounted for approximately ${dominantShare.toFixed(0)}% of your ${insight.displayLabel} spending ${period}.`;
+  }
   if (rank === 0 && insight.currentAmount > 0)
     return "This was your largest identified spending category during the selected period.";
   if (
@@ -115,12 +144,6 @@ function categoryMeaning(
     insight.accountDistribution[0].share >= 70
   ) {
     return "Most identified activity came from one connected account.";
-  }
-  if (
-    insight.largestContributor &&
-    insight.largestContributor.share >= 60
-  ) {
-    return `A single identified merchant accounted for approximately ${insight.largestContributor.share.toFixed(0)}% of this category.`;
   }
   if (
     insight.accountDistribution[0] &&
@@ -184,16 +207,22 @@ export function buildCategoryIntelligence(
         0,
       );
       const accountGroups = new Map<string, MoneyTransaction[]>();
-      const merchantTotals = new Map<string, number>();
+      const merchantTotals = new Map<
+        string,
+        { amount: number; transactionIds: string[] }
+      >();
       for (const row of rows) {
         accountGroups.set(row.accountLabel, [
           ...(accountGroups.get(row.accountLabel) || []),
           row,
         ]);
-        merchantTotals.set(
-          row.name,
-          (merchantTotals.get(row.name) || 0) + row.amount,
-        );
+        const merchant = merchantTotals.get(row.name) || {
+          amount: 0,
+          transactionIds: [],
+        };
+        merchant.amount += row.amount;
+        merchant.transactionIds.push(row.id);
+        merchantTotals.set(row.name, merchant);
       }
       const accountDistribution = [...accountGroups]
         .map(([accountLabel, accountRows]) => {
@@ -206,15 +235,40 @@ export function buildCategoryIntelligence(
           };
         })
         .sort((a, b) => b.amount - a.amount);
-      const merchant = [...merchantTotals].sort((a, b) => b[1] - a[1])[0];
+      const merchants = [...merchantTotals].sort(
+        (a, b) => b[1].amount - a[1].amount,
+      );
+      const merchant = merchants[0];
       const largestContributor =
-        merchant && merchant[1] >= currentAmount * 0.25
+        merchant && merchant[1].amount >= currentAmount * 0.25
           ? {
-              label: merchant[0],
-              amount: roundMoney(merchant[1]),
-              share: (merchant[1] / currentAmount) * 100,
+              label: safeMerchantDisplayName(merchant[0]) || "One merchant",
+              amount: roundMoney(merchant[1].amount),
+              share: (merchant[1].amount / currentAmount) * 100,
             }
           : null;
+      const topMerchantShare = merchant
+        ? (merchant[1].amount / currentAmount) * 100
+        : 0;
+      const dominantMerchantRows =
+        topMerchantShare >= 60
+          ? merchants.slice(0, 1)
+          : merchants
+                .slice(0, 2)
+                .reduce((sum, entry) => sum + entry[1].amount, 0) >=
+              currentAmount * .6
+            ? merchants.slice(0, 2)
+            : [];
+      const dominantContributors = dominantMerchantRows.map(
+        ([name, evidence]) => ({
+          label: safeMerchantDisplayName(name),
+          amount: roundMoney(evidence.amount),
+          share: (evidence.amount / currentAmount) * 100,
+        }),
+      );
+      const supportingTransactionIds = dominantMerchantRows.flatMap(
+        ([, evidence]) => evidence.transactionIds,
+      );
       const relatedIds = [
         ...(idsByCategory.get(categoryId.toUpperCase()) || new Set<string>()),
       ];
@@ -259,6 +313,8 @@ export function buildCategoryIntelligence(
         relatedEventIds: relatedIds,
         relatedEventCount: relatedIds.length,
         largestContributor,
+        dominantContributors,
+        supportingTransactionIds,
         subcategories: [...subcategoryGroups]
           .map(([label, value]) => ({
             label,
