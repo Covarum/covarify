@@ -21,7 +21,7 @@ type Candidate = Pick<MoneyTransaction, "id" | "name" | "amount" | "currency" | 
   sourceCategory: string;
 };
 type Result =
-  | { kind: "clear"; message: string; transaction: Candidate; proposedCategory: string | null; parentCategory: { id: string; displayName: string }; requestedSubcategory: string | null; suggestions: Array<{ id: string; displayName: string; match: "exact" | "alias" }>; parentSubcategories: Array<{ id: string; displayName: string }>; intent: TransactionIntent; sourceSignature: string }
+  | { kind: "clear"; message: string; transaction: Candidate; proposedCategory: string | null; parentCategory: { id: string; displayName: string }; sourceParentCategory: { id: string; displayName: string }; categoryOptions: Array<{ id: string; displayName: string; subcategories: Array<{ id: string; displayName: string }> }>; requestedSubcategory: string | null; suggestions: Array<{ id: string; displayName: string; match: "exact" | "alias" }>; parentSubcategories: Array<{ id: string; displayName: string }>; intent: TransactionIntent; sourceSignature: string }
   | { kind: "ambiguous"; message: string; candidates: Candidate[]; intent: TransactionIntent }
   | { kind: "no_match"; message: string }
   | { kind: "intent_clarification"; message: string; merchant: string | null; requestedSubcategory: string | null; originalText: string; intent: TransactionIntent }
@@ -44,7 +44,10 @@ type Result =
       message: string;
       savedClassification: SavedTransactionClassification | null;
       merchantMemory: { scope: "transaction_only" | "future" | "past_and_future"; saved: boolean };
-    };
+      obligationPrompt: { type: "rent" | "mortgage"; transactionId: string; payee: string; actualPaymentAmount: number } | null;
+    }
+  | { kind: "obligation_saved"; obligationVersionId: string; message: string }
+  | { kind: "obligation_unlinked"; message: string };
 
 const money = (amount: number, currency = "USD") =>
   new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Math.abs(amount));
@@ -56,6 +59,14 @@ export function TransactionUnderstanding() {
   const [busy, setBusy] = useState(false);
   const [ruleScope, setRuleScope] = useState<"transaction_only" | "future" | "past_and_future">("transaction_only");
   const [showAllSubcategories, setShowAllSubcategories] = useState(false);
+  const [selectedParentId, setSelectedParentId] = useState("");
+  const [selectedSubcategoryId, setSelectedSubcategoryId] = useState("");
+  const [obligationRelationship, setObligationRelationship] = useState<"yes" | "no" | "unsure" | null>(null);
+  const [expectedAmount, setExpectedAmount] = useState("");
+  const [dueDay, setDueDay] = useState("");
+  const [paymentType, setPaymentType] = useState<"full" | "partial" | "catch_up" | "late" | "extra" | "unsure">("unsure");
+  const [ongoingStatus, setOngoingStatus] = useState<"ongoing" | "ended" | "unsure">("unsure");
+  const [remainingDue, setRemainingDue] = useState("");
   const trigger = useRef<HTMLElement | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const panel = useRef<HTMLElement>(null);
@@ -72,6 +83,14 @@ export function TransactionUnderstanding() {
       setText("");
       setRuleScope("transaction_only");
       setShowAllSubcategories(false);
+      setSelectedParentId("");
+      setSelectedSubcategoryId("");
+      setObligationRelationship(null);
+      setExpectedAmount("");
+      setDueDay("");
+      setPaymentType("unsure");
+      setOngoingStatus("unsure");
+      setRemainingDue("");
       window.setTimeout(() => input.current?.focus(), 0);
     };
     window.addEventListener("covarify:understand-transaction", open);
@@ -112,7 +131,12 @@ export function TransactionUnderstanding() {
         }),
       });
       if (!response.ok) throw new Error();
-      setResult(await response.json());
+      const payload = await response.json() as Result;
+      if (payload.kind === "clear") {
+        setSelectedParentId(payload.parentCategory.id);
+        setSelectedSubcategoryId(payload.suggestions[0]?.id || "");
+      }
+      setResult(payload);
     } catch {
       setResult({ kind: "no_match", message: "Covarify couldn’t understand that request clearly. No transaction was changed." });
     } finally {
@@ -122,6 +146,7 @@ export function TransactionUnderstanding() {
 
   async function confirm(subcategoryDecision?: {
     action: "use_existing" | "create_new";
+    parentCategoryId?: string;
     subcategoryId?: string;
     displayName?: string;
     reviewedSuggestionIds?: string[];
@@ -167,7 +192,7 @@ export function TransactionUnderstanding() {
           },
         };
         window.dispatchEvent(new CustomEvent("covarify:transaction-understanding-confirmed", { detail }));
-        completionTimer.current = window.setTimeout(close, 900);
+        if (!confirmed.obligationPrompt) completionTimer.current = window.setTimeout(close, 900);
       }
       setResult(confirmed);
       router.refresh();
@@ -191,6 +216,86 @@ export function TransactionUnderstanding() {
     window.setTimeout(() => {
       if (trigger.current?.isConnected) trigger.current.focus();
     }, 0);
+  }
+
+  async function saveHousingObligation(prompt: NonNullable<Extract<Result, { kind: "confirmed" }>["obligationPrompt"]>) {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/account/transaction-understanding", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          operation: "save_housing_obligation",
+          obligation: {
+            transactionId: prompt.transactionId,
+            expectedAmount: expectedAmount ? Number(expectedAmount) : null,
+            dueDay: dueDay ? Number(dueDay) : null,
+            ongoingStatus,
+            paymentType,
+            remainingDue: remainingDue ? Number(remainingDue) : null,
+          },
+        }),
+      });
+      if (!response.ok) throw new Error();
+      setResult(await response.json() as Result);
+      router.refresh();
+    } catch {
+      setResult({ kind: "no_match", message: "The classification is saved, but the obligation details were not. You can safely try again." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unlinkHousingObligation(transactionId: string) {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/account/transaction-understanding", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          operation: "unlink_housing_obligation",
+          obligationTransactionId: transactionId,
+        }),
+      });
+      if (!response.ok) throw new Error();
+      setSelected((current) => current ? { ...current, housingObligation: null } : current);
+      setResult(await response.json() as Result);
+      router.refresh();
+    } catch {
+      setResult({ kind: "no_match", message: "The obligation link was not changed. Please try again." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function editHousingObligation(transaction: MoneyTransaction) {
+    const obligation = transaction.housingObligation;
+    if (!obligation) return;
+    setExpectedAmount(obligation.expectedAmount?.toString() || "");
+    setDueDay(obligation.dueDay?.toString() || "");
+    setPaymentType(obligation.paymentType);
+    setOngoingStatus(obligation.ongoingStatus);
+    setRemainingDue(obligation.remainingDue?.toString() || "");
+    setObligationRelationship("yes");
+    setResult({
+      kind: "confirmed",
+      message: "Update the obligation details while preserving the prior version.",
+      savedClassification: {
+        transactionId: transaction.id,
+        sourceCategory: transaction.sourceCategory || transaction.category,
+        effectiveParentCategory: transaction.effectiveParentCategory || "Housing",
+        effectiveSubcategory: transaction.effectiveSubcategory || (obligation.type === "rent" ? "Rent" : "Mortgage"),
+        assignmentSource: "user_transaction",
+        merchantRuleId: null,
+      },
+      merchantMemory: { scope: "transaction_only", saved: false },
+      obligationPrompt: {
+        type: obligation.type,
+        transactionId: transaction.id,
+        payee: transaction.name,
+        actualPaymentAmount: Math.abs(transaction.amount),
+      },
+    });
   }
 
   async function confirmMerchantRule(
@@ -234,16 +339,36 @@ export function TransactionUnderstanding() {
 
   const body = (
     (result?.kind === "confirmed" && result.savedClassification) ||
-    result?.kind === "merchant_rule_confirmed"
+    result?.kind === "merchant_rule_confirmed" ||
+    result?.kind === "obligation_saved" ||
+    result?.kind === "obligation_unlinked"
   ) ? (
     <div className={styles.completion} role="status" aria-live="polite">
-      <strong>{result.kind === "confirmed" || result.merchantMemory.saved ? "Updated" : "No rule created"}</strong>
+      <strong>{result.kind !== "merchant_rule_confirmed" || result.merchantMemory.saved ? "Updated" : "No rule created"}</strong>
       <p>{result.kind === "confirmed" ? formatCategoryPath({
         parentCategory: result.savedClassification?.effectiveParentCategory,
         subcategory: result.savedClassification?.effectiveSubcategory,
         sourceCategory: result.savedClassification?.sourceCategory,
-      }) : result.categoryPath || "Individual classification"}</p>
+      }) : result.kind === "merchant_rule_confirmed" ? result.categoryPath || "Individual classification" : result.kind === "obligation_saved" ? "Recurring obligation recorded" : "Obligation link removed"}</p>
       <span>{result.kind === "confirmed" ? "This transaction has been updated." : result.message}</span>
+      {result.kind === "confirmed" && result.obligationPrompt ? (
+        <div className={styles.obligation}>
+          <strong>Is {result.obligationPrompt.payee} your {result.obligationPrompt.type === "rent" ? "landlord or property manager" : "mortgage lender"}?</strong>
+          <div className={styles.choiceActions}>
+            {(["yes", "no", "unsure"] as const).map((choice) => <button key={choice} type="button" onClick={() => setObligationRelationship(choice)}>{choice === "yes" ? "Yes" : choice === "no" ? "No" : "Not sure"}</button>)}
+          </div>
+          {obligationRelationship === "yes" ? (
+            <>
+              <label>Expected monthly amount (optional)<input inputMode="decimal" value={expectedAmount} onChange={(event) => setExpectedAmount(event.target.value)} /></label>
+              <label>Usual due day (optional)<input type="number" min="1" max="31" value={dueDay} onChange={(event) => setDueDay(event.target.value)} /></label>
+              <label>What kind of payment was this?<select value={paymentType} onChange={(event) => setPaymentType(event.target.value as typeof paymentType)}><option value="unsure">Not sure</option><option value="full">Full payment</option><option value="partial">Partial payment</option><option value="catch_up">Catch-up payment</option><option value="late">Late payment</option><option value="extra">Extra payment</option></select></label>
+              {paymentType === "partial" ? <label>Remaining due (optional)<input inputMode="decimal" value={remainingDue} onChange={(event) => setRemainingDue(event.target.value)} /></label> : null}
+              <label>Is this ongoing?<select value={ongoingStatus} onChange={(event) => setOngoingStatus(event.target.value as typeof ongoingStatus)}><option value="unsure">Not sure</option><option value="ongoing">Yes</option><option value="ended">No</option></select></label>
+              <button className={styles.primary} type="button" disabled={busy} onClick={() => void saveHousingObligation(result.obligationPrompt!)}>Save obligation details</button>
+            </>
+          ) : obligationRelationship ? <button type="button" onClick={close}>Done</button> : null}
+        </div>
+      ) : null}
     </div>
   ) : (
     <>
@@ -348,13 +473,18 @@ export function TransactionUnderstanding() {
                 <div><dt>Amount</dt><dd>{money(result.transaction.amount, result.transaction.currency)}</dd></div>
                 <div><dt>Date</dt><dd>{result.transaction.date}</dd></div>
                 <div><dt>Account</dt><dd>{result.transaction.accountLabel}</dd></div>
-                <div><dt>Source category</dt><dd>{result.parentCategory.displayName}</dd></div>
+                <div><dt>Source category</dt><dd>{formatCategoryLabel(result.transaction.sourceCategory)}</dd></div>
                 <div><dt>Requested detail</dt><dd>{result.requestedSubcategory || "No subcategory requested"}</dd></div>
               </dl>
               {result.requestedSubcategory ? <div ref={suggestionRegion} className={styles.suggestionResult} tabIndex={-1}>
+                <div className={styles.categoryPicker}>
+                  <label>Main category<select value={selectedParentId} onChange={(event) => { setSelectedParentId(event.target.value); setSelectedSubcategoryId(""); }}>{result.categoryOptions.map((option) => <option key={option.id} value={option.id}>{option.displayName}</option>)}</select></label>
+                  <label>Subcategory<select value={selectedSubcategoryId} onChange={(event) => setSelectedSubcategoryId(event.target.value)}><option value="">Choose a subcategory</option>{result.categoryOptions.find((option) => option.id === selectedParentId)?.subcategories.map((subcategory) => <option key={subcategory.id} value={subcategory.id}>{subcategory.displayName}</option>)}</select></label>
+                  <button className={styles.primary} type="button" disabled={busy || !selectedSubcategoryId} onClick={() => void confirm({ action: "use_existing", parentCategoryId: selectedParentId, subcategoryId: selectedSubcategoryId })}>Apply classification</button>
+                </div>
                 {result.suggestions.length ? <section className={styles.matches}>
                   <strong>You may already have a category for this.</strong>
-                  {result.suggestions.map((suggestion) => <article key={suggestion.id}><span>Possible match</span><h3>{suggestion.displayName}</h3><p>Under {result.parentCategory.displayName}</p><button className={styles.primary} type="button" disabled={busy} onClick={() => void confirm({ action: "use_existing", subcategoryId: suggestion.id })}>Use {suggestion.displayName}</button></article>)}
+                  {result.suggestions.map((suggestion) => <article key={suggestion.id}><span>Possible match</span><h3>{suggestion.displayName}</h3><p>Under {result.parentCategory.displayName}</p><button className={styles.primary} type="button" disabled={busy} onClick={() => void confirm({ action: "use_existing", parentCategoryId: result.parentCategory.id, subcategoryId: suggestion.id })}>Use {suggestion.displayName}</button></article>)}
                 </section> : <p className={styles.noMatch}>No similar existing subcategory was found under {result.parentCategory.displayName}.</p>}
                 <fieldset className={styles.ruleScope}>
                   <legend>Should Covarify remember this for {result.transaction.name}?</legend>
@@ -406,7 +536,14 @@ export function TransactionUnderstanding() {
               <div><dt>Main category</dt><dd>{formatCategoryPath({ parentCategory: selected.effectiveParentCategory, sourceCategory: selected.sourceCategory || selected.category })}</dd></div>
               <div><dt>Subcategory</dt><dd>{formatCategoryLabel(selected.effectiveSubcategory) || "None"}</dd></div>
               <div><dt>Your classification</dt><dd>{selected.effectiveSubcategory ? formatCategoryPath({ parentCategory: selected.effectiveParentCategory, subcategory: selected.effectiveSubcategory, sourceCategory: selected.sourceCategory || selected.category }) : formatCategoryLabel(selected.userConfirmedMeaning?.category) || "None"}</dd></div>
+              {selected.housingObligation ? <>
+                <div><dt>Housing obligation</dt><dd>{selected.housingObligation.type === "rent" ? "Rent" : "Mortgage"}</dd></div>
+                <div><dt>Payment type</dt><dd>{formatCategoryLabel(selected.housingObligation.paymentType) || "Not sure"}</dd></div>
+                <div><dt>Expected monthly {selected.housingObligation.type}</dt><dd>{selected.housingObligation.expectedAmount == null ? "Not provided yet" : money(selected.housingObligation.expectedAmount, selected.currency)}</dd></div>
+                {selected.housingObligation.remainingDue != null ? <div><dt>Remaining due</dt><dd>{money(selected.housingObligation.remainingDue, selected.currency)}</dd></div> : null}
+              </> : null}
             </dl>
+            {selected.housingObligation ? <div className={styles.choiceActions}><button type="button" disabled={busy} onClick={() => editHousingObligation(selected)}>Edit housing obligation</button><button type="button" disabled={busy} onClick={() => void unlinkHousingObligation(selected.id)}>Unlink from housing obligation</button></div> : null}
             {body}
           </section>
         </div>

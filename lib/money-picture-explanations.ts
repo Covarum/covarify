@@ -521,6 +521,72 @@ function operatingAccountExplanation(
   };
 }
 
+function largeExpenseExplanation(
+  observation: InsightCandidate,
+  transactions: MoneyTransaction[],
+): ObservationExplanationPayload {
+  const largestExpense = Number(observation.aggregates.largestExpense || 0);
+  const totalOutflow = Number(observation.aggregates.totalOutflow || 0);
+  const matching = transactions.filter(
+    (transaction) =>
+      classifyTransaction(transaction) === "outflow" &&
+      Math.abs(transaction.amount) === largestExpense,
+  );
+  return {
+    observationId: observation.observationId,
+    ruleId: observation.ruleId,
+    generatedAt: observation.generatedAt,
+    period: observation.period,
+    accountScope: observation.accountScope,
+    confidence: observation.confidence,
+    supportingMetrics: [
+      {
+        key: "largest_expense",
+        label: "Largest identified expense",
+        current: largestExpense,
+        prior: null,
+        change: null,
+        unit: "currency",
+      },
+      {
+        key: "total_outflow",
+        label: "Estimated outflow",
+        current: totalOutflow,
+        prior: null,
+        change: null,
+        unit: "currency",
+      },
+    ],
+    supportingCategories: [],
+    supportingMerchants: [],
+    supportingAccounts: [],
+    supportingTransactions: largestExpense
+      ? [{
+          groupKey: `largest-expense:${largestExpense}`,
+          kind: "largest_expense",
+          count: matching.length || 1,
+          aggregateAmount: largestExpense,
+          accountScope: [...new Set(matching.map((transaction) => transaction.plaidAccountId))],
+        }]
+      : [],
+    signals: {
+      unusualSpending: [],
+      unusualIncomeChange: null,
+      largestExpense: largestExpense || null,
+    },
+    explanationBullets: [
+      `The largest identified expense was approximately ${money(largestExpense)}.`,
+      totalOutflow > 0
+        ? `It represented approximately ${pct((largestExpense / totalOutflow) * 100)} of estimated outflow.`
+        : "There is not enough outflow evidence to calculate its share.",
+    ],
+    supportedQuestions: [
+      { id: "one_purchase", label: "How much did this purchase affect outflow?" },
+      { id: "without_largest_expense", label: "What would outflow look like without it?" },
+    ],
+  };
+}
+
 export function buildObservationExplanation(
   observation: InsightCandidate,
   transactions: MoneyTransaction[],
@@ -530,6 +596,9 @@ export function buildObservationExplanation(
   }
   if (observation.ruleId === "account.outflow_concentration") {
     return operatingAccountExplanation(observation, transactions);
+  }
+  if (observation.ruleId === "spending.large_expense") {
+    return largeExpenseExplanation(observation, transactions);
   }
   return null;
 }

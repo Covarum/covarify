@@ -36,6 +36,11 @@ import {
   recordToInsert,
   replaceOrReactivateMerchantCategoryRule,
 } from "@/lib/transaction-understanding-server";
+import {
+  housingObligationType,
+  recurringObligationInput,
+  type ObligationPaymentType,
+} from "@/lib/recurring-obligations";
 
 export const dynamic = "force-dynamic";
 
@@ -136,7 +141,7 @@ export async function POST(request: Request) {
   if (!user) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   try {
     const body = (await request.json()) as {
-      operation?: "interpret" | "confirm" | "undo" | "confirm_merchant_rule";
+      operation?: "interpret" | "confirm" | "undo" | "confirm_merchant_rule" | "save_housing_obligation" | "unlink_housing_obligation";
       text?: string;
       modality?: InputModality;
       selectedTransactionId?: string | null;
@@ -146,6 +151,7 @@ export async function POST(request: Request) {
       confirmationId?: string;
       subcategoryDecision?: {
         action: "use_existing" | "create_new";
+        parentCategoryId?: string;
         subcategoryId?: string;
         displayName?: string;
         reviewedSuggestionIds?: string[];
@@ -153,6 +159,15 @@ export async function POST(request: Request) {
         replaceExisting?: boolean;
         reactivateArchived?: boolean;
       };
+      obligation?: {
+        transactionId: string;
+        expectedAmount?: number | null;
+        dueDay?: number | null;
+        ongoingStatus: "ongoing" | "ended" | "unsure";
+        paymentType: ObligationPaymentType;
+        remainingDue?: number | null;
+      };
+      obligationTransactionId?: string;
     };
     const transactions = await loadTransactions(user.id);
     const [history, availableSubcategories, merchantRules] = await Promise.all([
@@ -160,6 +175,68 @@ export async function POST(request: Request) {
       loadAvailableSubcategories(user.id),
       loadMerchantCategoryRules(user.id, true),
     ]);
+
+    if (body.operation === "save_housing_obligation") {
+      const transaction = transactions.find((row) => row.id === body.obligation?.transactionId);
+      if (!transaction || !body.obligation) {
+        return NextResponse.json({ error: "OWNED_TRANSACTION_REQUIRED" }, { status: 403 });
+      }
+      const effective = effectiveTransactionState(transaction, null, history, merchantRules);
+      const type = housingObligationType(
+        effective.effectiveParentCategory,
+        effective.effectiveSubcategory,
+      );
+      if (!type) {
+        return NextResponse.json({ error: "HOUSING_CLASSIFICATION_REQUIRED" }, { status: 409 });
+      }
+      const normalized = recurringObligationInput({
+        userId: user.id,
+        transactionId: transaction.id,
+        payee: transaction.name,
+        type,
+        actualPaymentAmount: Math.abs(transaction.amount),
+        paymentDate: transaction.date,
+        expectedAmount: body.obligation.expectedAmount,
+        dueDay: body.obligation.dueDay,
+        ongoingStatus: body.obligation.ongoingStatus,
+        paymentType: body.obligation.paymentType,
+        remainingDue: body.obligation.remainingDue,
+      });
+      const { data, error } = await createSupabaseAdminClient().rpc("record_housing_obligation", {
+        p_user_id: user.id,
+        p_transaction_id: normalized.transactionId,
+        p_obligation_type: normalized.type,
+        p_payee_display_name: normalized.payee,
+        p_normalized_payee_name: normalized.normalizedPayee,
+        p_expected_amount: normalized.expectedAmount,
+        p_due_day: normalized.dueDay,
+        p_ongoing_status: normalized.ongoingStatus,
+        p_payment_type: normalized.paymentType,
+        p_remaining_due: normalized.remainingDue,
+      });
+      if (error) throw new Error("OBLIGATION_APPEND_FAILED");
+      return NextResponse.json({
+        kind: "obligation_saved",
+        obligationVersionId: data,
+        message: `${transaction.name} is now recorded as a ${type} obligation. The bank transaction remains unchanged.`,
+      });
+    }
+
+    if (body.operation === "unlink_housing_obligation") {
+      const transaction = transactions.find((row) => row.id === body.obligationTransactionId);
+      if (!transaction) {
+        return NextResponse.json({ error: "OWNED_TRANSACTION_REQUIRED" }, { status: 403 });
+      }
+      const { error } = await createSupabaseAdminClient().rpc("unlink_housing_obligation", {
+        p_user_id: user.id,
+        p_transaction_id: transaction.id,
+      });
+      if (error) throw new Error("OBLIGATION_UNLINK_FAILED");
+      return NextResponse.json({
+        kind: "obligation_unlinked",
+        message: "The payment is no longer linked to the housing obligation. Its source transaction and classification remain unchanged.",
+      });
+    }
 
     if (body.operation === "interpret") {
       const text = String(body.text || "").trim();
@@ -297,6 +374,14 @@ export async function POST(request: Request) {
         requestedSubcategory,
         suggestions: suggestions.map(({ category, match }) => ({ id: category.id, displayName: category.displayName, match })),
         parentSubcategories,
+        sourceParentCategory: { id: sourceParent.id, displayName: sourceParent.displayName },
+        categoryOptions: SYSTEM_CATEGORY_PARENTS.map((categoryParent) => ({
+          id: categoryParent.id,
+          displayName: categoryParent.displayName,
+          subcategories: availableSubcategories
+            .filter((subcategory) => subcategory.parentCategoryId === categoryParent.id && subcategory.status === "active")
+            .map((subcategory) => ({ id: subcategory.id, displayName: subcategory.displayName })),
+        })),
         intent,
         sourceSignature: sourceConditionSignature(transaction),
       });
@@ -447,7 +532,13 @@ export async function POST(request: Request) {
       const rankedAcrossParents = SYSTEM_CATEGORY_PARENTS.flatMap((parent) => suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories)
         .map((suggestion) => ({ ...suggestion, parent })))
         .sort((a, b) => b.score - a.score);
-      const parent = rankedAcrossParents[0]?.parent || sourceParent;
+      const requestedParent = body.subcategoryDecision?.parentCategoryId
+        ? SYSTEM_CATEGORY_PARENTS.find((candidate) => candidate.id === body.subcategoryDecision?.parentCategoryId)
+        : null;
+      if (body.subcategoryDecision?.parentCategoryId && !requestedParent) {
+        return NextResponse.json({ error: "PARENT_CATEGORY_NOT_AVAILABLE" }, { status: 403 });
+      }
+      const parent = requestedParent || rankedAcrossParents[0]?.parent || sourceParent;
       const suggestions = suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories);
       const decision = body.subcategoryDecision;
       if (!decision) return NextResponse.json({ error: "SUBCATEGORY_DECISION_REQUIRED" }, { status: 400 });
@@ -530,6 +621,15 @@ export async function POST(request: Request) {
         scope: body.subcategoryDecision?.ruleScope || "transaction_only",
         saved: ruleSaved,
       },
+      obligationPrompt: categoryAssignment && housingObligationType(
+        categoryAssignment.parentCategory,
+        categoryAssignment.subcategory,
+      ) ? {
+        type: housingObligationType(categoryAssignment.parentCategory, categoryAssignment.subcategory),
+        transactionId: transaction.id,
+        payee: transaction.name,
+        actualPaymentAmount: Math.abs(transaction.amount),
+      } : null,
     });
   } catch {
     return NextResponse.json({ error: "TRANSACTION_UNDERSTANDING_UNAVAILABLE" }, { status: 503 });

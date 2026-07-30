@@ -116,6 +116,24 @@ test("cash-flow supported questions resolve only through deterministic adapters"
   assert.equal(answerObservationQuestion(payload, "free_form_question"), null);
 });
 
+test("large-expense observations always have an actionable aggregate explanation", () => {
+  const payload = buildObservationExplanation(
+    {
+      ...observation("spending.large_expense"),
+      aggregates: { largestExpense: 400, totalOutflow: 1000 },
+    },
+    transactions,
+  );
+  assert.ok(payload);
+  assert.equal(payload.ruleId, "spending.large_expense");
+  assert.equal(payload.signals.largestExpense, 400);
+  assert.deepEqual(
+    payload.supportedQuestions.map((question) => question.id),
+    ["one_purchase", "without_largest_expense"],
+  );
+  assert.ok(answerObservationQuestion(payload, "without_largest_expense"));
+});
+
 test("operating-account payload retains provenance and avoids account-switch recommendations", () => {
   const accountRows = [
     row({ id: "bill-1", date: "2026-06-25", name: "Utility", amount: 100 }),
@@ -186,6 +204,23 @@ test("guided explanation precedes bounded follow-up options and restores focus",
   assert.match(source, /event\.key === "Escape"/);
   assert.match(source, /event\.key !== "Tab"/);
   assert.match(source, /aria-modal="true"/);
+  assert.match(source, /<button[\s\S]*type="button"[\s\S]*Understand this/);
+  assert.match(source, /onClick=\{\(event\)[\s\S]*explain\(observation\.observationId/);
+  assert.match(source, /Supporting detail is temporarily unavailable/);
+  assert.match(source, /role="alert"/);
+  assert.doesNotMatch(source, /pointerEvents:\s*"none"/);
+});
+
+test("cash-flow heading has no orphaned duplicate period label", () => {
+  const workspace = readFileSync(
+    new URL("../components/account/authenticated-workspace.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    workspace,
+    /id="cash-flow-heading">How money moved<\/h2><\/div><span>\{financialData\.period\.label\}/,
+  );
+  assert.match(workspace, /<article><h3>Cash flow<\/h3><p>\{financialData\.period\.label\}<\/p>/);
 });
 
 test("each live rule exposes only its approved guided questions", () => {

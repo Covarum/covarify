@@ -103,7 +103,19 @@ export function requestedSubcategoryFromText(text: string) {
   ];
   for (const pattern of patterns) {
     const match = trimmed.match(pattern);
-    if (match?.[1]) return match[1].trim();
+    if (match?.[1]) return normalizeRequestedCategoryPhrase(match[1]);
   }
-  return trimmed.split(/\s+/).length <= 4 ? trimmed : null;
+  return trimmed.split(/\s+/).length <= 4
+    ? normalizeRequestedCategoryPhrase(trimmed)
+    : null;
+}
+
+export function normalizeRequestedCategoryPhrase(value: string) {
+  const normalized = value
+    .trim()
+    .replace(/[.!?]+$/, "")
+    .replace(/^(?:from now on,?\s+|always\s+|usually\s+)+/i, "")
+    .replace(/\s+(?:from now on|every time|in the future|going forward)$/i, "")
+    .trim();
+  return normalized || null;
 }
