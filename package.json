@@ -7,7 +7,7 @@
     "build": "node --experimental-strip-types scripts/verify-kms-oidc.ts && node --experimental-strip-types scripts/verify-waitlist-read.ts && node scripts/verify-cron-live.mjs && node --experimental-strip-types scripts/verify-plaid-production-env.ts && next build",
     "start": "next start",
     "test:early-access": "node --experimental-strip-types --test --test-isolation=none tests/early-access-route.test.mjs",
-    "test:plaid-production": "node --conditions=react-server --experimental-strip-types --test --test-force-exit --test-isolation=none tests/plaid-production.test.mjs",
+    "test:plaid-production": "node --conditions=react-server --experimental-strip-types --test --test-force-exit --test-isolation=none tests/request-auth.test.mjs tests/plaid-production.test.mjs",
     "test:intelligence": "node --experimental-strip-types --test --test-isolation=none tests/category-intelligence.test.mjs tests/financial-periods.test.mjs tests/money-picture-intelligence.test.mjs tests/money-picture-explanations.test.mjs tests/presentation-separators.test.mjs",
     "test:financial-events": "node --experimental-strip-types --test --test-isolation=none tests/financial-events.test.mjs",
     "test:transaction-understanding": "node --experimental-strip-types --test --test-isolation=none tests/transaction-understanding.test.mjs",
