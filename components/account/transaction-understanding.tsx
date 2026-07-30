@@ -3,10 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MessageCircle, X } from "lucide-react";
-import type { MoneyTransaction } from "@/lib/money-picture";
+import {
+  formatCategoryLabel,
+  formatCategoryPath,
+  type MoneyTransaction,
+} from "@/lib/money-picture";
 import {
   applySavedClassificationToTransaction,
   type SavedTransactionClassification,
+  transactionCategoryView,
   type TransactionUnderstandingCompletedDetail,
   type TransactionIntent,
 } from "@/lib/transaction-understanding";
@@ -28,10 +33,6 @@ type Result =
 
 const money = (amount: number, currency = "USD") =>
   new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Math.abs(amount));
-const categoryLabel = (value: string) => value === "FOOD_AND_DRINK"
-  ? "Food & Drink"
-  : value.toLowerCase().split("_").map((word) => `${word[0]?.toUpperCase() || ""}${word.slice(1)}`).join(" ");
-
 export function TransactionUnderstanding() {
   const router = useRouter();
   const [text, setText] = useState("");
@@ -136,6 +137,14 @@ export function TransactionUnderstanding() {
         const detail: TransactionUnderstandingCompletedDetail = {
           transactionName: result.transaction.name,
           savedClassification,
+          priorCategoryView: selected
+            ? transactionCategoryView(selected)
+            : {
+                effectiveParentCategory: undefined,
+                effectiveSubcategory: null,
+                categorySource: "normalized_source",
+                userConfirmedMeaning: null,
+              },
           undoRequest: {
             transactionId: result.transaction.id,
             intent: result.intent,
@@ -172,7 +181,11 @@ export function TransactionUnderstanding() {
   const body = result?.kind === "confirmed" && result.savedClassification ? (
     <div className={styles.completion} role="status" aria-live="polite">
       <strong>Updated</strong>
-      <p>{result.savedClassification.effectiveParentCategory} → {result.savedClassification.effectiveSubcategory}</p>
+      <p>{formatCategoryPath({
+        parentCategory: result.savedClassification.effectiveParentCategory,
+        subcategory: result.savedClassification.effectiveSubcategory,
+        sourceCategory: result.savedClassification.sourceCategory,
+      })}</p>
       <span>This transaction has been updated.</span>
     </div>
   ) : (
@@ -277,10 +290,10 @@ export function TransactionUnderstanding() {
               <div><dt>Amount</dt><dd>{money(selected.amount, selected.currency)}</dd></div>
               <div><dt>Date</dt><dd>{selected.date}</dd></div>
               <div><dt>Account</dt><dd>{selected.accountLabel}</dd></div>
-              <div><dt>Source</dt><dd>{categoryLabel(selected.sourceCategory || selected.category)}</dd></div>
-              <div><dt>Main category</dt><dd>{selected.effectiveParentCategory || selected.category}</dd></div>
-              <div><dt>Subcategory</dt><dd>{selected.effectiveSubcategory || "None"}</dd></div>
-              <div><dt>Your classification</dt><dd>{selected.effectiveSubcategory ? `${selected.effectiveParentCategory || selected.category} → ${selected.effectiveSubcategory}` : selected.userConfirmedMeaning?.category || "None"}</dd></div>
+              <div><dt>Source</dt><dd>{formatCategoryLabel(selected.sourceCategory || selected.category)}</dd></div>
+              <div><dt>Main category</dt><dd>{formatCategoryPath({ parentCategory: selected.effectiveParentCategory, sourceCategory: selected.sourceCategory || selected.category })}</dd></div>
+              <div><dt>Subcategory</dt><dd>{formatCategoryLabel(selected.effectiveSubcategory) || "None"}</dd></div>
+              <div><dt>Your classification</dt><dd>{selected.effectiveSubcategory ? formatCategoryPath({ parentCategory: selected.effectiveParentCategory, subcategory: selected.effectiveSubcategory, sourceCategory: selected.sourceCategory || selected.category }) : formatCategoryLabel(selected.userConfirmedMeaning?.category) || "None"}</dd></div>
             </dl>
             {body}
           </section>

@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { formatTransactionDisplayAmount } from "@/lib/money-picture";
-import type {
-  FilteredTransactionSummary,
-  MoneyTransaction,
-  TransactionFilters,
+import {
+  formatCategoryPath,
+  formatTransactionCategoryPath,
+  formatTransactionDisplayAmount,
+  type FilteredTransactionSummary,
+  type MoneyTransaction,
+  type TransactionFilters,
 } from "@/lib/money-picture";
 import type { ResolvedFinancialPeriod } from "@/lib/financial-periods";
 import { displaySeparated } from "@/lib/presentation-separators";
 import {
   applySavedClassificationToTransaction,
+  restoreTransactionCategoryView,
   type TransactionUnderstandingCompletedDetail,
 } from "@/lib/transaction-understanding";
 import styles from "./money-picture.module.css";
@@ -227,8 +230,14 @@ export function RecentActivity({
         }),
       });
       if (!response.ok) throw new Error("undo failed");
-      await request(null, filters, true);
+      setRows((current) => current.map((transaction) =>
+        restoreTransactionCategoryView(
+          transaction,
+          detail.undoRequest.transactionId,
+          detail.priorCategoryView,
+        )));
       setClassificationNotice({ detail, state: "undone" });
+      void request(null, filters, true);
     } catch {
       setClassificationNotice({ detail, state: "error" });
     }
@@ -298,10 +307,18 @@ export function RecentActivity({
         <aside className={styles["mp-classification-notice"]} role="status" aria-live="polite">
           <span>
             {classificationNotice.state === "undone"
-              ? `${classificationNotice.detail.transactionName} classification restored.`
+              ? `${classificationNotice.detail.transactionName} restored to ${formatCategoryPath({
+                  parentCategory: classificationNotice.detail.priorCategoryView.effectiveParentCategory,
+                  subcategory: classificationNotice.detail.priorCategoryView.effectiveSubcategory,
+                  sourceCategory: classificationNotice.detail.savedClassification.sourceCategory,
+                })}.`
               : classificationNotice.state === "error"
                 ? "The classification was saved, but Undo could not be completed."
-                : `${classificationNotice.detail.transactionName} updated to ${classificationNotice.detail.savedClassification.effectiveParentCategory} → ${classificationNotice.detail.savedClassification.effectiveSubcategory}.`}
+                : `${classificationNotice.detail.transactionName} updated to ${formatCategoryPath({
+                    parentCategory: classificationNotice.detail.savedClassification.effectiveParentCategory,
+                    subcategory: classificationNotice.detail.savedClassification.effectiveSubcategory,
+                    sourceCategory: classificationNotice.detail.savedClassification.sourceCategory,
+                  })}.`}
           </span>
           {classificationNotice.state === "saved" || classificationNotice.state === "undoing" ? (
             <button type="button" disabled={classificationNotice.state === "undoing"} onClick={() => void undoClassification()}>
@@ -338,7 +355,7 @@ export function RecentActivity({
                       dateStyle: "medium",
                       timeZone: "UTC",
                     }).format(new Date(`${transaction.date}T00:00:00Z`)),
-                    transaction.category,
+                    formatTransactionCategoryPath(transaction),
                     transaction.pending ? "Pending" : null,
                   )}
                 </span>

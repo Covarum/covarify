@@ -499,12 +499,34 @@ export type SavedTransactionClassification = {
 export type TransactionUnderstandingCompletedDetail = {
   transactionName: string;
   savedClassification: SavedTransactionClassification;
+  priorCategoryView: TransactionCategoryView;
   undoRequest: {
     transactionId: string;
     intent: TransactionIntent;
     sourceSignature: string;
   };
 };
+
+export type TransactionCategoryView = Pick<
+  MoneyTransaction,
+  "effectiveParentCategory" | "effectiveSubcategory" | "categorySource" | "userConfirmedMeaning"
+>;
+
+export const transactionCategoryView = (transaction: MoneyTransaction): TransactionCategoryView => ({
+  effectiveParentCategory: transaction.effectiveParentCategory,
+  effectiveSubcategory: transaction.effectiveSubcategory,
+  categorySource: transaction.categorySource,
+  userConfirmedMeaning: transaction.userConfirmedMeaning,
+});
+
+export function restoreTransactionCategoryView(
+  transaction: MoneyTransaction,
+  transactionId: string,
+  prior: TransactionCategoryView,
+): MoneyTransaction {
+  if (transaction.id !== transactionId) return transaction;
+  return { ...transaction, ...prior };
+}
 
 export function applySavedClassificationToTransaction(
   transaction: MoneyTransaction,

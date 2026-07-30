@@ -17,7 +17,39 @@ export type TransactionDisplayAmount = {
   tone: "inflow" | "outflow" | "refund" | "transfer" | "neutral";
 };
 
-const categoryLabel = (value: string) => value === "Uncategorized" ? value : value.toLowerCase().split("_").map((word) => word[0]?.toUpperCase() + word.slice(1)).join(" ");
+export const formatCategoryLabel = (value?: string | null) => {
+  const source = value?.trim();
+  if (!source) return "";
+  return source
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .split(/\s+/)
+    .map((word) => word === "and" && source.includes("_") ? "&" : `${word[0]?.toUpperCase() || ""}${word.slice(1)}`)
+    .join(" ");
+};
+
+export const formatCategoryPath = ({
+  parentCategory,
+  subcategory,
+  sourceCategory,
+}: {
+  parentCategory?: string | null;
+  subcategory?: string | null;
+  sourceCategory?: string | null;
+}) => {
+  const parent = formatCategoryLabel(parentCategory);
+  const child = formatCategoryLabel(subcategory);
+  if (parent && child) return `${parent} → ${child}`;
+  if (parent) return parent;
+  return formatCategoryLabel(sourceCategory) || "Uncategorized";
+};
+
+export const formatTransactionCategoryPath = (transaction: Pick<MoneyTransaction, "category" | "sourceCategory" | "effectiveParentCategory" | "effectiveSubcategory">) =>
+  formatCategoryPath({
+    parentCategory: transaction.effectiveParentCategory,
+    subcategory: transaction.effectiveSubcategory,
+    sourceCategory: transaction.sourceCategory || transaction.category,
+  });
 const monthKey = (date: Date) => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 const isTransfer = (transaction: MoneyTransaction) => transaction.category.toUpperCase().startsWith("TRANSFER_") || /\b(online\s+)?xfer\b|\btransfer\b/i.test(transaction.name);
 const isRefund = (transaction: MoneyTransaction) => /\brefund\b|\breversal\b|\breturned\b/i.test(transaction.name);
@@ -179,7 +211,7 @@ export function buildScopedMoneyPicture(
   }
   const spendingByCategory = [...categories]
     .map(([category, amount]) => ({
-      category: categoryLabel(category),
+      category: formatCategoryLabel(category),
       amount,
       percentage: spending ? (amount / spending) * 100 : 0,
     }))
@@ -275,7 +307,7 @@ export function buildMoneyPicture(transactions: MoneyTransaction[], now = new Da
   const income = inflows.reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0);
   const categories = new Map<string, number>();
   for (const transaction of outflows) categories.set(transaction.category || "Uncategorized", (categories.get(transaction.category || "Uncategorized") || 0) + transaction.amount);
-  const spendingByCategory = [...categories].map(([category, amount]) => ({ category: categoryLabel(category), amount, percentage: spending ? amount / spending * 100 : 0 })).sort((a, b) => b.amount - a.amount);
+  const spendingByCategory = [...categories].map(([category, amount]) => ({ category: formatCategoryLabel(category), amount, percentage: spending ? amount / spending * 100 : 0 })).sort((a, b) => b.amount - a.amount);
   const currentMonth = monthKey(now);
   const current = complete.filter((transaction) => monthKey(new Date(`${transaction.date}T00:00:00Z`)) === currentMonth);
   const currentIn = current.filter((transaction) => classifyTransaction(transaction) === "inflow").reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0);
@@ -290,7 +322,7 @@ export function buildMoneyPicture(transactions: MoneyTransaction[], now = new Da
 
 export function buildAccountAnalytics(transactions: MoneyTransaction[]) {
   const totalSpending = transactions.filter((transaction) => classifyTransaction(transaction) === "outflow").reduce((sum, transaction) => sum + transaction.amount, 0); const totalDeposits = transactions.filter((transaction) => classifyTransaction(transaction) === "inflow").reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0);
-  return [...new Set(transactions.map((transaction) => transaction.plaidAccountId))].map((accountId) => { const rows = transactions.filter((transaction) => transaction.plaidAccountId === accountId); const inflows = rows.filter((transaction) => classifyTransaction(transaction) === "inflow"); const outflows = rows.filter((transaction) => classifyTransaction(transaction) === "outflow"); const transfersIn = rows.filter((transaction) => ["transfer", "internal_transfer"].includes(classifyTransaction(transaction)) && transaction.amount < 0); const transfersOut = rows.filter((transaction) => ["transfer", "internal_transfer"].includes(classifyTransaction(transaction)) && transaction.amount > 0); const moneyIn = inflows.reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0); const moneyOut = outflows.reduce((sum, transaction) => sum + transaction.amount, 0); const categories = new Map<string, number>(); outflows.forEach((transaction) => categories.set(transaction.category, (categories.get(transaction.category) || 0) + transaction.amount)); return { accountId, accountLabel: rows[0]?.accountLabel || "Connected account", transactionCount: rows.length, identifiedInflows: moneyIn, identifiedOutflows: moneyOut, netCashFlow: moneyIn - moneyOut, transfersIn: transfersIn.length, transfersOut: transfersOut.length, largestExpenses: outflows.slice().sort((a, b) => b.amount - a.amount).slice(0, 3), commonCategories: [...categories].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([category]) => categoryLabel(category)), spendingShare: totalSpending ? moneyOut / totalSpending * 100 : 0, depositShare: totalDeposits ? moneyIn / totalDeposits * 100 : 0, lastActivityDate: rows[0]?.date || null, recurringPayments: null, recurringDeposits: null }; });
+  return [...new Set(transactions.map((transaction) => transaction.plaidAccountId))].map((accountId) => { const rows = transactions.filter((transaction) => transaction.plaidAccountId === accountId); const inflows = rows.filter((transaction) => classifyTransaction(transaction) === "inflow"); const outflows = rows.filter((transaction) => classifyTransaction(transaction) === "outflow"); const transfersIn = rows.filter((transaction) => ["transfer", "internal_transfer"].includes(classifyTransaction(transaction)) && transaction.amount < 0); const transfersOut = rows.filter((transaction) => ["transfer", "internal_transfer"].includes(classifyTransaction(transaction)) && transaction.amount > 0); const moneyIn = inflows.reduce((sum, transaction) => sum + Math.abs(transaction.amount), 0); const moneyOut = outflows.reduce((sum, transaction) => sum + transaction.amount, 0); const categories = new Map<string, number>(); outflows.forEach((transaction) => categories.set(transaction.category, (categories.get(transaction.category) || 0) + transaction.amount)); return { accountId, accountLabel: rows[0]?.accountLabel || "Connected account", transactionCount: rows.length, identifiedInflows: moneyIn, identifiedOutflows: moneyOut, netCashFlow: moneyIn - moneyOut, transfersIn: transfersIn.length, transfersOut: transfersOut.length, largestExpenses: outflows.slice().sort((a, b) => b.amount - a.amount).slice(0, 3), commonCategories: [...categories].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([category]) => formatCategoryLabel(category)), spendingShare: totalSpending ? moneyOut / totalSpending * 100 : 0, depositShare: totalDeposits ? moneyIn / totalDeposits * 100 : 0, lastActivityDate: rows[0]?.date || null, recurringPayments: null, recurringDeposits: null }; });
 }
 
 export function buildAccountObservations(analytics: ReturnType<typeof buildAccountAnalytics>) { const observations = [] as Array<{ title: string; body: string; question: string }>; const income = analytics.slice().sort((a, b) => b.depositShare - a.depositShare)[0]; if (income && income.depositShare >= 65) observations.push({ title: `${income.accountLabel} receives most identified income`, body: `${income.depositShare.toFixed(0)}% of identified deposits flowed into this account over the available history. Based on connected account activity, it appears to be the primary destination for identified inflow.`, question: "Would aligning recurring bills with identified income make my cash flow easier to follow?" }); const transferHeavy = analytics.find((account) => account.transactionCount >= 5 && (account.transfersIn + account.transfersOut) / account.transactionCount >= .5); if (transferHeavy) observations.push({ title: `${transferHeavy.accountLabel} is primarily used for transfers`, body: `${transferHeavy.transfersIn + transferHeavy.transfersOut} of ${transferHeavy.transactionCount} transactions are identified transfers over the available history. This pattern may be worth reviewing.`, question: "What role does this account play in my overall cash flow?" }); if (analytics.length > 1 && analytics.every((account) => account.spendingShare >= 25)) observations.push({ title: "Spending is spread across connected accounts", body: displaySeparated(...analytics.map((account) => `${account.accountLabel}: ${account.spendingShare.toFixed(0)}%`)) + ". Based on available transaction history.", question: "Would seeing fixed and flexible spending by account improve my financial clarity?" }); return observations; }

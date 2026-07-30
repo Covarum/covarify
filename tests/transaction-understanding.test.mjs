@@ -3,7 +3,12 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { buildCategoryIntelligence } from "../lib/category-intelligence.ts";
 import { isExactFounderAllowlistMatch } from "../lib/financial-event-confirmations.ts";
-import { filterTransactions } from "../lib/money-picture.ts";
+import {
+  filterTransactions,
+  formatCategoryLabel,
+  formatCategoryPath,
+  formatTransactionCategoryPath,
+} from "../lib/money-picture.ts";
 import {
   normalizeCategoryName,
   parentForSourceCategory,
@@ -18,6 +23,7 @@ import {
   effectiveTransactionState,
   parseTransactionIntent,
   reconcilePendingUnderstanding,
+  restoreTransactionCategoryView,
   resolveTransactionIntent,
   sourceConditionSignature,
 } from "../lib/transaction-understanding.ts";
@@ -219,6 +225,41 @@ test("saved classification mapper ignores a response for a different open transa
   assert.equal(unchanged.effectiveSubcategory, null);
 });
 
+test("shared category formatter prioritizes effective paths and humanizes source fallbacks", () => {
+  const classified = tx("classified", {
+    category: "FOOD_AND_DRINK",
+    sourceCategory: "FOOD_AND_DRINK",
+    effectiveParentCategory: "Food & Drink",
+    effectiveSubcategory: "Liquor",
+  });
+  assert.equal(formatTransactionCategoryPath(classified), "Food & Drink → Liquor");
+  assert.equal(formatCategoryPath({ parentCategory: "Food & Drink" }), "Food & Drink");
+  assert.equal(formatCategoryPath({ sourceCategory: "FOOD_AND_DRINK" }), "Food & Drink");
+  assert.equal(formatCategoryLabel("FOOD_AND_DRINK"), "Food & Drink");
+  assert.equal(formatCategoryPath({}), "Uncategorized");
+  assert.doesNotMatch(formatTransactionCategoryPath(classified), /FOOD_AND_DRINK/);
+});
+
+test("successful Undo immediately restores the prior effective row classification", () => {
+  const current = tx("white-horse", {
+    category: "FOOD_AND_DRINK",
+    sourceCategory: "FOOD_AND_DRINK",
+    effectiveParentCategory: "Food & Drink",
+    effectiveSubcategory: "Liquor",
+    categorySource: "user_confirmed",
+  });
+  const restored = restoreTransactionCategoryView(current, current.id, {
+    effectiveParentCategory: "Food & Drink",
+    effectiveSubcategory: null,
+    categorySource: "normalized_source",
+    userConfirmedMeaning: null,
+  });
+  assert.equal(formatTransactionCategoryPath(restored), "Food & Drink");
+  assert.equal(restored.effectiveSubcategory, null);
+  assert.equal(restored.categorySource, "normalized_source");
+  assert.equal(restoreTransactionCategoryView(current, "other", {}).effectiveSubcategory, "Liquor");
+});
+
 test("merchant rules assign both parent and subcategory using normalized exact merchant matching", () => {
   const source = tx("white-horse", { name: "POS DEBIT WHITE HORSE WINE", category: "FOOD_AND_DRINK" });
   const rules = [{
@@ -373,18 +414,25 @@ test("production route and workspace enforce founder-only confirmation-before-ap
   assert.match(panel, /setText\(""\)/);
   assert.match(panel, /setRuleScope\("transaction_only"\)/);
   assert.match(panel, /trigger\.current\?\.isConnected/);
+  assert.match(panel, /formatCategoryLabel/);
+  assert.match(panel, /formatCategoryPath/);
   assert.match(panel, /subcategoryDecision \? \{ \.\.\.subcategoryDecision, ruleScope \}/);
   assert.match(panelStyles, /@media\(max-width:700px\)/);
   assert.match(panelStyles, /\.suggestionResult/);
   assert.match(activity, /mp-classification-notice/);
-  assert.match(activity, /updated to \$\{classificationNotice\.detail\.savedClassification\.effectiveParentCategory\}/);
+  assert.match(activity, /updated to \$\{formatCategoryPath/);
   assert.match(activity, /operation: "undo"/);
   assert.match(activity, /applySavedClassificationToTransaction/);
+  assert.match(activity, /formatTransactionCategoryPath\(transaction\)/);
+  assert.doesNotMatch(activity, /displaySeparated\([\s\S]{0,300}transaction\.category,/);
   assert.match(activity, /setRows\(\(current\) => current\.map/);
+  assert.match(activity, /restoreTransactionCategoryView/);
+  assert.match(activity, /restored to \$\{formatCategoryPath/);
   assert.match(activity, /setClassificationNotice\(\{ detail, state: "error" \}\)/);
   assert.match(activity, /window\.setTimeout\(\(\) => setClassificationNotice\(null\), 10000\)/);
   assert.match(activityStyles, /\.mp-classification-notice/);
   assert.match(activityStyles, /@media\(max-width:480px\).*mp-classification-notice/s);
+  assert.match(activityStyles, /overflow-wrap:anywhere/);
   assert.match(route, /createMerchantCategoryRule/);
   assert.match(page, /applyFounderTransactionUnderstanding/);
 });
