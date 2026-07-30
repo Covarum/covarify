@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server.js";
 import type { PlaidAuthProvider } from "@/lib/plaid/production/auth";
 import { supabasePlaidAuthProvider } from "@/lib/plaid/production/supabase-auth";
@@ -31,6 +32,8 @@ export async function handleProductionExchange(request: Request, dependencies?: 
       acceptedAt: new Date().toISOString(), revokedAt: null, source: "connect" as const, ipHash: null,
     };
     const result = await exchangeAndPersistProductionItem({ config, profile, publicToken, consent, repository: dependencies?.repository || createSupabasePlaidRepository(), cipher: dependencies?.cipher || readTokenCipher() });
+    revalidatePath("/connect");
+    revalidatePath("/account");
     return NextResponse.json(result, { status: result.idempotent ? 200 : 201 });
   } catch (error) { return productionPlaidError(error); }
 }

@@ -14,6 +14,7 @@ import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SY
 import { sanitizeLinkDiagnostic } from "../lib/plaid/production/link-diagnostics.ts";
 import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions, formatTransactionDisplayAmount, summarizeFilteredTransactions } from "../lib/money-picture.ts";
 import { RECENT_ACTIVITY_PAGE_SIZE } from "../lib/recent-activity-pagination.ts";
+import { buildConnectionSummary } from "../lib/plaid/production/connection-summary.ts";
 
 const productionEnvironment = () => ({
   PLAID_CLIENT_ID: "client-id", PLAID_SANDBOX_SECRET: "sandbox-secret", PLAID_PRODUCTION_SECRET: "production-secret",
@@ -39,20 +40,62 @@ test("founder workspace scopes and aggregates all owned Plaid Items", () => {
 test("connect page preserves first-time onboarding and distinguishes additional institutions", () => {
   const page = readFileSync(new URL("../app/connect/page.tsx", import.meta.url), "utf8");
   const link = readFileSync(new URL("../components/plaid/production-link.tsx", import.meta.url), "utf8");
-  assert.match(page, /\.eq\("status", "active"\)/);
-  assert.match(page, /const isAdditionalConnection = connectedInstitutions\.length > 0/);
+  assert.match(page, /\.in\("status", \["active", "pending"\]\)/);
+  assert.match(page, /const isAdditionalConnection = institutionCount > 0/);
   assert.match(page, /Build your Money Picture/);
-  assert.match(page, /Add another institution/);
-  assert.match(page, /Your existing connections stay exactly as they are/);
-  assert.match(page, /will not replace or disconnect any bank, credit card, or other connected account/);
+  assert.match(page, /Your Financial Connections/);
+  assert.match(link, /Your existing institutions will stay connected/);
+  assert.match(link, /will not replace or disconnect any bank, credit card, or other connected account/);
   assert.match(page, /institution\.name/);
   assert.match(page, /institution\.accountCount/);
-  assert.match(page, /institution\.syncLabel/);
+  assert.match(page, /institution\.lastSyncedAt/);
   assert.doesNotMatch(page, /TD Bank/);
   assert.match(link, /isAdditionalConnection \? "Connect another institution" : "Continue securely with Plaid"/);
   assert.match(link, /\/api\/plaid\/production\/create-link-token/);
   assert.match(link, /\/api\/plaid\/production\/exchange-public-token/);
-  assert.match(link, /window\.location\.assign\("\/account\?connected=1"\)/);
+  assert.match(link, /window\.location\.assign\(`\/connect\?connected=\$\{encodeURIComponent\(result\.itemId\)\}`\)/);
+  assert.match(page, /connected successfully/);
+  assert.match(page, /connectedInstitutions\.find\(\(institution\) => institution\.itemIds\.includes\(connectedItemId\)\)/);
+  assert.match(page, /View your updated Money Picture/);
+  assert.match(page, /this summary is still updating/);
+  assert.match(readFileSync(new URL("../app/api/plaid/production/exchange-public-token/route.ts", import.meta.url), "utf8"), /revalidatePath\("\/connect"\)/);
+});
+
+test("connection summary counts active and pending production institutions and accounts accurately", () => {
+  const items = [
+    { id: "td-item", institution_id: "ins-td", institution_name: "TD Bank", environment: "production", status: "active", last_successful_sync_at: "2026-07-29T20:00:00Z" },
+    { id: "capital-item", institution_id: "ins-capital", institution_name: "Capital One", environment: "production", status: "pending", last_successful_sync_at: null },
+  ];
+  const accounts = [
+    { plaid_item_id: "td-item", active_status: "active" },
+    { plaid_item_id: "td-item", active_status: "active" },
+    { plaid_item_id: "capital-item", active_status: "active" },
+  ];
+  const summary = buildConnectionSummary(items, accounts);
+  assert.equal(summary.institutionCount, 2);
+  assert.equal(summary.accountCount, 3);
+  assert.deepEqual(summary.connectedInstitutions.map(({ name, accountCount, status }) => ({ name, accountCount, status })), [
+    { name: "TD Bank", accountCount: 2, status: "connected" },
+    { name: "Capital One", accountCount: 1, status: "syncing" },
+  ]);
+  assert.deepEqual(summary.connectedInstitutions.flatMap((institution) => institution.itemIds), ["td-item", "capital-item"]);
+});
+
+test("connection summary deduplicates by stable institution ID and excludes unavailable Items", () => {
+  const items = [
+    { id: "one", institution_id: "ins-shared", institution_name: "Example Bank", environment: "production", status: "active", last_successful_sync_at: null },
+    { id: "two", institution_id: "ins-shared", institution_name: "Example Bank", environment: "production", status: "active", last_successful_sync_at: null },
+    { id: "three", institution_id: null, institution_name: "Example Bank", environment: "production", status: "active", last_successful_sync_at: null },
+    { id: "removed", institution_id: "ins-removed", institution_name: "Removed Bank", environment: "production", status: "disconnected", last_successful_sync_at: null },
+    { id: "error", institution_id: "ins-error", institution_name: "Error Bank", environment: "production", status: "error", last_successful_sync_at: null },
+    { id: "sandbox", institution_id: "ins-sandbox", institution_name: "Sandbox Bank", environment: "sandbox", status: "active", last_successful_sync_at: null },
+  ];
+  const accounts = items.map((item) => ({ plaid_item_id: item.id, active_status: "active" }));
+  const summary = buildConnectionSummary(items, accounts);
+  assert.equal(summary.institutionCount, 2);
+  assert.equal(summary.accountCount, 3);
+  assert.deepEqual(summary.connectedInstitutions[0].itemIds, ["one", "two"]);
+  assert.deepEqual(summary.connectedInstitutions[1].itemIds, ["three"]);
 });
 
 test("Money Picture classification excludes transfers and pending rows from spending", () => {

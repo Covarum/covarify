@@ -18,7 +18,7 @@ export function ProductionOauthResume({ available, consentVersion }: { available
     const result = await response.json();
     if (!response.ok) { setMessage(result?.message || "The institution connection could not be saved."); return; }
     sessionStorage.removeItem(LINK_TOKEN_KEY); sessionStorage.removeItem(OAUTH_STATE_KEY);
-    window.location.assign("/account?connected=1");
+    window.location.assign(`/connect?connected=${encodeURIComponent(result.itemId)}`);
   }, [consentVersion]);
 
   const recordDiagnostic = useCallback((eventName: string, metadata: Partial<PlaidLinkOnEventMetadata & PlaidLinkOnExitMetadata> = {}, error?: PlaidLinkError | null) => {

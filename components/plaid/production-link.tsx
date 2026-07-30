@@ -24,7 +24,7 @@ export function ProductionPlaidLink({ available, consentVersion, isAdditionalCon
       const result = await response.json();
       if (!response.ok) throw new Error(result?.message || "The institution connection could not be saved.");
       sessionStorage.removeItem(LINK_TOKEN_KEY); sessionStorage.removeItem(OAUTH_STATE_KEY);
-      window.location.assign("/account?connected=1");
+      window.location.assign(`/connect?connected=${encodeURIComponent(result.itemId)}`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "The institution connection could not be saved."); setBusy(false); }
   }, [consentVersion]);
 
@@ -77,6 +77,7 @@ export function ProductionPlaidLink({ available, consentVersion, isAdditionalCon
       <details><summary>What does Covarify record when I continue?</summary><div><p>Covarify records:</p><ul><li>The consent version</li><li>The approved Plaid products</li><li>The purposes for which data is used</li><li>Your account identifier</li><li>The date and time you provided consent</li></ul><p>For questions about your connection or your data, contact <a href="mailto:contact@covarify.com">contact@covarify.com</a>.</p></div></details>
     </div></section>
     <section className="connect-consent-action">
+      {isAdditionalConnection ? <p className="connect-reassurance"><strong>Your existing institutions will stay connected.</strong><br />Connecting another institution will not replace or disconnect any bank, credit card, or other connected account.</p> : null}
       <label className="auth-consent"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} disabled={!available || busy} /> <span>I understand and consent to Covarify connecting my selected financial accounts through Plaid and using Transactions data to build and refresh my Money Picture and provide financial insights and decision support. I understand that disconnecting a financial institution stops future access but is separate from permanently deleting my Covarify account.</span></label>
       {message && <div className="auth-notice auth-notice-error" role="alert">{message}</div>}
       <div className="connect-actions">
