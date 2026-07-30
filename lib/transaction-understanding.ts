@@ -32,7 +32,17 @@ export type TransactionUnderstandingAction =
   | "undo"
   | "remove_label";
 
+export type TransactionUnderstandingIntentType =
+  | "specific_transaction"
+  | "merchant_rule"
+  | "category_instruction"
+  | "ambiguous_transaction_request";
+
+export type MerchantBreadth = "broad" | "narrow" | "unknown";
+
 export type TransactionIntent = {
+  intentType: TransactionUnderstandingIntentType;
+  scopeSignal: "single" | "recurring" | "ambiguous";
   action: TransactionUnderstandingAction;
   merchant: string | null;
   amount: number | null;
@@ -125,7 +135,7 @@ const CATEGORY_PATTERNS: Array<[RegExp, UserTransactionCategory]> = [
 const merchantFromText = (text: string) => {
   const atMatch = text.match(/\bat\s+([A-Za-z][A-Za-z0-9'&.\- ]+?)(?=\s+(?:was|for|on|yesterday|today|from)\b|[.!?,]|$)/i);
   if (atMatch) return atMatch[1].trim();
-  const leading = text.match(/(?:that|the)\s+([A-Za-z][A-Za-z0-9'&.\- ]+?)\s+(?:charge|purchase|payment|transaction|transfer)\b/i);
+  const leading = text.match(/(?:that|the|my)\s+([A-Za-z][A-Za-z0-9'&.\- ]+?)\s+(?:charge|purchase|payment|transaction|transfer)\b/i);
   return leading?.[1]?.trim() || null;
 };
 
@@ -143,6 +153,112 @@ const parseDate = (text: string, now: Date) => {
   const match = text.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
   return match?.[1] || null;
 };
+
+const RECURRING_RULE_PATTERNS = [
+  /\balways\b/i,
+  /\bevery time\b/i,
+  /\ball future\b/i,
+  /\bfuture purchases?\b/i,
+  /^future\s+.+?\s+purchases?\b/i,
+  /\bfrom now on\b/i,
+  /\bwhenever\b/i,
+  /\bcategorize\s+.+?\s+as\b/i,
+  /\bmake every\b/i,
+];
+
+const merchantFromRuleText = (text: string) => {
+  const patterns = [
+    /^(?:always\s+)?categorize\s+(.+?)\s+as\s+.+?[.!]?$/i,
+    /^future\s+(.+?)\s+purchases?\s+should\s+be\s+.+?[.!]?$/i,
+    /^make\s+every\s+(.+?)\s+(?:purchase|transaction)\s+.+?[.!]?$/i,
+    /^(.+?)\s+(?:is\s+always\s+(?:for|categorized as)|is\s+for|purchases?\s+are\s+usually)\s+.+?[.!]?$/i,
+    /^(.+?)\s+(?:was|is)\s+.+?[.!]?$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.trim().match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return null;
+};
+
+const categoryFromRuleText = (text: string) => {
+  const patterns = [
+    /^(?:from now on,?\s+)?(?:always\s+)?categorize\s+.+?\s+as\s+(.+?)[.!]?$/i,
+    /^future\s+.+?\s+purchases?\s+should\s+be\s+(.+?)[.!]?$/i,
+    /^make\s+every\s+.+?\s+(?:purchase|transaction)\s+(.+?)[.!]?$/i,
+    /^.+?\s+is\s+always\s+(?:for|categorized as)\s+(.+?)[.!]?$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.trim().match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return null;
+};
+
+export function classifyTransactionUnderstandingIntent(
+  text: string,
+  options: { selectedTransactionId?: string | null; now?: Date } = {},
+): {
+  intentType: TransactionUnderstandingIntentType;
+  scopeSignal: TransactionIntent["scopeSignal"];
+  merchant: string | null;
+} {
+  if (options.selectedTransactionId) {
+    return { intentType: "specific_transaction", scopeSignal: "single", merchant: null };
+  }
+  const merchant = merchantFromText(text) || merchantFromRuleText(text);
+  if (RECURRING_RULE_PATTERNS.some((pattern) => pattern.test(text)) && merchant) {
+    return { intentType: "merchant_rule", scopeSignal: "recurring", merchant };
+  }
+  if (merchant && (
+    /\b(?:purchases?|transactions?)\s+are\s+usually\b/i.test(text) ||
+    /\bis\s+(?!always\b)(?:for\s+)?[A-Za-z][A-Za-z &-]*[.!]?$/i.test(text)
+  )) {
+    return { intentType: "category_instruction", scopeSignal: "ambiguous", merchant };
+  }
+  if (merchant && !parseAmount(text) && !parseDate(text, options.now || new Date()) && /\bwas\b/i.test(text)) {
+    return { intentType: "ambiguous_transaction_request", scopeSignal: "ambiguous", merchant };
+  }
+  return { intentType: "specific_transaction", scopeSignal: "single", merchant };
+}
+
+const BROAD_MERCHANTS = new Set([
+  "WALMART",
+  "AMAZON",
+  "TARGET",
+  "COSTCO",
+  "CVS",
+  "CVS PHARMACY",
+  "WALGREENS",
+  "SAMS CLUB",
+]);
+
+const NARROW_MERCHANT_TERMS = new Set([
+  "LIQUOR",
+  "WINE",
+  "SPIRITS",
+  "COFFEE",
+  "CAFE",
+  "PARKING",
+  "TOLL",
+  "GAS",
+  "FUEL",
+]);
+
+export function merchantBreadthForName(merchant: string): MerchantBreadth {
+  const normalized = normalizeMerchantName(merchant);
+  if (BROAD_MERCHANTS.has(normalized)) return "broad";
+  if (normalized.split(" ").some((word) => NARROW_MERCHANT_TERMS.has(word))) return "narrow";
+  return "unknown";
+}
+
+export function exactMerchantTransactions(
+  merchant: string,
+  transactions: MoneyTransaction[],
+) {
+  const normalized = normalizeMerchantName(merchant);
+  return transactions.filter((transaction) => normalizeMerchantName(transaction.name) === normalized);
+}
 
 const parseSplit = (text: string): TransactionIntent["split"] => {
   if (!/\bsplit\b/i.test(text)) return null;
@@ -169,6 +285,7 @@ export function parseTransactionIntent(
     now?: Date;
   } = {},
 ): TransactionIntent {
+  const classified = classifyTransactionUnderstandingIntent(text, options);
   const split = parseSplit(text);
   const category = CATEGORY_PATTERNS.find(([pattern]) => pattern.test(text))?.[1] || null;
   const action: TransactionUnderstandingAction = /\b(undo|revert)\b/i.test(text)
@@ -200,8 +317,10 @@ export function parseTransactionIntent(
           ? "unsure"
           : null;
   return {
+    intentType: classified.intentType,
+    scopeSignal: classified.scopeSignal,
     action,
-    merchant: options.selectedTransactionId ? null : merchantFromText(text),
+    merchant: classified.merchant,
     amount: parseAmount(text),
     approximateDate: parseDate(text, options.now || new Date()),
     accountLabel: null,
@@ -211,7 +330,11 @@ export function parseTransactionIntent(
         ? "outflow"
         : null,
     category,
-    requestedSubcategory: action === "classify" ? requestedSubcategoryFromText(text) : null,
+    requestedSubcategory: action === "classify"
+      ? classified.intentType === "merchant_rule"
+        ? category || categoryFromRuleText(text) || requestedSubcategoryFromText(text)
+        : requestedSubcategoryFromText(text)
+      : null,
     treatment,
     split,
     contextLabel: context,
@@ -477,6 +600,7 @@ export function applyEffectiveCategories(
 
 export type MerchantCategoryRule = {
   id: string;
+  merchantIdentifier?: string | null;
   normalizedMerchantName: string;
   parentCategoryId: string;
   parentCategoryName: string;
@@ -486,6 +610,31 @@ export type MerchantCategoryRule = {
   status: "active" | "archived";
   createdAt: string;
 };
+
+export type MerchantRuleCheck =
+  | { kind: "none" }
+  | { kind: "identical"; rule: MerchantCategoryRule }
+  | { kind: "conflict"; rule: MerchantCategoryRule }
+  | { kind: "archived"; rule: MerchantCategoryRule };
+
+export function checkMerchantCategoryRule(
+  rules: MerchantCategoryRule[],
+  merchantName: string,
+  parentCategoryId: string,
+  subcategoryId: string,
+): MerchantRuleCheck {
+  const normalized = normalizeMerchantName(merchantName);
+  const matching = rules.filter((rule) => rule.normalizedMerchantName === normalized);
+  const active = matching.find((rule) => rule.status === "active");
+  if (active) {
+    return active.parentCategoryId === parentCategoryId && active.subcategoryId === subcategoryId
+      ? { kind: "identical", rule: active }
+      : { kind: "conflict", rule: active };
+  }
+  const archived = matching.find((rule) =>
+    rule.parentCategoryId === parentCategoryId && rule.subcategoryId === subcategoryId);
+  return archived ? { kind: "archived", rule: archived } : { kind: "none" };
+}
 
 export type SavedTransactionClassification = {
   transactionId: string;

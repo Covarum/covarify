@@ -133,7 +133,7 @@ export function TransactionUnderstandingPreview() {
       <section className={styles.intro}>
         <p><Sparkles size={14} /> Transaction Understanding v1</p>
         <h1>Teach Covarify through conversation.</h1>
-        <div>Ordinary language becomes a constrained intent, a deterministic match, and a confirmation—never a direct mutation.</div>
+        <div>Ordinary language becomes a careful match and a confirmation—never a direct change.</div>
       </section>
 
       <section className={styles.previewGrid}>
@@ -141,7 +141,7 @@ export function TransactionUnderstandingPreview() {
           <header><MessageCircle size={18} /><div><strong>Talk to Covarify</strong><small>Typed, spoken, or selected-transaction context</small></div></header>
           <div className={styles.examples}>{examples.map(([label, example]) => <button key={label} onClick={() => { setText(example); interpret(example); }}>{label}</button>)}</div>
           <label>What would you like Covarify to understand?<textarea value={text} onChange={(event) => setText(event.target.value)} rows={3} /></label>
-          <button className={styles.primary} onClick={() => interpret()}>Interpret safely</button>
+          <button className={styles.primary} onClick={() => interpret()}>Understand this</button>
           <div className={styles.response} role="status"><span>Covarify</span><p>{message}</p></div>
           {resolution?.kind === "ambiguous" ? <div className={styles.candidates}>{resolution.candidates.map(({ transaction }) => <button key={transaction.id} onClick={() => chooseCandidate(transaction)}><strong>{transaction.name}</strong><span>{friendlyDate(transaction.date)} • {money(transaction.amount)}</span><small>{transaction.accountLabel} • {transaction.pending ? "Pending" : "Posted"}</small></button>)}</div> : null}
           {resolution?.kind === "no_match" ? <div className={styles.noMatch}><button>Expand date range</button><button>Search another account</button><button>Review similar transactions</button></div> : null}
@@ -164,7 +164,7 @@ export function TransactionUnderstandingPreview() {
       </section>
 
       <section className={styles.detailSection}>
-        <div className={styles.sectionHeading}><div><p>Secondary path</p><h2>Transaction detail uses the same intent pipeline.</h2></div><span>Click or press Enter on a row</span></div>
+        <div className={styles.sectionHeading}><div><p>Secondary path</p><h2>Transaction detail uses the same understanding flow.</h2></div><span>Click or press Enter on a row</span></div>
         <div className={styles.rows}>{fixtures.slice(0, 3).map((transaction) => <button key={transaction.id} onClick={() => openDetail(transaction)}><div><strong>{transaction.name}</strong><span>{friendlyDate(transaction.date)} • {transaction.category}</span><small>{transaction.accountLabel}</small></div><b>{money(transaction.amount)}</b><ChevronRight /></button>)}</div>
         {selected && !intent ? <div className={styles.drawer} role="dialog" aria-modal="false" aria-labelledby="detail-title"><button aria-label="Close transaction detail" onClick={() => setSelected(null)}><X /></button><p>Transaction detail</p><h2 id="detail-title">{selected.name}</h2><dl><div><dt>Amount</dt><dd>{money(selected.amount)}</dd></div><div><dt>Date</dt><dd>{friendlyDate(selected.date)}</dd></div><div><dt>Source category</dt><dd>{selected.category}</dd></div><div><dt>Effective category</dt><dd>{effectiveTransactionState(selected, null, history).effectiveCategory}</dd></div></dl><div className={styles.quickActions}><button onClick={() => { const next = "That was groceries."; setText(next); interpret(next, selected.id); }}>Groceries</button><button onClick={() => { const next = "That was for my business."; setText(next); interpret(next, selected.id); }}>Business</button><button onClick={() => { const next = "Add a note that I need the receipt for taxes."; setText(next); interpret(next, selected.id); }}>Receipt note</button></div></div> : null}
       </section>

@@ -24,6 +24,21 @@ type Result =
   | { kind: "clear"; message: string; transaction: Candidate; proposedCategory: string | null; parentCategory: { id: string; displayName: string }; requestedSubcategory: string | null; suggestions: Array<{ id: string; displayName: string; match: "exact" | "alias" }>; parentSubcategories: Array<{ id: string; displayName: string }>; intent: TransactionIntent; sourceSignature: string }
   | { kind: "ambiguous"; message: string; candidates: Candidate[]; intent: TransactionIntent }
   | { kind: "no_match"; message: string }
+  | { kind: "intent_clarification"; message: string; merchant: string | null; requestedSubcategory: string | null; originalText: string; intent: TransactionIntent }
+  | {
+      kind: "merchant_rule";
+      message: string;
+      merchant: string;
+      requestedSubcategory: string;
+      parentCategory: { id: string; displayName: string };
+      suggestions: Array<{ id: string; displayName: string; match: "exact" | "alias" }>;
+      parentSubcategories: Array<{ id: string; displayName: string }>;
+      breadth: "broad" | "narrow" | "unknown";
+      activity: { count: number; firstDate: string | null; lastDate: string | null; categoryMix: string[] };
+      existingRule: { kind: "identical" | "conflict" | "archived"; id: string; category: string } | null;
+      intent: TransactionIntent;
+    }
+  | { kind: "merchant_rule_confirmed"; message: string; categoryPath?: string; merchantMemory: { scope: "transaction_only" | "future" | "past_and_future"; saved: boolean } }
   | {
       kind: "confirmed";
       message: string;
@@ -81,8 +96,8 @@ export function TransactionUnderstanding() {
     });
   }, [result]);
 
-  async function interpret(selectedTransactionId?: string) {
-    const statement = text.trim();
+  async function interpret(selectedTransactionId?: string, statementOverride?: string) {
+    const statement = (statementOverride || text).trim();
     if (!statement) return;
     setBusy(true);
     try {
@@ -99,7 +114,7 @@ export function TransactionUnderstanding() {
       if (!response.ok) throw new Error();
       setResult(await response.json());
     } catch {
-      setResult({ kind: "no_match", message: "Covarify couldn’t safely interpret that request. No transaction was changed." });
+      setResult({ kind: "no_match", message: "Covarify couldn’t understand that request clearly. No transaction was changed." });
     } finally {
       setBusy(false);
     }
@@ -178,15 +193,57 @@ export function TransactionUnderstanding() {
     }, 0);
   }
 
-  const body = result?.kind === "confirmed" && result.savedClassification ? (
+  async function confirmMerchantRule(
+    decision: {
+      action: "use_existing" | "create_new";
+      subcategoryId?: string;
+      displayName?: string;
+      reviewedSuggestionIds?: string[];
+    },
+  ) {
+    if (!result || result.kind !== "merchant_rule") return;
+    setBusy(true);
+    try {
+      const response = await fetch("/api/account/transaction-understanding", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          operation: "confirm_merchant_rule",
+          intent: result.intent,
+          subcategoryDecision: {
+            ...decision,
+            ruleScope,
+            replaceExisting: result.existingRule?.kind === "conflict",
+            reactivateArchived: result.existingRule?.kind === "archived",
+          },
+        }),
+      });
+      const payload = await response.json() as Result;
+      if (!response.ok) throw new Error();
+      setResult(payload);
+      if (payload.kind === "merchant_rule_confirmed" && payload.merchantMemory.saved) {
+        router.refresh();
+        completionTimer.current = window.setTimeout(close, 900);
+      }
+    } catch {
+      setResult({ ...result, message: "Nothing was saved. Your choices are still available; please try again." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const body = (
+    (result?.kind === "confirmed" && result.savedClassification) ||
+    result?.kind === "merchant_rule_confirmed"
+  ) ? (
     <div className={styles.completion} role="status" aria-live="polite">
-      <strong>Updated</strong>
-      <p>{formatCategoryPath({
-        parentCategory: result.savedClassification.effectiveParentCategory,
-        subcategory: result.savedClassification.effectiveSubcategory,
-        sourceCategory: result.savedClassification.sourceCategory,
-      })}</p>
-      <span>This transaction has been updated.</span>
+      <strong>{result.kind === "confirmed" || result.merchantMemory.saved ? "Updated" : "No rule created"}</strong>
+      <p>{result.kind === "confirmed" ? formatCategoryPath({
+        parentCategory: result.savedClassification?.effectiveParentCategory,
+        subcategory: result.savedClassification?.effectiveSubcategory,
+        sourceCategory: result.savedClassification?.sourceCategory,
+      }) : result.categoryPath || "Individual classification"}</p>
+      <span>{result.kind === "confirmed" ? "This transaction has been updated." : result.message}</span>
     </div>
   ) : (
     <>
@@ -209,7 +266,7 @@ export function TransactionUnderstanding() {
         </div>
       ) : null}
       <button className={styles.primary} type="button" disabled={busy || !text.trim()} onClick={() => void interpret()}>
-        {busy ? "Checking…" : "Interpret safely"}
+        {busy ? "Understanding…" : "Understand this"}
       </button>
       {result ? (
         <div ref={resultRegion} className={styles.response} role="status" tabIndex={-1}>
@@ -223,6 +280,61 @@ export function TransactionUnderstanding() {
                   <span>{money(candidate.amount, candidate.currency)} · {candidate.date} · {candidate.accountLabel}</span>
                 </button>
               ))}
+            </div>
+          ) : null}
+          {result.kind === "intent_clarification" ? (
+            <div className={styles.scopeChoices}>
+              <button type="button" onClick={() => setResult({
+                kind: "no_match",
+                message: `Tell me the date, amount, or account for the one ${result.merchant || "merchant"} purchase. Your original wording is still above.`,
+              })}>One transaction</button>
+              <button type="button" onClick={() => { setRuleScope("future"); void interpret(undefined, `Future ${result.merchant} purchases should be ${result.requestedSubcategory}.`); }}>Future {result.merchant} purchases</button>
+              <button type="button" onClick={() => { setRuleScope("past_and_future"); void interpret(undefined, `Always categorize ${result.merchant} as ${result.requestedSubcategory}.`); }}>Past and future {result.merchant} purchases</button>
+            </div>
+          ) : null}
+          {result.kind === "merchant_rule" ? (
+            <div className={styles.merchantRule}>
+              <p><strong>Requested classification:</strong> {formatCategoryPath({
+                parentCategory: result.parentCategory.displayName,
+                subcategory: result.suggestions[0]?.displayName || result.requestedSubcategory,
+              })}</p>
+              {result.activity.count ? (
+                <p>
+                  <strong>{result.merchant} found in your activity.</strong>{" "}
+                  We found {result.activity.count} matching {result.activity.count === 1 ? "purchase" : "purchases"}
+                  {result.activity.firstDate && result.activity.lastDate ? ` from ${result.activity.firstDate} to ${result.activity.lastDate}` : ""}
+                  {result.activity.categoryMix.length ? ` across ${result.activity.categoryMix.join(", ")}` : ""}.
+                </p>
+              ) : (
+                <p>I don’t see {result.merchant} in your connected activity yet. You can still create a rule for future {result.merchant} purchases.</p>
+              )}
+              {result.breadth === "broad" ? (
+                <p className={styles.warning}>{result.merchant} may sell household items, clothing, electronics, and other products, so this rule may not be accurate for every purchase.</p>
+              ) : result.breadth === "unknown" ? (
+                <p className={styles.warning}>This merchant may include different types of purchases. Choose a blanket rule only if it should apply to every matching purchase.</p>
+              ) : null}
+              {result.existingRule?.kind === "identical" ? <p>You already have this rule.</p> : null}
+              {result.existingRule?.kind === "conflict" ? <p>You currently classify {result.merchant} as {result.existingRule.category}. Replace that rule?</p> : null}
+              {result.existingRule?.kind === "archived" ? <p>You previously archived this rule. Reactivate it?</p> : null}
+              <fieldset className={styles.ruleScope}>
+                <legend>Apply to:</legend>
+                <label><input type="radio" name="merchant-rule-scope" checked={ruleScope === "future"} onChange={() => setRuleScope("future")} /> Future {result.merchant} purchases</label>
+                <label><input type="radio" name="merchant-rule-scope" checked={ruleScope === "past_and_future"} onChange={() => setRuleScope("past_and_future")} /> Past and future {result.merchant} purchases</label>
+                <label><input type="radio" name="merchant-rule-scope" checked={ruleScope === "transaction_only"} onChange={() => setRuleScope("transaction_only")} /> Let me classify {result.merchant} purchases individually</label>
+              </fieldset>
+              <div className={styles.choiceActions}>
+                <button
+                  className={styles.primary}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void confirmMerchantRule(result.suggestions[0]
+                    ? { action: "use_existing", subcategoryId: result.suggestions[0].id }
+                    : { action: "create_new", displayName: result.requestedSubcategory, reviewedSuggestionIds: [] })}
+                >
+                  {result.existingRule?.kind === "conflict" ? "Replace rule" : result.existingRule?.kind === "archived" ? "Reactivate rule" : ruleScope === "transaction_only" ? "Keep individual" : "Create rule"}
+                </button>
+                <button type="button" onClick={() => setResult(null)}>Change</button>
+              </div>
             </div>
           ) : null}
           {result.kind === "clear" ? (

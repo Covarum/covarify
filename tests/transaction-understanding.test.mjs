@@ -20,7 +20,11 @@ import {
   applySavedClassificationToTransaction,
   applyEffectiveCategories,
   buildConfirmedUnderstandingRecord,
+  checkMerchantCategoryRule,
+  classifyTransactionUnderstandingIntent,
   effectiveTransactionState,
+  exactMerchantTransactions,
+  merchantBreadthForName,
   parseTransactionIntent,
   reconcilePendingUnderstanding,
   restoreTransactionCategoryView,
@@ -75,6 +79,62 @@ test("subcategory text extraction supports selected and conversational requests"
   assert.equal(requestedSubcategoryFromText("Alcohol"), "Alcohol");
   assert.equal(requestedSubcategoryFromText("Classify it more specifically as Alcohol."), "Alcohol");
   assert.equal(requestedSubcategoryFromText("That was dining."), "dining");
+});
+
+test("recurring merchant language routes deterministically without transaction lookup selectors", () => {
+  const intent = parseTransactionIntent("Walmart is always for groceries", { now });
+  assert.equal(intent.intentType, "merchant_rule");
+  assert.equal(intent.scopeSignal, "recurring");
+  assert.equal(intent.merchant, "Walmart");
+  assert.equal(intent.category, "Groceries");
+  assert.equal(intent.requestedSubcategory, "Groceries");
+  assert.equal(intent.amount, null);
+  assert.equal(intent.approximateDate, null);
+  const coffee = parseTransactionIntent("Always categorize Starbucks as coffee.", { now });
+  const rideshare = parseTransactionIntent("Future Uber purchases should be rideshare.", { now });
+  const liquor = parseTransactionIntent("Make every Tomars Discount Liquor purchase liquor.", { now });
+  assert.equal(coffee.intentType, "merchant_rule");
+  assert.equal(coffee.merchant, "Starbucks");
+  assert.equal(coffee.requestedSubcategory, "coffee");
+  assert.equal(rideshare.intentType, "merchant_rule");
+  assert.equal(rideshare.merchant, "Uber");
+  assert.equal(rideshare.requestedSubcategory, "rideshare");
+  assert.equal(liquor.merchant, "Tomars Discount Liquor");
+  assert.equal(liquor.requestedSubcategory, "liquor");
+  assert.equal(classifyTransactionUnderstandingIntent("Walmart was groceries.").intentType, "ambiguous_transaction_request");
+  assert.equal(classifyTransactionUnderstandingIntent("Amazon is shopping.").intentType, "category_instruction");
+  assert.equal(parseTransactionIntent("Treat my Walmart purchase yesterday as groceries.", { now }).intentType, "specific_transaction");
+});
+
+test("merchant breadth and discovery fail closed to normalized exact merchant matches", () => {
+  assert.equal(merchantBreadthForName("Walmart"), "broad");
+  assert.equal(merchantBreadthForName("White Horse Wine"), "narrow");
+  assert.equal(merchantBreadthForName("Tomars Market"), "unknown");
+  const matches = exactMerchantTransactions("Walmart", [
+    tx("merchant", { name: "Walmart" }),
+    tx("payroll", { name: "Walmart payroll reimbursement" }),
+    tx("transfer", { name: "Transfer from Walmart" }),
+    tx("other", { name: "Walmart Supercenter" }),
+  ]);
+  assert.deepEqual(matches.map((transaction) => transaction.id), ["merchant"]);
+});
+
+test("merchant rule checks detect identical, conflicting, and archived rules without duplicates", () => {
+  const base = {
+    id: "rule",
+    normalizedMerchantName: "WALMART",
+    parentCategoryId: foodParent.id,
+    parentCategoryName: "Food & Drink",
+    subcategoryId: "groceries",
+    subcategoryName: "Groceries",
+    ruleScope: "future",
+    status: "active",
+    createdAt: now.toISOString(),
+  };
+  assert.equal(checkMerchantCategoryRule([base], "Walmart", foodParent.id, "groceries").kind, "identical");
+  assert.equal(checkMerchantCategoryRule([base], "Walmart", foodParent.id, "liquor").kind, "conflict");
+  assert.equal(checkMerchantCategoryRule([{ ...base, status: "archived" }], "Walmart", foodParent.id, "groceries").kind, "archived");
+  assert.equal(checkMerchantCategoryRule([base], "Target", foodParent.id, "groceries").kind, "none");
 });
 
 test("exact normalized merchant and amount produce one high-confidence match that still requires confirmation", () => {
@@ -372,6 +432,8 @@ test("production route and workspace enforce founder-only confirmation-before-ap
   const activity = readFileSync(new URL("../components/account/recent-activity.tsx", import.meta.url), "utf8");
   const panel = readFileSync(new URL("../components/account/transaction-understanding.tsx", import.meta.url), "utf8");
   const panelStyles = readFileSync(new URL("../components/account/transaction-understanding.module.css", import.meta.url), "utf8");
+  const preview = readFileSync(new URL("../components/account/transaction-understanding-preview.tsx", import.meta.url), "utf8");
+  const server = readFileSync(new URL("../lib/transaction-understanding-server.ts", import.meta.url), "utf8");
   const activityStyles = readFileSync(new URL("../components/account/money-picture.module.css", import.meta.url), "utf8");
   const page = readFileSync(new URL("../app/account/page.tsx", import.meta.url), "utf8");
   assert.match(route, /getAuthorizedFounderUser/);
@@ -406,7 +468,7 @@ test("production route and workspace enforce founder-only confirmation-before-ap
   assert.match(panel, /reduceMotion \? "auto" : "smooth"/);
   assert.match(panel, /tabIndex=\{-1\}/);
   assert.match(panel, /role="status" aria-live="polite"/);
-  assert.match(panel, />Updated</);
+  assert.match(panel, /"Updated"/);
   assert.match(panel, /This transaction has been updated/);
   assert.match(panel, /window\.setTimeout\(close, 900\)/);
   assert.match(panel, /if \(!response\.ok\) throw new Error\(\);[\s\S]*savedClassification[\s\S]*window\.setTimeout\(close, 900\)/);
@@ -416,6 +478,23 @@ test("production route and workspace enforce founder-only confirmation-before-ap
   assert.match(panel, /trigger\.current\?\.isConnected/);
   assert.match(panel, /formatCategoryLabel/);
   assert.match(panel, /formatCategoryPath/);
+  assert.match(panel, /Understand this/);
+  assert.doesNotMatch(panel, /Interpret safely/);
+  assert.match(preview, /Understand this/);
+  assert.doesNotMatch(preview, /Interpret safely/);
+  assert.match(route, /intent\.intentType === "merchant_rule"/);
+  assert.match(route, /exactMerchantTransactions/);
+  assert.match(route, /confirm_merchant_rule/);
+  assert.match(route, /MERCHANT_RULE_CONFLICT/);
+  assert.match(route, /MERCHANT_RULE_ARCHIVED/);
+  assert.match(route, /You already have this rule/);
+  assert.match(panel, /Let me classify \{result\.merchant\} purchases individually/);
+  assert.match(panel, /Walmart|household items, clothing, electronics/);
+  assert.match(panel, /I don’t see \{result\.merchant\} in your connected activity yet/);
+  assert.match(panel, /One transaction/);
+  assert.match(panel, /Future \{result\.merchant\} purchases/);
+  assert.match(server, /replaceOrReactivateMerchantCategoryRule/);
+  assert.match(server, /\.eq\("user_id", input\.userId\)/);
   assert.match(panel, /subcategoryDecision \? \{ \.\.\.subcategoryDecision, ruleScope \}/);
   assert.match(panelStyles, /@media\(max-width:700px\)/);
   assert.match(panelStyles, /\.suggestionResult/);

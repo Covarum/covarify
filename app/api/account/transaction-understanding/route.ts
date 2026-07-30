@@ -6,9 +6,13 @@ import { getAuthorizedFounderUser } from "@/lib/founder-review-auth";
 import { displaySeparated } from "@/lib/presentation-separators";
 import { normalizePersistedPlaidCategory } from "@/lib/plaid/category-normalization";
 import type { MoneyTransaction } from "@/lib/money-picture";
+import { formatCategoryPath } from "@/lib/money-picture";
 import {
   buildConfirmedUnderstandingRecord,
+  checkMerchantCategoryRule,
+  exactMerchantTransactions,
   effectiveTransactionState,
+  merchantBreadthForName,
   parseTransactionIntent,
   resolveTransactionIntent,
   sourceConditionSignature,
@@ -24,8 +28,10 @@ import {
   createMerchantCategoryRule,
   createUserSubcategory,
   loadAvailableSubcategories,
+  loadMerchantCategoryRules,
   loadTransactionUnderstandingHistory,
   recordToInsert,
+  replaceOrReactivateMerchantCategoryRule,
 } from "@/lib/transaction-understanding-server";
 
 export const dynamic = "force-dynamic";
@@ -102,12 +108,32 @@ const safeTransaction = (transaction: MoneyTransaction) => ({
   sourceCategory: transaction.sourceCategory || transaction.category,
 });
 
+const hierarchyForRequest = (
+  requestedSubcategory: string,
+  availableSubcategories: Awaited<ReturnType<typeof loadAvailableSubcategories>>,
+  fallbackSourceCategory = "Uncategorized",
+) => {
+  const rankedAcrossParents = SYSTEM_CATEGORY_PARENTS.flatMap((parent) =>
+    suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories)
+      .map((suggestion) => ({ ...suggestion, parent })))
+    .sort((a, b) => b.score - a.score);
+  const parent = rankedAcrossParents[0]?.parent || parentForSourceCategory(fallbackSourceCategory);
+  const suggestions = suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories);
+  return {
+    parent,
+    suggestions,
+    parentSubcategories: availableSubcategories
+      .filter((subcategory) => subcategory.parentCategoryId === parent.id && subcategory.status === "active")
+      .map((subcategory) => ({ id: subcategory.id, displayName: subcategory.displayName })),
+  };
+};
+
 export async function POST(request: Request) {
   const user = await getAuthorizedFounderUser();
   if (!user) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   try {
     const body = (await request.json()) as {
-      operation?: "interpret" | "confirm" | "undo";
+      operation?: "interpret" | "confirm" | "undo" | "confirm_merchant_rule";
       text?: string;
       modality?: InputModality;
       selectedTransactionId?: string | null;
@@ -121,12 +147,15 @@ export async function POST(request: Request) {
         displayName?: string;
         reviewedSuggestionIds?: string[];
         ruleScope?: "transaction_only" | "future" | "past_and_future";
+        replaceExisting?: boolean;
+        reactivateArchived?: boolean;
       };
     };
     const transactions = await loadTransactions(user.id);
-    const [history, availableSubcategories] = await Promise.all([
+    const [history, availableSubcategories, merchantRules] = await Promise.all([
       loadTransactionUnderstandingHistory(user.id),
       loadAvailableSubcategories(user.id),
+      loadMerchantCategoryRules(user.id, true),
     ]);
 
     if (body.operation === "interpret") {
@@ -136,6 +165,81 @@ export async function POST(request: Request) {
         modality: body.modality || (body.selectedTransactionId ? "selected_transaction" : "typed"),
         selectedTransactionId: body.selectedTransactionId || null,
       });
+      if (
+        intent.intentType === "category_instruction" ||
+        intent.intentType === "ambiguous_transaction_request"
+      ) {
+        return NextResponse.json({
+          kind: "intent_clarification",
+          message: `Do you mean one ${intent.merchant || "merchant"} purchase, or should Covarify remember this for ${intent.merchant || "that merchant"} purchases?`,
+          merchant: intent.merchant,
+          requestedSubcategory: intent.requestedSubcategory || intent.category,
+          originalText: text,
+          intent,
+        });
+      }
+      if (intent.intentType === "merchant_rule" && intent.merchant) {
+        const requestedSubcategory = intent.requestedSubcategory || intent.category;
+        if (!requestedSubcategory) {
+          return NextResponse.json({
+            kind: "no_match",
+            message: `I understood this as a rule for ${intent.merchant}, but I need the category you want Covarify to remember.`,
+          });
+        }
+        const matching = exactMerchantTransactions(intent.merchant, transactions);
+        const { parent, suggestions, parentSubcategories } = hierarchyForRequest(
+          requestedSubcategory,
+          availableSubcategories,
+          matching[0]?.sourceCategory || matching[0]?.category,
+        );
+        const selectedSuggestion = suggestions[0]?.category || null;
+        const ruleCheck = selectedSuggestion
+          ? checkMerchantCategoryRule(
+              merchantRules,
+              intent.merchant,
+              parent.id,
+              selectedSuggestion.id,
+            )
+          : { kind: "none" as const };
+        const dates = matching.map((transaction) => transaction.date).sort();
+        const categoryMix = [...new Set(matching.map((transaction) => {
+          const state = effectiveTransactionState(transaction, null, history, merchantRules);
+          return formatCategoryPath({
+            parentCategory: state.effectiveParentCategory,
+            subcategory: state.effectiveSubcategory,
+            sourceCategory: transaction.sourceCategory || transaction.category,
+          });
+        }))];
+        return NextResponse.json({
+          kind: "merchant_rule",
+          message: `I understood this as a rule for ${intent.merchant}.`,
+          merchant: intent.merchant,
+          requestedSubcategory,
+          parentCategory: { id: parent.id, displayName: parent.displayName },
+          suggestions: suggestions.map(({ category, match }) => ({
+            id: category.id,
+            displayName: category.displayName,
+            match,
+          })),
+          parentSubcategories,
+          breadth: merchantBreadthForName(intent.merchant),
+          activity: {
+            count: matching.length,
+            firstDate: dates[0] || null,
+            lastDate: dates.at(-1) || null,
+            categoryMix,
+          },
+          existingRule: ruleCheck.kind === "none" ? null : {
+            kind: ruleCheck.kind,
+            id: ruleCheck.rule.id,
+            category: formatCategoryPath({
+              parentCategory: ruleCheck.rule.parentCategoryName,
+              subcategory: ruleCheck.rule.subcategoryName,
+            }),
+          },
+          intent,
+        });
+      }
       const resolution = resolveTransactionIntent(intent, transactions);
       if (resolution.kind === "no_match") {
         return NextResponse.json({
@@ -192,6 +296,111 @@ export async function POST(request: Request) {
         parentSubcategories,
         intent,
         sourceSignature: sourceConditionSignature(transaction),
+      });
+    }
+
+    if (body.operation === "confirm_merchant_rule") {
+      const intent = body.intent;
+      const merchant = intent?.merchant;
+      const requestedSubcategory = intent?.requestedSubcategory || intent?.category;
+      const decision = body.subcategoryDecision;
+      if (!intent || intent.intentType !== "merchant_rule" || !merchant || !requestedSubcategory || !decision) {
+        return NextResponse.json({ error: "MERCHANT_RULE_CONFIRMATION_REQUIRED" }, { status: 400 });
+      }
+      if (decision.ruleScope === "transaction_only") {
+        return NextResponse.json({
+          kind: "merchant_rule_confirmed",
+          message: `No blanket rule was created for ${merchant}. You can classify ${merchant} purchases individually.`,
+          merchantMemory: { scope: "transaction_only", saved: false },
+        });
+      }
+      if (decision.ruleScope !== "future" && decision.ruleScope !== "past_and_future") {
+        return NextResponse.json({ error: "MERCHANT_RULE_SCOPE_REQUIRED" }, { status: 400 });
+      }
+      const { parent, suggestions } = hierarchyForRequest(requestedSubcategory, availableSubcategories);
+      let selectedSubcategory = decision.action === "use_existing"
+        ? availableSubcategories.find((subcategory) =>
+          subcategory.id === decision.subcategoryId &&
+          subcategory.parentCategoryId === parent.id &&
+          subcategory.status === "active")
+        : null;
+      if (decision.action === "use_existing" && !selectedSubcategory) {
+        return NextResponse.json({ error: "SUBCATEGORY_NOT_AVAILABLE" }, { status: 403 });
+      }
+      if (decision.action === "create_new") {
+        const exact = suggestions.find((suggestion) => suggestion.match === "exact");
+        if (exact) return NextResponse.json({ error: "DUPLICATE_SUBCATEGORY", existing: exact.category.displayName }, { status: 409 });
+        const reviewed = new Set(decision.reviewedSuggestionIds || []);
+        if (suggestions.some((suggestion) => !reviewed.has(suggestion.category.id))) {
+          return NextResponse.json({ error: "SUBCATEGORY_MATCH_REVIEW_REQUIRED" }, { status: 409 });
+        }
+        selectedSubcategory = await createUserSubcategory(
+          user.id,
+          parent.id,
+          decision.displayName || requestedSubcategory,
+        );
+      }
+      if (!selectedSubcategory) {
+        return NextResponse.json({ error: "SUBCATEGORY_DECISION_REQUIRED" }, { status: 400 });
+      }
+      const existing = checkMerchantCategoryRule(
+        merchantRules,
+        merchant,
+        parent.id,
+        selectedSubcategory.id,
+      );
+      if (existing.kind === "identical") {
+        return NextResponse.json({
+          kind: "merchant_rule_confirmed",
+          message: `You already have this rule for ${merchant}.`,
+          categoryPath: formatCategoryPath({
+            parentCategory: parent.displayName,
+            subcategory: selectedSubcategory.displayName,
+          }),
+          merchantMemory: { scope: existing.rule.ruleScope, saved: false },
+        });
+      }
+      if (existing.kind === "conflict" && !decision.replaceExisting) {
+        return NextResponse.json({
+          error: "MERCHANT_RULE_CONFLICT",
+          existingCategory: formatCategoryPath({
+            parentCategory: existing.rule.parentCategoryName,
+            subcategory: existing.rule.subcategoryName,
+          }),
+        }, { status: 409 });
+      }
+      if (existing.kind === "archived" && !decision.reactivateArchived) {
+        return NextResponse.json({ error: "MERCHANT_RULE_ARCHIVED" }, { status: 409 });
+      }
+      if (existing.kind === "conflict" || existing.kind === "archived") {
+        await replaceOrReactivateMerchantCategoryRule({
+          userId: user.id,
+          existingRuleId: existing.rule.id,
+          parentCategoryId: parent.id,
+          subcategoryId: selectedSubcategory.id,
+          ruleScope: decision.ruleScope,
+        });
+      } else {
+        await createMerchantCategoryRule({
+          id: randomUUID(),
+          userId: user.id,
+          merchantName: merchant,
+          parentCategoryId: parent.id,
+          subcategoryId: selectedSubcategory.id,
+          ruleScope: decision.ruleScope,
+        });
+      }
+      return NextResponse.json({
+        kind: "merchant_rule_confirmed",
+        message: `Covarify will remember ${formatCategoryPath({
+          parentCategory: parent.displayName,
+          subcategory: selectedSubcategory.displayName,
+        })} for ${decision.ruleScope === "future" ? "future" : "past and future"} ${merchant} purchases.`,
+        categoryPath: formatCategoryPath({
+          parentCategory: parent.displayName,
+          subcategory: selectedSubcategory.displayName,
+        }),
+        merchantMemory: { scope: decision.ruleScope, saved: true },
       });
     }
 

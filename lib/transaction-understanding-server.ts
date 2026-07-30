@@ -149,12 +149,13 @@ export async function createUserSubcategory(userId: string, parentCategoryId: st
   return subcategoryFromRow(data as Record<string, unknown>);
 }
 
-export async function loadMerchantCategoryRules(userId: string): Promise<MerchantCategoryRule[]> {
-  const { data, error } = await createSupabaseAdminClient()
+export async function loadMerchantCategoryRules(userId: string, includeArchived = false): Promise<MerchantCategoryRule[]> {
+  let query = createSupabaseAdminClient()
     .from("merchant_category_rules")
-    .select("id,normalized_merchant_name,parent_category_id,subcategory_id,rule_scope,status,created_at,category_subcategories(display_name)")
-    .eq("user_id", userId)
-    .eq("status", "active");
+    .select("id,merchant_identifier,normalized_merchant_name,parent_category_id,subcategory_id,rule_scope,status,created_at,category_subcategories(display_name)")
+    .eq("user_id", userId);
+  if (!includeArchived) query = query.eq("status", "active");
+  const { data, error } = await query;
   if (error) {
     if (error.code === "42P01") return [];
     throw new Error("MERCHANT_RULES_FAILED");
@@ -164,6 +165,7 @@ export async function loadMerchantCategoryRules(userId: string): Promise<Merchan
     const joined = row.category_subcategories as unknown as { display_name?: string } | null;
     return {
       id: String(row.id),
+      merchantIdentifier: row.merchant_identifier ? String(row.merchant_identifier) : null,
       normalizedMerchantName: String(row.normalized_merchant_name),
       parentCategoryId: String(row.parent_category_id),
       parentCategoryName: parent?.displayName || "Other",
@@ -183,11 +185,12 @@ export async function createMerchantCategoryRule(input: {
   parentCategoryId: string;
   subcategoryId: string;
   ruleScope: "future" | "past_and_future";
+  merchantIdentifier?: string | null;
 }) {
   const { error } = await createSupabaseAdminClient().from("merchant_category_rules").insert({
     id: input.id,
     user_id: input.userId,
-    merchant_identifier: null,
+    merchant_identifier: input.merchantIdentifier || null,
     normalized_merchant_name: normalizeMerchantName(input.merchantName),
     parent_category_id: input.parentCategoryId,
     subcategory_id: input.subcategoryId,
@@ -195,4 +198,25 @@ export async function createMerchantCategoryRule(input: {
     status: "active",
   });
   if (error) throw new Error("MERCHANT_RULE_CREATE_FAILED");
+}
+
+export async function replaceOrReactivateMerchantCategoryRule(input: {
+  userId: string;
+  existingRuleId: string;
+  parentCategoryId: string;
+  subcategoryId: string;
+  ruleScope: "future" | "past_and_future";
+}) {
+  const { error } = await createSupabaseAdminClient()
+    .from("merchant_category_rules")
+    .update({
+      parent_category_id: input.parentCategoryId,
+      subcategory_id: input.subcategoryId,
+      rule_scope: input.ruleScope,
+      status: "active",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.existingRuleId)
+    .eq("user_id", input.userId);
+  if (error) throw new Error("MERCHANT_RULE_UPDATE_FAILED");
 }
