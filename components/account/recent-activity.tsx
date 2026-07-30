@@ -176,10 +176,22 @@ export function RecentActivity({
 
   useEffect(() => {
     const handleCategoryFilter = (event: Event) => {
-      const categoryId = (
-        event as CustomEvent<{ categoryId: string | null }>
-      ).detail.categoryId;
-      change({ category: categoryId || undefined });
+      const detail = (
+        event as CustomEvent<{
+          categoryId: string | null;
+          periodStart?: string;
+          periodEnd?: string;
+          transactionIds?: string[];
+        }>
+      ).detail;
+      change({
+        category: detail.categoryId || undefined,
+        periodStart: detail.periodStart || period.start,
+        periodEnd: detail.periodEnd || period.end,
+        transactionIds: detail.transactionIds?.length
+          ? detail.transactionIds
+          : undefined,
+      });
     };
     window.addEventListener("covarify:category-filter", handleCategoryFilter);
     const refreshEffectiveCategories = (event: Event) => {

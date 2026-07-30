@@ -18,3 +18,4 @@
 .sectionUnavailable{margin:42px 0 0;padding:24px;border-left:3px solid #8b62cf;border-radius:0 16px 16px 0;background:#f8f5fb}.sectionUnavailable h2,.sectionUnavailable h3{margin:0;font-family:var(--font-serif);font-size:25px;font-weight:400}.sectionUnavailable p{margin:8px 0 0;color:#6f6374;font-size:11px;line-height:1.55}
 @media(max-width:850px){.primaryMetrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.hero{gap:24px;padding-bottom:34px}.hero h1{font-size:48px}.sectionHeading{margin-top:42px}.primaryMetrics{grid-template-columns:1fr}.primaryMetrics article{min-height:auto;padding:21px}.primaryMetrics strong{font-size:28px}.chart{overflow-x:auto;justify-content:flex-start;padding-bottom:5px}.chart>div{min-width:48px}.exploreLinks{display:grid}.exploreLinks a{justify-content:center}}
+.categoryPanelBody p,.categoryPanelBody li{overflow-wrap:anywhere}

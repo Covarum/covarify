@@ -1,6 +1,6 @@
 import { displaySeparated } from "./presentation-separators.ts";
 export type MoneyTransaction = { id: string; plaidAccountId: string; accountLabel: string; name: string; amount: number; currency: string; date: string; pending: boolean; pendingTransactionId: string | null; category: string; sourceCategory?: string; effectiveParentCategory?: string; effectiveSubcategory?: string | null; categorySource?: "user_confirmed" | "covarify_inference" | "normalized_source"; userConfirmedMeaning?: { category: string | null; parentCategory?: string | null; subcategory?: string | null; treatment: string | null; contextLabel: string | null; note: string | null; receiptNeeded: boolean } | null; housingObligation?: { type: "rent" | "mortgage"; paymentType: "full" | "partial" | "catch_up" | "late" | "extra" | "unsure"; expectedAmount: number | null; remainingDue: number | null; dueDay: number | null; ongoingStatus: "ongoing" | "ended" | "unsure" } | null; detailedCategory: string | null; direction: "inflow" | "outflow" | "neutral"; transferRelationship: "internal" | "external" | null };
-export type TransactionFilters = { accountId?: string; category?: string; periodStart?: string; periodEnd?: string; search?: string };
+export type TransactionFilters = { accountId?: string; category?: string; periodStart?: string; periodEnd?: string; search?: string; transactionIds?: string[] };
 export type FilteredTransactionSummary = {
   count: number;
   kind: "inflow" | "spending" | "transfer" | "refund" | "mixed";
@@ -114,7 +114,10 @@ export function annotateInternalTransfers(transactions: MoneyTransaction[]) {
 
 export function filterTransactions(transactions: MoneyTransaction[], filters: TransactionFilters) {
   const search = filters.search?.trim().toLowerCase();
-  return transactions.filter((transaction) => (!filters.accountId || transaction.plaidAccountId === filters.accountId) && (!filters.category || transaction.category === filters.category) && (!filters.periodStart || transaction.date >= filters.periodStart) && (!filters.periodEnd || transaction.date <= filters.periodEnd) && (!search || transaction.name.toLowerCase().includes(search)));
+  const transactionIds = Array.isArray(filters.transactionIds)
+    ? new Set(filters.transactionIds.filter((id): id is string => typeof id === "string"))
+    : null;
+  return transactions.filter((transaction) => (!filters.accountId || transaction.plaidAccountId === filters.accountId) && (!filters.category || transaction.category === filters.category) && (!filters.periodStart || transaction.date >= filters.periodStart) && (!filters.periodEnd || transaction.date <= filters.periodEnd) && (!transactionIds?.size || transactionIds.has(transaction.id)) && (!search || transaction.name.toLowerCase().includes(search)));
 }
 
 export function summarizeFilteredTransactions(
