@@ -7,6 +7,7 @@ import type { MoneyTransaction } from "@/lib/money-picture";
 import {
   applySavedClassificationToTransaction,
   type SavedTransactionClassification,
+  type TransactionUnderstandingCompletedDetail,
   type TransactionIntent,
 } from "@/lib/transaction-understanding";
 import styles from "./transaction-understanding.module.css";
@@ -41,7 +42,10 @@ export function TransactionUnderstanding() {
   const [showAllSubcategories, setShowAllSubcategories] = useState(false);
   const trigger = useRef<HTMLElement | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const panel = useRef<HTMLElement>(null);
   const resultRegion = useRef<HTMLDivElement>(null);
+  const suggestionRegion = useRef<HTMLDivElement>(null);
+  const completionTimer = useRef<number | null>(null);
 
   useEffect(() => {
     const open = (event: Event) => {
@@ -55,16 +59,25 @@ export function TransactionUnderstanding() {
       window.setTimeout(() => input.current?.focus(), 0);
     };
     window.addEventListener("covarify:understand-transaction", open);
-    return () => window.removeEventListener("covarify:understand-transaction", open);
+    return () => {
+      window.removeEventListener("covarify:understand-transaction", open);
+      if (completionTimer.current) window.clearTimeout(completionTimer.current);
+    };
   }, []);
 
   useEffect(() => {
-    if (!result || (result.kind !== "confirmed" && result.kind !== "no_match")) return;
-    const region = resultRegion.current;
-    if (!region) return;
+    if (!result || result.kind === "confirmed") return;
+    const region = result.kind === "clear" ? suggestionRegion.current || resultRegion.current : resultRegion.current;
+    const scrollContainer = panel.current;
+    if (!region || !scrollContainer) return;
     region.focus({ preventScroll: true });
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    region.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
+    const panelTop = scrollContainer.getBoundingClientRect().top;
+    const regionTop = region.getBoundingClientRect().top;
+    scrollContainer.scrollTo({
+      top: Math.max(0, scrollContainer.scrollTop + regionTop - panelTop - 20),
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
   }, [result]);
 
   async function interpret(selectedTransactionId?: string) {
@@ -120,9 +133,19 @@ export function TransactionUnderstanding() {
         setSelected((current) => current
           ? applySavedClassificationToTransaction(current, savedClassification)
           : current);
+        const detail: TransactionUnderstandingCompletedDetail = {
+          transactionName: result.transaction.name,
+          savedClassification,
+          undoRequest: {
+            transactionId: result.transaction.id,
+            intent: result.intent,
+            sourceSignature: result.sourceSignature,
+          },
+        };
+        window.dispatchEvent(new CustomEvent("covarify:transaction-understanding-confirmed", { detail }));
+        completionTimer.current = window.setTimeout(close, 900);
       }
       setResult(confirmed);
-      window.dispatchEvent(new Event("covarify:transaction-understanding-confirmed"));
       router.refresh();
     } catch {
       setResult({ kind: "no_match", message: "Nothing was saved. Refresh and try again." });
@@ -132,15 +155,27 @@ export function TransactionUnderstanding() {
   }
 
   function close() {
+    if (completionTimer.current) {
+      window.clearTimeout(completionTimer.current);
+      completionTimer.current = null;
+    }
     setSelected(null);
     setResult(null);
     setText("");
     setRuleScope("transaction_only");
     setShowAllSubcategories(false);
-    window.setTimeout(() => trigger.current?.focus(), 0);
+    window.setTimeout(() => {
+      if (trigger.current?.isConnected) trigger.current.focus();
+    }, 0);
   }
 
-  const body = (
+  const body = result?.kind === "confirmed" && result.savedClassification ? (
+    <div className={styles.completion} role="status" aria-live="polite">
+      <strong>Updated</strong>
+      <p>{result.savedClassification.effectiveParentCategory} → {result.savedClassification.effectiveSubcategory}</p>
+      <span>This transaction has been updated.</span>
+    </div>
+  ) : (
     <>
       <label>
         What would you like Covarify to understand?
@@ -166,22 +201,7 @@ export function TransactionUnderstanding() {
       {result ? (
         <div ref={resultRegion} className={styles.response} role="status" tabIndex={-1}>
           <strong>Covarify</strong>
-          {result.kind === "confirmed" && result.savedClassification ? (
-            <>
-              <p><strong>Understood</strong></p>
-              <p>{selected?.name || "This transaction"} is now classified as:</p>
-              <p><strong>{result.savedClassification.effectiveParentCategory} → {result.savedClassification.effectiveSubcategory}</strong></p>
-              <p>The original bank category remains {categoryLabel(result.savedClassification.sourceCategory)}.</p>
-              <p>
-                {result.merchantMemory.scope === "future"
-                  ? `Future purchases from ${selected?.name || "this merchant"} will use this classification.`
-                  : result.merchantMemory.scope === "past_and_future"
-                    ? `Past and future purchases from ${selected?.name || "this merchant"} will use this classification.`
-                    : "This classification applies to this transaction only."}
-                {!result.merchantMemory.saved ? " The merchant-memory rule could not be saved." : ""}
-              </p>
-            </>
-          ) : <p>{result.message}</p>}
+          <p>{result.message}</p>
           {result.kind === "ambiguous" ? (
             <div className={styles.candidates}>
               {result.candidates.map((candidate) => (
@@ -206,7 +226,7 @@ export function TransactionUnderstanding() {
                 <div><dt>Source category</dt><dd>{result.parentCategory.displayName}</dd></div>
                 <div><dt>Requested detail</dt><dd>{result.requestedSubcategory || "No subcategory requested"}</dd></div>
               </dl>
-              {result.requestedSubcategory ? <>
+              {result.requestedSubcategory ? <div ref={suggestionRegion} className={styles.suggestionResult} tabIndex={-1}>
                 {result.suggestions.length ? <section className={styles.matches}>
                   <strong>You may already have a category for this.</strong>
                   {result.suggestions.map((suggestion) => <article key={suggestion.id}><span>Possible match</span><h3>{suggestion.displayName}</h3><p>Under {result.parentCategory.displayName}</p><button className={styles.primary} type="button" disabled={busy} onClick={() => void confirm({ action: "use_existing", subcategoryId: suggestion.id })}>Use {suggestion.displayName}</button></article>)}
@@ -222,7 +242,7 @@ export function TransactionUnderstanding() {
                   <button type="button" onClick={() => setShowAllSubcategories((value) => !value)}>{showAllSubcategories ? "Hide subcategories" : `View all ${result.parentCategory.displayName} subcategories`}</button>
                 </div>
                 {showAllSubcategories ? <div className={styles.allSubcategories}>{result.parentSubcategories.map((subcategory) => <button key={subcategory.id} type="button" disabled={busy} onClick={() => void confirm({ action: "use_existing", subcategoryId: subcategory.id })}>{subcategory.displayName}</button>)}</div> : null}
-              </> : null}
+              </div> : null}
               <div>
                 {!result.requestedSubcategory ? <button className={styles.primary} type="button" disabled={busy} onClick={() => void confirm()}>Confirm</button> : null}
                 <button type="button" onClick={() => setResult(null)}>Change</button>
@@ -248,7 +268,7 @@ export function TransactionUnderstanding() {
       </section>
       {selected ? (
         <div className={styles.backdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && close()}>
-          <section className={styles.panel} role="dialog" aria-modal="true" aria-labelledby="transaction-detail-title">
+          <section ref={panel} className={styles.panel} role="dialog" aria-modal="true" aria-labelledby="transaction-detail-title">
             <header>
               <div><small>Transaction detail</small><h2 id="transaction-detail-title">{selected.name}</h2></div>
               <button type="button" aria-label="Close transaction detail" onClick={close}><X size={20} /></button>

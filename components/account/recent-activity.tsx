@@ -9,6 +9,10 @@ import type {
 } from "@/lib/money-picture";
 import type { ResolvedFinancialPeriod } from "@/lib/financial-periods";
 import { displaySeparated } from "@/lib/presentation-separators";
+import {
+  applySavedClassificationToTransaction,
+  type TransactionUnderstandingCompletedDetail,
+} from "@/lib/transaction-understanding";
 import styles from "./money-picture.module.css";
 
 const money = (amount: number, currency: string) =>
@@ -115,6 +119,10 @@ export function RecentActivity({
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [classificationNotice, setClassificationNotice] = useState<{
+    detail: TransactionUnderstandingCompletedDetail;
+    state: "saved" | "undoing" | "undone" | "error";
+  } | null>(null);
   const requestSequence = useRef(0);
 
   async function request(
@@ -170,7 +178,15 @@ export function RecentActivity({
       change({ category: categoryId || undefined });
     };
     window.addEventListener("covarify:category-filter", handleCategoryFilter);
-    const refreshEffectiveCategories = () => void request(null, filters, true);
+    const refreshEffectiveCategories = (event: Event) => {
+      const detail = (event as CustomEvent<TransactionUnderstandingCompletedDetail>).detail;
+      if (detail?.savedClassification) {
+        setRows((current) => current.map((transaction) =>
+          applySavedClassificationToTransaction(transaction, detail.savedClassification)));
+        setClassificationNotice({ detail, state: "saved" });
+      }
+      void request(null, filters, true);
+    };
     window.addEventListener(
       "covarify:transaction-understanding-confirmed",
       refreshEffectiveCategories,
@@ -187,6 +203,36 @@ export function RecentActivity({
         );
       };
   });
+
+  useEffect(() => {
+    if (!classificationNotice || classificationNotice.state === "undoing") return;
+    const timeout = window.setTimeout(() => setClassificationNotice(null), 10000);
+    return () => window.clearTimeout(timeout);
+  }, [classificationNotice]);
+
+  async function undoClassification() {
+    if (!classificationNotice || classificationNotice.state !== "saved") return;
+    const { detail } = classificationNotice;
+    setClassificationNotice({ detail, state: "undoing" });
+    try {
+      const response = await fetch("/api/account/transaction-understanding", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          operation: "undo",
+          confirmationId: crypto.randomUUID(),
+          transactionId: detail.undoRequest.transactionId,
+          intent: detail.undoRequest.intent,
+          sourceSignature: detail.undoRequest.sourceSignature,
+        }),
+      });
+      if (!response.ok) throw new Error("undo failed");
+      await request(null, filters, true);
+      setClassificationNotice({ detail, state: "undone" });
+    } catch {
+      setClassificationNotice({ detail, state: "error" });
+    }
+  }
 
   return (
     <section
@@ -248,6 +294,23 @@ export function RecentActivity({
           />
         </label>
       </div>
+      {classificationNotice ? (
+        <aside className={styles["mp-classification-notice"]} role="status" aria-live="polite">
+          <span>
+            {classificationNotice.state === "undone"
+              ? `${classificationNotice.detail.transactionName} classification restored.`
+              : classificationNotice.state === "error"
+                ? "The classification was saved, but Undo could not be completed."
+                : `${classificationNotice.detail.transactionName} updated to ${classificationNotice.detail.savedClassification.effectiveParentCategory} → ${classificationNotice.detail.savedClassification.effectiveSubcategory}.`}
+          </span>
+          {classificationNotice.state === "saved" || classificationNotice.state === "undoing" ? (
+            <button type="button" disabled={classificationNotice.state === "undoing"} onClick={() => void undoClassification()}>
+              {classificationNotice.state === "undoing" ? "Undoing…" : "Undo"}
+            </button>
+          ) : null}
+          <button type="button" aria-label="Dismiss classification notice" onClick={() => setClassificationNotice(null)}>Dismiss</button>
+        </aside>
+      ) : null}
       {rows.length ? (
         <ul className={styles["mp-transaction-list"]}>
           {rows.map((transaction) => (

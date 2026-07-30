@@ -496,6 +496,16 @@ export type SavedTransactionClassification = {
   merchantRuleId: string | null;
 };
 
+export type TransactionUnderstandingCompletedDetail = {
+  transactionName: string;
+  savedClassification: SavedTransactionClassification;
+  undoRequest: {
+    transactionId: string;
+    intent: TransactionIntent;
+    sourceSignature: string;
+  };
+};
+
 export function applySavedClassificationToTransaction(
   transaction: MoneyTransaction,
   saved: SavedTransactionClassification,
