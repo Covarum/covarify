@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  formatCategoryLabel,
   formatCategoryPath,
   formatTransactionCategoryPath,
   formatTransactionDisplayAmount,
@@ -284,7 +285,7 @@ export function RecentActivity({
           >
             <option value="">All categories</option>
             {categories.map((category) => (
-              <option key={category}>{category}</option>
+              <option key={category} value={category}>{formatCategoryLabel(category)}</option>
             ))}
           </select>
         </label>
@@ -387,7 +388,7 @@ export function RecentActivity({
           {loading
             ? "Loading activity…"
             : cursor
-              ? "Load more"
+              ? "View more activity"
               : "All transactions shown"}
         </button>
       </div>

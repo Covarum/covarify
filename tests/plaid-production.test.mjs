@@ -13,6 +13,7 @@ import { isCurrentPlaidConsentVersion, PLAID_CONSENT_VERSION } from "../lib/plai
 import { ACCOUNT_DELETION_DAYS, AUDIT_RETENTION_YEARS, BACKUP_RETENTION_DAYS, SYNC_JOB_RETENTION_DAYS, WEBHOOK_RETENTION_DAYS } from "../lib/account-deletion/policy.ts";
 import { sanitizeLinkDiagnostic } from "../lib/plaid/production/link-diagnostics.ts";
 import { annotateInternalTransfers, buildAccountAnalytics, buildAccountObservations, buildMoneyPicture, classifyTransaction, filterTransactions, formatTransactionDisplayAmount, summarizeFilteredTransactions } from "../lib/money-picture.ts";
+import { accountTypeLabel, buildConnectedAccountSummary } from "../lib/money-picture-overview.ts";
 import { RECENT_ACTIVITY_PAGE_SIZE } from "../lib/recent-activity-pagination.ts";
 import { buildConnectionSummary } from "../lib/plaid/production/connection-summary.ts";
 
@@ -31,7 +32,7 @@ test("founder workspace scopes and aggregates all owned Plaid Items", () => {
   assert.doesNotMatch(accountPage, /from\("transaction_sync_states"\).*\.eq\("user_id"/s);
   assert.match(accountPage, /const accountRows = \(accounts\.data \|\| \[\]\)\.map/);
   assert.match(accountPage, /\.in\("plaid_item_id", itemIds\)/);
-  assert.match(workspace, /Connected accounts/);
+  assert.match(workspace, /connected accounts/i);
   assert.match(workspace, /Add another institution/);
   assert.match(workspace, /account\.institution/);
   assert.match(workspace, /financialData\.accounts\.map/);
@@ -257,7 +258,7 @@ test("pending-only and empty filtered views remain explicit", () => {
 test("Money Picture empty and partial states do not invent balances", () => {
   const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
   const empty = buildMoneyPicture([], new Date("2026-07-22T00:00:00Z"));
-  assert.equal(empty.spending, 0); assert.equal(empty.spendingByCategory.length, 0); assert.match(workspace, /currentBalance === null \? "Balance unavailable"/); assert.match(workspace, /every\(\(account\) => account\.currentBalance !== null\)/);
+  assert.equal(empty.spending, 0); assert.equal(empty.spendingByCategory.length, 0); assert.match(workspace, /currentBalance === null \? "Not available yet"/); assert.match(workspace, /valueOrUnavailable/);
 });
 
 test("transaction browsing remains authenticated, owner-scoped, cursor ordered, and read-only", () => {
@@ -314,6 +315,71 @@ test("authenticated founder can create Link tokens for additional production Pla
   assert.doesNotMatch(route, /PRODUCTION_ITEM_LIMIT_REACHED|assertFounderPilotItemLimit|hasProductionPlaidItem/);
   assert.match(route, /assertProductionConnectionAllowed\(config, profile\.userId\)/);
   assert.match(route, /createProductionLinkToken\(config, profile\)/);
+});
+
+test("Money Picture overview separates connected cash, credit debt, loans, and investments", () => {
+  const summary = buildConnectedAccountSummary([
+    { id: "cash", institution: "Bank A", type: "depository", subtype: "checking", currentBalance: 1200, availableBalance: 1000 },
+    { id: "card", institution: "Bank A", type: "credit", subtype: "credit card", currentBalance: 350, availableBalance: 4650 },
+    { id: "loan", institution: "Lender B", type: "loan", subtype: "student", currentBalance: 8000, availableBalance: null },
+    { id: "brokerage", institution: "Broker C", type: "investment", subtype: "brokerage", currentBalance: 5000, availableBalance: null },
+  ]);
+  assert.equal(summary.availableCash, 1000);
+  assert.equal(summary.creditCardDebt, 350);
+  assert.equal(summary.otherDebt, 8000);
+  assert.equal(summary.investments, 5000);
+  assert.equal(summary.institutionCount, 3);
+  assert.equal(summary.accountCount, 4);
+});
+
+test("available credit is never counted as cash and unknown balances remain unknown", () => {
+  const creditOnly = buildConnectedAccountSummary([
+    { id: "card", institution: "Bank", type: "credit", subtype: "credit card", currentBalance: 200, availableBalance: 9800 },
+  ]);
+  assert.equal(creditOnly.availableCash, null);
+  assert.equal(creditOnly.creditCardDebt, 200);
+  const partialCash = buildConnectedAccountSummary([
+    { id: "known", institution: "Bank", type: "depository", subtype: "checking", currentBalance: 100, availableBalance: 90 },
+    { id: "unknown", institution: "Bank", type: "depository", subtype: "savings", currentBalance: null, availableBalance: null },
+  ]);
+  assert.equal(partialCash.availableCash, null);
+});
+
+test("account labels are consumer-facing instead of raw Plaid account enums", () => {
+  assert.equal(accountTypeLabel({ type: "depository", subtype: "checking" }), "Cash account");
+  assert.equal(accountTypeLabel({ type: "credit", subtype: "credit card" }), "Credit card");
+  assert.equal(accountTypeLabel({ type: "investment", subtype: "brokerage" }), "Investment");
+});
+
+test("Money Picture hierarchy keeps detail accessible and mobile layout explicit", async () => {
+  const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../components/account/money-picture.module.css", import.meta.url), "utf8");
+  const order = [
+    "Money Picture overview",
+    "<MoneyPictureObservations",
+    "Money in and money out",
+    "Accounts and obligations",
+    "<RecentActivity",
+    "Explore your financial life",
+  ].map((text) => workspace.indexOf(text));
+  assert.equal(order.every((position) => position >= 0), true);
+  assert.deepEqual(order, [...order].sort((a, b) => a - b));
+  assert.match(workspace, /View all accounts/);
+  assert.match(workspace, /All transactions/);
+  assert.match(workspace, /Not available yet/);
+  assert.doesNotMatch(workspace, /Total available balance/);
+  assert.match(css, /@media\(max-width:560px\).*primaryMetrics\{grid-template-columns:1fr\}/s);
+  assert.match(css, /overflow-x:auto/);
+});
+
+test("a section read failure does not collapse the entire Money Picture", () => {
+  const page = readFileSync(new URL("../app/account/page.tsx", import.meta.url), "utf8");
+  const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(page, /const readFailed = \[accounts\.error, transactions\.error, sync\.error\]/);
+  assert.match(page, /sectionStatus: \{ accountsUnavailable: Boolean\(accounts\.error\), activityUnavailable: Boolean\(transactions\.error\), syncUnavailable: Boolean\(sync\.error\) \}/);
+  assert.match(workspace, /What matters is temporarily unavailable/);
+  assert.match(workspace, /Recent activity is temporarily unavailable/);
+  assert.match(workspace, /Your connected accounts remain available/);
 });
 
 test("database schema removes the founder-era one-production-Item constraint", () => {
