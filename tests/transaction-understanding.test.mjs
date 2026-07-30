@@ -5,6 +5,13 @@ import { buildCategoryIntelligence } from "../lib/category-intelligence.ts";
 import { isExactFounderAllowlistMatch } from "../lib/financial-event-confirmations.ts";
 import { filterTransactions } from "../lib/money-picture.ts";
 import {
+  normalizeCategoryName,
+  parentForSourceCategory,
+  requestedSubcategoryFromText,
+  suggestSubcategories,
+  SYSTEM_CATEGORY_PARENTS,
+} from "../lib/category-hierarchy.ts";
+import {
   applyEffectiveCategories,
   buildConfirmedUnderstandingRecord,
   effectiveTransactionState,
@@ -32,6 +39,36 @@ const tx = (id, overrides = {}) => ({
 });
 
 const now = new Date("2026-07-28T12:00:00Z");
+const foodParent = parentForSourceCategory("FOOD_AND_DRINK");
+const foodSubcategories = [
+  { id: "liquor", userId: null, parentCategoryId: foodParent.id, displayName: "Liquor", normalizedName: "liquor", aliases: ["alcohol", "wine and spirits"], categoryType: "system", status: "active" },
+  { id: "bars", userId: null, parentCategoryId: foodParent.id, displayName: "Bars", normalizedName: "bars", aliases: ["pub"], categoryType: "system", status: "active" },
+  { id: "restaurants", userId: null, parentCategoryId: foodParent.id, displayName: "Restaurants", normalizedName: "restaurants", aliases: ["dining"], categoryType: "system", status: "active" },
+  { id: "fast-food", userId: null, parentCategoryId: foodParent.id, displayName: "Fast Food", normalizedName: "fast food", aliases: [], categoryType: "system", status: "active" },
+];
+
+test("Alcohol is treated as subcategory intent and suggests Liquor without replacing Food & Drink", () => {
+  const intent = parseTransactionIntent("Alcohol", { selectedTransactionId: "white-horse", now });
+  const suggestions = suggestSubcategories(intent.requestedSubcategory, foodParent.id, foodSubcategories);
+  assert.equal(intent.requestedSubcategory, "Alcohol");
+  assert.equal(foodParent.displayName, "Food & Drink");
+  assert.deepEqual(suggestions.map(({ category }) => category.displayName), ["Liquor"]);
+});
+
+test("subcategory matching handles exact normalization and aliases but preserves distinct concepts", () => {
+  assert.equal(normalizeCategoryName("Wine & Spirits"), "wine and spirit");
+  assert.equal(suggestSubcategories("Wine & Spirits", foodParent.id, foodSubcategories)[0].category.displayName, "Liquor");
+  assert.equal(suggestSubcategories("Dining", foodParent.id, foodSubcategories)[0].category.displayName, "Restaurants");
+  assert.equal(suggestSubcategories("Liquors", foodParent.id, foodSubcategories)[0].match, "exact");
+  assert.deepEqual(suggestSubcategories("Bars", foodParent.id, [foodSubcategories[0]]), []);
+  assert.deepEqual(suggestSubcategories("Restaurants", foodParent.id, [foodSubcategories[3]]), []);
+});
+
+test("subcategory text extraction supports selected and conversational requests", () => {
+  assert.equal(requestedSubcategoryFromText("Alcohol"), "Alcohol");
+  assert.equal(requestedSubcategoryFromText("Classify it more specifically as Alcohol."), "Alcohol");
+  assert.equal(requestedSubcategoryFromText("That was dining."), "dining");
+});
 
 test("exact normalized merchant and amount produce one high-confidence match that still requires confirmation", () => {
   const intent = parseTransactionIntent("That Walmart charge for $148.72 was groceries.", { now });
@@ -118,6 +155,43 @@ test("source truth is preserved while current user confirmation takes effective-
   assert.equal(record.sourceConditionSignature, sourceConditionSignature(source));
 });
 
+test("effective parent and subcategory are stored separately while source evidence remains unchanged", () => {
+  const source = tx("white-horse", { name: "White Horse Wine", amount: 176.43, date: "2026-07-29", category: "FOOD_AND_DRINK" });
+  const original = structuredClone(source);
+  const intent = parseTransactionIntent("Alcohol", { selectedTransactionId: source.id, now });
+  const record = buildConfirmedUnderstandingRecord({
+    id: "hierarchy-record", userId: "founder", confirmedBy: "founder", transaction: source, intent,
+    priorState: effectiveTransactionState(source, null, []), confirmedAt: now.toISOString(), matchConfidence: "high",
+    categoryAssignment: {
+      parentCategoryId: foodParent.id,
+      parentCategory: "Food & Drink",
+      subcategoryId: "liquor",
+      subcategory: "Liquor",
+      requestedSubcategory: "Alcohol",
+    },
+  });
+  const effective = effectiveTransactionState(source, null, [record]);
+  assert.equal(effective.sourceCategory, "FOOD_AND_DRINK");
+  assert.equal(effective.effectiveParentCategory, "Food & Drink");
+  assert.equal(effective.effectiveSubcategory, "Liquor");
+  assert.equal(record.requestedSubcategoryName, "Alcohol");
+  assert.deepEqual(source, original);
+});
+
+test("merchant rules assign both parent and subcategory using normalized exact merchant matching", () => {
+  const source = tx("white-horse", { name: "POS DEBIT WHITE HORSE WINE", category: "FOOD_AND_DRINK" });
+  const rules = [{
+    id: "rule", normalizedMerchantName: "WHITE HORSE WINE", parentCategoryId: foodParent.id,
+    parentCategoryName: "Food & Drink", subcategoryId: "liquor", subcategoryName: "Liquor",
+    ruleScope: "past_and_future", status: "active", createdAt: "2026-07-29T00:00:00Z",
+  }];
+  const effective = effectiveTransactionState(source, null, [], rules);
+  assert.equal(effective.effectiveParentCategory, "Food & Drink");
+  assert.equal(effective.effectiveSubcategory, "Liquor");
+  const unrelated = effectiveTransactionState(tx("other", { name: "White Horse Tavern", category: "FOOD_AND_DRINK" }), null, [], rules);
+  assert.equal(unrelated.effectiveSubcategory, null);
+});
+
 test("undo is append-only supersession and restores prior precedence", () => {
   const source = tx("target");
   const classifyIntent = parseTransactionIntent("That was groceries.", { selectedTransactionId: source.id, now });
@@ -192,6 +266,24 @@ test("preview and persistence remain founder-only, append-only, and free of Plai
   assert.doesNotMatch(source, /plaidClient|\/api\/plaid|\.from\("plaid_transactions"\)|\.(?:update|delete|upsert)\(/);
 });
 
+test("category hierarchy migration seeds system parents and subcategories with scoped duplicate and ownership protections", () => {
+  const migration = readFileSync(new URL("../supabase/migrations/20260730010000_transaction_category_hierarchy.sql", import.meta.url), "utf8");
+  assert.match(migration, /create table public\.category_parents/);
+  assert.match(migration, /category_type text not null default 'system' check \(category_type = 'system'\)/);
+  assert.match(migration, /create table public\.category_subcategories/);
+  assert.match(migration, /'Liquor', 'liquor'.*alcohol/s);
+  assert.match(migration, /reject_duplicate_subcategory/);
+  assert.match(migration, /existing\.user_id is null or existing\.user_id = new\.user_id/);
+  assert.match(migration, /user_id is null or user_id = auth\.uid\(\)/);
+  assert.match(migration, /validate_merchant_category_rule/);
+  assert.match(migration, /subcategory\.user_id is null or subcategory\.user_id = new\.user_id/);
+  assert.match(migration, /subcategory\.parent_category_id = new\.parent_category_id/);
+  assert.match(migration, /effective_parent_category_id/);
+  assert.match(migration, /effective_subcategory_id/);
+  assert.match(migration, /create table public\.merchant_category_rules/);
+  assert.equal(SYSTEM_CATEGORY_PARENTS.every((parent) => migration.includes(parent.id)), true);
+});
+
 test("production route and workspace enforce founder-only confirmation-before-append integration", () => {
   const route = readFileSync(new URL("../app/api/account/transaction-understanding/route.ts", import.meta.url), "utf8");
   const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
@@ -208,7 +300,14 @@ test("production route and workspace enforce founder-only confirmation-before-ap
   assert.match(activity, /covarify:understand-transaction/);
   assert.match(activity, /mp-transaction-trigger/);
   assert.match(panel, /Source category/);
-  assert.match(panel, /Effective category/);
+  assert.match(panel, /Main category/);
+  assert.match(panel, /Subcategory/);
+  assert.match(panel, /Use \{suggestion\.displayName\}/);
+  assert.match(panel, /Create \{result\.requestedSubcategory\} instead/);
+  assert.match(route, /DUPLICATE_SUBCATEGORY/);
+  assert.match(route, /SUBCATEGORY_MATCH_REVIEW_REQUIRED/);
+  assert.match(route, /SUBCATEGORY_NOT_AVAILABLE/);
+  assert.doesNotMatch(route, /\.from\("category_parents"\)\.insert/);
   assert.match(panel, /router\.refresh/);
   assert.match(page, /applyFounderTransactionUnderstanding/);
 });

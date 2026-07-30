@@ -68,6 +68,22 @@ test("category total and shares reconcile with the canonical scoped snapshot", (
   );
 });
 
+test("parent totals include assigned subcategories and uncategorized parent activity", () => {
+  const period = { key: "custom", label: "July", start: "2026-07-01", end: "2026-07-31", priorStart: "2026-06-01", priorEnd: "2026-06-30" };
+  const rows = [
+    row({ id: "liquor", amount: 176.43, effectiveParentCategory: "Food & Drink", effectiveSubcategory: "Liquor" }),
+    row({ id: "coffee", amount: 54.57, effectiveParentCategory: "Food & Drink", effectiveSubcategory: "Coffee" }),
+    row({ id: "no-subcategory", amount: 100, effectiveParentCategory: "Food & Drink", effectiveSubcategory: null, detailedCategory: null }),
+  ];
+  const payload = buildCategoryIntelligence(rows, [], period, []);
+  const food = payload.categories.find((category) => category.categoryId === "FOOD_AND_DRINK");
+  assert.equal(food.currentAmount, 331);
+  assert.deepEqual(food.subcategories.map(({ label, amount }) => ({ label, amount })), [
+    { label: "Liquor", amount: 176.43 },
+    { label: "Coffee", amount: 54.57 },
+  ]);
+});
+
 test("prior comparisons avoid misleading zero baselines", () => {
   const current = [row({ amount: 100 })];
   const newlyAppeared = buildCategoryIntelligence(current, [], period).categories[0];

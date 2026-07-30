@@ -1,7 +1,14 @@
 import type { MoneyTransaction } from "./money-picture.ts";
+import {
+  categoryKeyForParent,
+  normalizeMerchantName,
+  parentForSourceCategory,
+  requestedSubcategoryFromText,
+  SYSTEM_CATEGORY_PARENTS,
+} from "./category-hierarchy.ts";
 
 export const TRANSACTION_UNDERSTANDING_RULE_VERSION =
-  "transaction-understanding-v1-production-2026-07-28";
+  "transaction-understanding-v2-hierarchy-2026-07-30";
 
 export const USER_TRANSACTION_CATEGORIES = [
   "Groceries",
@@ -33,6 +40,7 @@ export type TransactionIntent = {
   accountLabel: string | null;
   direction: "inflow" | "outflow" | null;
   category: UserTransactionCategory | null;
+  requestedSubcategory: string | null;
   treatment: TransactionTreatment | null;
   split: Array<{ treatment: "personal" | "business"; percentage: number }> | null;
   contextLabel: string | null;
@@ -63,6 +71,13 @@ export type TransactionUnderstandingRecord = {
   parsedIntent: TransactionIntent;
   priorEffectiveState: TransactionEffectiveState;
   confirmedCategory: UserTransactionCategory | null;
+  confirmedParentCategoryId: string | null;
+  confirmedParentCategory: string | null;
+  confirmedSubcategoryId: string | null;
+  confirmedSubcategory: string | null;
+  requestedSubcategoryName: string | null;
+  assignmentSource: "user_transaction" | "merchant_rule" | null;
+  merchantRuleId: string | null;
   treatment: TransactionTreatment | null;
   split: TransactionIntent["split"];
   contextLabel: string | null;
@@ -81,6 +96,10 @@ export type TransactionEffectiveState = {
   sourceCategory: string;
   inferredCategory: string | null;
   effectiveCategory: string;
+  effectiveParentCategoryId: string | null;
+  effectiveParentCategory: string;
+  effectiveSubcategoryId: string | null;
+  effectiveSubcategory: string | null;
   categorySource: "user_confirmed" | "covarify_inference" | "normalized_source";
   treatment: TransactionTreatment | null;
   split: TransactionIntent["split"];
@@ -102,14 +121,6 @@ const CATEGORY_PATTERNS: Array<[RegExp, UserTransactionCategory]> = [
   [/\b(refund|reimbursement)\b/i, "Refund"],
   [/\bother\b/i, "Other"],
 ];
-
-const normalizeMerchant = (value: string) =>
-  value
-    .toUpperCase()
-    .replace(/[^A-Z0-9 ]/g, " ")
-    .replace(/\b(PURCHASE|AUTHORIZATION|DEBIT|POS|PENDING|PAYMENT|THE)\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 
 const merchantFromText = (text: string) => {
   const atMatch = text.match(/\bat\s+([A-Za-z][A-Za-z0-9'&.\- ]+?)(?=\s+(?:was|for|on|yesterday|today|from)\b|[.!?,]|$)/i);
@@ -200,6 +211,7 @@ export function parseTransactionIntent(
         ? "outflow"
         : null,
     category,
+    requestedSubcategory: action === "classify" ? requestedSubcategoryFromText(text) : null,
     treatment,
     split,
     contextLabel: context,
@@ -212,8 +224,8 @@ export function parseTransactionIntent(
 }
 
 const merchantSimilarity = (intentMerchant: string, transactionName: string) => {
-  const requested = normalizeMerchant(intentMerchant);
-  const candidate = normalizeMerchant(transactionName);
+  const requested = normalizeMerchantName(intentMerchant);
+  const candidate = normalizeMerchantName(transactionName);
   if (requested === candidate) return 1;
   if (candidate.includes(requested) || requested.includes(candidate)) return 0.85;
   const requestedWords = new Set(requested.split(" "));
@@ -300,6 +312,7 @@ export function effectiveTransactionState(
   transaction: MoneyTransaction,
   inferredCategory: string | null,
   history: TransactionUnderstandingRecord[],
+  merchantRules: MerchantCategoryRule[] = [],
 ): TransactionEffectiveState {
   const superseded = new Set(history.map((record) => record.supersedesRecordId).filter(Boolean));
   const active = [...history]
@@ -307,12 +320,31 @@ export function effectiveTransactionState(
     .sort((a, b) => b.confirmedAt.localeCompare(a.confirmedAt))[0] || null;
   const confirmedCategory =
     active?.parsedIntent.action === "remove_label" ? null : active?.confirmedCategory || null;
+  const merchantRule = !active ? merchantRules
+    .filter((rule) => rule.status === "active" && rule.normalizedMerchantName === normalizeMerchantName(transaction.name))
+    .filter((rule) => rule.ruleScope === "past_and_future" || transaction.date >= rule.createdAt.slice(0, 10))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] || null : null;
+  const sourceParent = parentForSourceCategory(transaction.sourceCategory || transaction.category);
+  const confirmedParent = active?.confirmedParentCategoryId
+    ? SYSTEM_CATEGORY_PARENTS.find((parent) => parent.id === active.confirmedParentCategoryId) || null
+    : null;
+  const effectiveParent = confirmedParent || (merchantRule
+    ? SYSTEM_CATEGORY_PARENTS.find((parent) => parent.id === merchantRule.parentCategoryId) || sourceParent
+    : sourceParent);
+  const effectiveSubcategoryId = active?.confirmedSubcategoryId || merchantRule?.subcategoryId || null;
+  const effectiveSubcategory = active?.confirmedSubcategory || merchantRule?.subcategoryName || null;
   return {
     sourceCategory: transaction.category,
     inferredCategory,
-    effectiveCategory: confirmedCategory || inferredCategory || transaction.category,
-    categorySource: confirmedCategory
+    effectiveCategory: active?.confirmedParentCategory || confirmedCategory || merchantRule?.parentCategoryName || inferredCategory || transaction.category,
+    effectiveParentCategoryId: effectiveParent.id,
+    effectiveParentCategory: effectiveParent.displayName,
+    effectiveSubcategoryId,
+    effectiveSubcategory,
+    categorySource: active?.confirmedParentCategoryId || confirmedCategory
       ? "user_confirmed"
+      : merchantRule
+        ? "user_confirmed"
       : inferredCategory
         ? "covarify_inference"
         : "normalized_source",
@@ -336,6 +368,15 @@ export function buildConfirmedUnderstandingRecord(input: {
   supersedesRecordId?: string | null;
   confirmedAt: string;
   matchConfidence: "high" | "medium";
+  categoryAssignment?: {
+    parentCategoryId: string;
+    parentCategory: string;
+    subcategoryId: string;
+    subcategory: string;
+    requestedSubcategory: string;
+    assignmentSource?: "user_transaction" | "merchant_rule";
+    merchantRuleId?: string | null;
+  } | null;
 }): TransactionUnderstandingRecord {
   if (input.intent.split && Math.abs(input.intent.split.reduce((sum, part) => sum + part.percentage, 0) - 100) > 0.001) {
     throw new Error("SPLIT_DOES_NOT_RECONCILE");
@@ -351,6 +392,13 @@ export function buildConfirmedUnderstandingRecord(input: {
     parsedIntent: input.intent,
     priorEffectiveState: input.priorState,
     confirmedCategory: input.intent.action === "remove_label" ? null : input.intent.category,
+    confirmedParentCategoryId: input.intent.action === "remove_label" ? null : input.categoryAssignment?.parentCategoryId || null,
+    confirmedParentCategory: input.intent.action === "remove_label" ? null : input.categoryAssignment?.parentCategory || null,
+    confirmedSubcategoryId: input.intent.action === "remove_label" ? null : input.categoryAssignment?.subcategoryId || null,
+    confirmedSubcategory: input.intent.action === "remove_label" ? null : input.categoryAssignment?.subcategory || null,
+    requestedSubcategoryName: input.intent.action === "remove_label" ? null : input.categoryAssignment?.requestedSubcategory || null,
+    assignmentSource: input.intent.action === "remove_label" ? null : input.categoryAssignment?.assignmentSource || (input.categoryAssignment ? "user_transaction" : null),
+    merchantRuleId: input.intent.action === "remove_label" ? null : input.categoryAssignment?.merchantRuleId || null,
     treatment: input.intent.treatment,
     split: input.intent.split,
     contextLabel: input.intent.contextLabel,
@@ -391,21 +439,32 @@ export function applyEffectiveCategories(
   transactions: MoneyTransaction[],
   inferredCategories: ReadonlyMap<string, string>,
   history: TransactionUnderstandingRecord[],
+  merchantRules: MerchantCategoryRule[] = [],
 ) {
   return transactions.map((transaction) => {
     const state = effectiveTransactionState(
       transaction,
       inferredCategories.get(transaction.id) || null,
       history,
+      merchantRules,
     );
+    const parent = state.effectiveParentCategoryId
+      ? SYSTEM_CATEGORY_PARENTS.find((candidate) => candidate.id === state.effectiveParentCategoryId)
+      : null;
     return {
       ...transaction,
       sourceCategory: transaction.sourceCategory || state.sourceCategory,
-      category: state.effectiveCategory.toUpperCase().replace(/\s+/g, "_"),
+      category: state.effectiveSubcategory && parent
+        ? categoryKeyForParent(parent)
+        : state.effectiveCategory.toUpperCase().replace(/\s+/g, "_"),
+      effectiveParentCategory: state.effectiveParentCategory,
+      effectiveSubcategory: state.effectiveSubcategory,
       categorySource: state.categorySource,
       userConfirmedMeaning: state.activeRecordId
         ? {
             category: state.effectiveCategory,
+            parentCategory: state.effectiveParentCategory,
+            subcategory: state.effectiveSubcategory,
             treatment: state.treatment,
             contextLabel: state.contextLabel,
             note: state.note,
@@ -415,3 +474,15 @@ export function applyEffectiveCategories(
     };
   });
 }
+
+export type MerchantCategoryRule = {
+  id: string;
+  normalizedMerchantName: string;
+  parentCategoryId: string;
+  parentCategoryName: string;
+  subcategoryId: string;
+  subcategoryName: string;
+  ruleScope: "future" | "past_and_future";
+  status: "active" | "archived";
+  createdAt: string;
+};

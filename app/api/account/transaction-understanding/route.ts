@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -15,6 +16,14 @@ import {
   type TransactionIntent,
 } from "@/lib/transaction-understanding";
 import {
+  parentForSourceCategory,
+  suggestSubcategories,
+  SYSTEM_CATEGORY_PARENTS,
+} from "@/lib/category-hierarchy";
+import {
+  createMerchantCategoryRule,
+  createUserSubcategory,
+  loadAvailableSubcategories,
   loadTransactionUnderstandingHistory,
   recordToInsert,
 } from "@/lib/transaction-understanding-server";
@@ -28,7 +37,7 @@ async function loadTransactions(userId: string) {
     .select("id")
     .eq("user_id", userId)
     .eq("environment", "production")
-    .eq("status", "active");
+    .in("status", ["active", "pending"]);
   if (itemError || !items?.length) throw new Error("ACTIVITY_UNAVAILABLE");
   const itemIds = items.map((item) => item.id);
   const [accounts, transactions] = await Promise.all([
@@ -106,9 +115,19 @@ export async function POST(request: Request) {
       intent?: TransactionIntent;
       sourceSignature?: string;
       confirmationId?: string;
+      subcategoryDecision?: {
+        action: "use_existing" | "create_new";
+        subcategoryId?: string;
+        displayName?: string;
+        reviewedSuggestionIds?: string[];
+        ruleScope?: "transaction_only" | "future" | "past_and_future";
+      };
     };
     const transactions = await loadTransactions(user.id);
-    const history = await loadTransactionUnderstandingHistory(user.id);
+    const [history, availableSubcategories] = await Promise.all([
+      loadTransactionUnderstandingHistory(user.id),
+      loadAvailableSubcategories(user.id),
+    ]);
 
     if (body.operation === "interpret") {
       const text = String(body.text || "").trim();
@@ -143,13 +162,34 @@ export async function POST(request: Request) {
           message: "This request conflicts with transfer or refund evidence. Review the transaction detail before confirming.",
         });
       }
+      const requestedSubcategory = intent.requestedSubcategory || intent.category;
+      const sourceParent = parentForSourceCategory(sourceCategory);
+      const rankedAcrossParents = requestedSubcategory
+        ? SYSTEM_CATEGORY_PARENTS.flatMap((parent) => suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories)
+          .map((suggestion) => ({ ...suggestion, parent })))
+          .sort((a, b) => b.score - a.score)
+        : [];
+      const parent = rankedAcrossParents[0]?.parent || sourceParent;
+      const suggestions = requestedSubcategory
+        ? suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories)
+        : [];
+      const parentSubcategories = availableSubcategories
+        .filter((subcategory) => subcategory.parentCategoryId === parent.id && subcategory.status === "active")
+        .map((subcategory) => ({ id: subcategory.id, displayName: subcategory.displayName }));
+      const foundMessage = `I found the ${transaction.name} transaction for ${new Intl.NumberFormat("en-US", { style: "currency", currency: transaction.currency }).format(Math.abs(transaction.amount))} on ${new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", timeZone: "UTC" }).format(new Date(`${transaction.date}T00:00:00Z`))}.`;
       return NextResponse.json({
         kind: "clear",
         message: intent.action === "remove_label"
           ? `I found the ${transaction.name} transaction. Remove the current user-confirmed meaning and return to the next available category source?`
-          : `I found the ${transaction.name} transaction for ${new Intl.NumberFormat("en-US", { style: "currency", currency: transaction.currency }).format(Math.abs(transaction.amount))} on ${new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", timeZone: "UTC" }).format(new Date(`${transaction.date}T00:00:00Z`))}. Treat it as ${intent.category || sourceCategory}?`,
+          : requestedSubcategory
+            ? `${foundMessage} ${parent.displayName} is the main category. You asked Covarify to classify it more specifically as ${requestedSubcategory}.`
+            : foundMessage,
         transaction: safeTransaction(transaction),
         proposedCategory: intent.category,
+        parentCategory: { id: parent.id, displayName: parent.displayName },
+        requestedSubcategory,
+        suggestions: suggestions.map(({ category, match }) => ({ id: category.id, displayName: category.displayName, match })),
+        parentSubcategories,
         intent,
         sourceSignature: sourceConditionSignature(transaction),
       });
@@ -169,6 +209,57 @@ export async function POST(request: Request) {
       body.operation === "undo"
         ? { ...body.intent, action: "remove_label" as const, category: null }
         : body.intent;
+    let categoryAssignment = null;
+    let merchantRuleInput: Parameters<typeof createMerchantCategoryRule>[0] | null = null;
+    const requestedSubcategory = intent.requestedSubcategory || intent.category;
+    if (body.operation !== "undo" && requestedSubcategory) {
+      const sourceParent = parentForSourceCategory(transaction.sourceCategory || transaction.category);
+      const rankedAcrossParents = SYSTEM_CATEGORY_PARENTS.flatMap((parent) => suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories)
+        .map((suggestion) => ({ ...suggestion, parent })))
+        .sort((a, b) => b.score - a.score);
+      const parent = rankedAcrossParents[0]?.parent || sourceParent;
+      const suggestions = suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories);
+      const decision = body.subcategoryDecision;
+      if (!decision) return NextResponse.json({ error: "SUBCATEGORY_DECISION_REQUIRED" }, { status: 400 });
+      let selectedSubcategory = decision.action === "use_existing"
+        ? availableSubcategories.find((subcategory) =>
+          subcategory.id === decision.subcategoryId &&
+          subcategory.parentCategoryId === parent.id &&
+          subcategory.status === "active")
+        : null;
+      if (decision.action === "use_existing" && !selectedSubcategory) {
+        return NextResponse.json({ error: "SUBCATEGORY_NOT_AVAILABLE" }, { status: 403 });
+      }
+      if (decision.action === "create_new") {
+        const exact = suggestions.find((suggestion) => suggestion.match === "exact");
+        if (exact) return NextResponse.json({ error: "DUPLICATE_SUBCATEGORY", existing: exact.category.displayName }, { status: 409 });
+        const reviewed = new Set(decision.reviewedSuggestionIds || []);
+        if (suggestions.some((suggestion) => !reviewed.has(suggestion.category.id))) {
+          return NextResponse.json({ error: "SUBCATEGORY_MATCH_REVIEW_REQUIRED" }, { status: 409 });
+        }
+        selectedSubcategory = await createUserSubcategory(user.id, parent.id, decision.displayName || requestedSubcategory);
+      }
+      if (!selectedSubcategory) return NextResponse.json({ error: "SUBCATEGORY_DECISION_REQUIRED" }, { status: 400 });
+      categoryAssignment = {
+        parentCategoryId: parent.id,
+        parentCategory: parent.displayName,
+        subcategoryId: selectedSubcategory.id,
+        subcategory: selectedSubcategory.displayName,
+        requestedSubcategory,
+        assignmentSource: "user_transaction" as const,
+        merchantRuleId: null,
+      };
+      if (decision.ruleScope === "future" || decision.ruleScope === "past_and_future") {
+        merchantRuleInput = {
+          id: randomUUID(),
+          userId: user.id,
+          merchantName: transaction.name,
+          parentCategoryId: parent.id,
+          subcategoryId: selectedSubcategory.id,
+          ruleScope: decision.ruleScope,
+        };
+      }
+    }
     const record = buildConfirmedUnderstandingRecord({
       id: String(body.confirmationId || ""),
       userId: user.id,
@@ -179,14 +270,22 @@ export async function POST(request: Request) {
       supersedesRecordId,
       confirmedAt: new Date().toISOString(),
       matchConfidence: "high",
+      categoryAssignment,
     });
     const { error } = await createSupabaseAdminClient()
       .from("transaction_understanding_confirmations")
       .insert(recordToInsert(record));
     if (error) throw new Error("CONFIRMATION_APPEND_FAILED");
+    let ruleSaved = true;
+    if (merchantRuleInput) {
+      try { await createMerchantCategoryRule(merchantRuleInput); }
+      catch { ruleSaved = false; }
+    }
     return NextResponse.json({
       kind: "confirmed",
-      message: `Got it. Covarify will treat that ${transaction.name} purchase as ${intent.category || transaction.category} while preserving the original bank category.`,
+      message: categoryAssignment
+        ? `Got it. Covarify will classify that ${transaction.name} purchase as ${categoryAssignment.parentCategory} → ${categoryAssignment.subcategory} while preserving the original bank category.${ruleSaved ? "" : " The transaction was saved, but the merchant rule could not be added."}`
+        : `Got it. Covarify will preserve the original bank category and save your transaction context.`,
     });
   } catch {
     return NextResponse.json({ error: "TRANSACTION_UNDERSTANDING_UNAVAILABLE" }, { status: 503 });

@@ -74,6 +74,9 @@ const categoryKey = (transaction: MoneyTransaction) =>
 const foodDetail = (
   transaction: MoneyTransaction,
 ): { label: string; inferred: boolean } | null => {
+  if (transaction.effectiveSubcategory) {
+    return { label: transaction.effectiveSubcategory, inferred: false };
+  }
   const detail = transaction.detailedCategory?.toUpperCase() || "";
   if (detail.includes("GROCER")) return { label: "Groceries", inferred: false };
   if (detail.includes("COFFEE")) return { label: "Coffee", inferred: false };
