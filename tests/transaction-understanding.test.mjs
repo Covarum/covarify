@@ -19,6 +19,7 @@ import {
 import {
   applySavedClassificationToTransaction,
   applyEffectiveCategories,
+  buildMerchantRuleAssignmentRecords,
   buildConfirmedUnderstandingRecord,
   checkMerchantCategoryRule,
   classifyTransactionUnderstandingIntent,
@@ -334,6 +335,121 @@ test("merchant rules assign both parent and subcategory using normalized exact m
   assert.equal(unrelated.effectiveSubcategory, null);
 });
 
+test("past-and-future merchant rules append canonical historical assignments and remain idempotent", () => {
+  const source = tx("walmart-history", {
+    name: "Walmart",
+    category: "GENERAL_MERCHANDISE",
+    sourceCategory: "GENERAL_MERCHANDISE",
+  });
+  const legacyIntent = parseTransactionIntent("That was groceries.", {
+    selectedTransactionId: source.id,
+    now,
+  });
+  const legacy = buildConfirmedUnderstandingRecord({
+    id: "legacy",
+    userId: "founder",
+    confirmedBy: "founder",
+    transaction: source,
+    intent: legacyIntent,
+    priorState: effectiveTransactionState(source, null, []),
+    confirmedAt: "2026-07-29T10:00:00Z",
+    matchConfidence: "high",
+  });
+  const rule = {
+    id: "walmart-rule",
+    normalizedMerchantName: "WALMART",
+    parentCategoryId: foodParent.id,
+    parentCategoryName: "Food & Drink",
+    subcategoryId: "groceries",
+    subcategoryName: "Groceries",
+    ruleScope: "past_and_future",
+    status: "active",
+    createdAt: "2026-07-30T10:00:00Z",
+  };
+  const intent = parseTransactionIntent("Walmart is always for groceries", { now });
+  const records = buildMerchantRuleAssignmentRecords({
+    userId: "founder",
+    confirmedBy: "founder",
+    rule,
+    intent,
+    transactions: [source, tx("other-user", { name: "Walmart" })],
+    history: [legacy],
+    confirmedAt: "2026-07-30T10:01:00Z",
+    idForTransaction: (transaction) => `assignment-${transaction.id}`,
+  }).filter((record) => record.userId === "founder" && record.transactionId === source.id);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].confirmedParentCategoryId, foodParent.id);
+  assert.equal(records[0].confirmedParentCategory, "Food & Drink");
+  assert.equal(records[0].confirmedSubcategoryId, "groceries");
+  assert.equal(records[0].confirmedSubcategory, "Groceries");
+  assert.equal(records[0].assignmentSource, "merchant_rule");
+  assert.equal(records[0].merchantRuleId, rule.id);
+  assert.equal(records[0].supersedesRecordId, legacy.id);
+  assert.equal(records[0].priorEffectiveState.effectiveParentCategory, "Shopping");
+  assert.equal(records[0].priorEffectiveState.effectiveSubcategory, null);
+  assert.equal(records[0].priorEffectiveState.sourceCategory, "GENERAL_MERCHANDISE");
+  const repaired = effectiveTransactionState(source, null, [legacy, ...records], [rule]);
+  assert.equal(repaired.effectiveParentCategory, "Food & Drink");
+  assert.equal(repaired.effectiveSubcategory, "Groceries");
+  assert.equal(repaired.sourceCategory, "GENERAL_MERCHANDISE");
+  const undo = buildConfirmedUnderstandingRecord({
+    id: "undo-repair",
+    userId: "founder",
+    confirmedBy: "founder",
+    transaction: source,
+    intent: { ...intent, action: "remove_label", category: null },
+    priorState: repaired,
+    supersedesRecordId: records[0].id,
+    confirmedAt: "2026-07-30T10:01:30Z",
+    matchConfidence: "high",
+  });
+  const undone = effectiveTransactionState(source, null, [legacy, ...records, undo], [rule]);
+  assert.equal(undone.effectiveParentCategory, "Shopping");
+  assert.equal(undone.effectiveSubcategory, null);
+  assert.equal(undone.sourceCategory, "GENERAL_MERCHANDISE");
+  assert.equal(buildMerchantRuleAssignmentRecords({
+    userId: "founder",
+    confirmedBy: "founder",
+    rule,
+    intent,
+    transactions: [source],
+    history: [legacy, ...records],
+    confirmedAt: "2026-07-30T10:02:00Z",
+    idForTransaction: () => "duplicate",
+  }).length, 0);
+});
+
+test("future merchant-rule application uses the same canonical pair and analytics do not double count", () => {
+  const source = tx("future-walmart", {
+    name: "Walmart",
+    amount: 100,
+    date: "2026-07-31",
+    category: "GENERAL_MERCHANDISE",
+    sourceCategory: "GENERAL_MERCHANDISE",
+  });
+  const rule = {
+    id: "future-rule",
+    normalizedMerchantName: "WALMART",
+    parentCategoryId: foodParent.id,
+    parentCategoryName: "Food & Drink",
+    subcategoryId: "groceries",
+    subcategoryName: "Groceries",
+    ruleScope: "future",
+    status: "active",
+    createdAt: "2026-07-30T10:00:00Z",
+  };
+  const effective = applyEffectiveCategories([source], new Map(), [], [rule]);
+  assert.equal(formatTransactionCategoryPath(effective[0]), "Food & Drink → Groceries");
+  assert.equal(effective[0].sourceCategory, "GENERAL_MERCHANDISE");
+  const period = { key: "custom", label: "Preview", start: "2026-07-01", end: "2026-07-31", priorStart: "2026-06-01", priorEnd: "2026-06-30" };
+  const intelligence = buildCategoryIntelligence(effective, [], period, []);
+  const food = intelligence.categories.find((category) => category.categoryId === "FOOD_AND_DRINK");
+  const shopping = intelligence.categories.find((category) => category.categoryId === "SHOPPING");
+  assert.equal(food?.currentAmount, 100);
+  assert.equal(shopping?.currentAmount || 0, 0);
+  assert.equal(intelligence.categories.reduce((sum, category) => sum + category.currentAmount, 0), 100);
+});
+
 test("undo is append-only supersession and restores prior precedence", () => {
   const source = tx("target");
   const classifyIntent = parseTransactionIntent("That was groceries.", { selectedTransactionId: source.id, now });
@@ -434,6 +550,7 @@ test("production route and workspace enforce founder-only confirmation-before-ap
   const panelStyles = readFileSync(new URL("../components/account/transaction-understanding.module.css", import.meta.url), "utf8");
   const preview = readFileSync(new URL("../components/account/transaction-understanding-preview.tsx", import.meta.url), "utf8");
   const server = readFileSync(new URL("../lib/transaction-understanding-server.ts", import.meta.url), "utf8");
+  const repair = readFileSync(new URL("../scripts/repair-merchant-rule-assignments.ts", import.meta.url), "utf8");
   const activityStyles = readFileSync(new URL("../components/account/money-picture.module.css", import.meta.url), "utf8");
   const page = readFileSync(new URL("../app/account/page.tsx", import.meta.url), "utf8");
   assert.match(route, /getAuthorizedFounderUser/);
@@ -495,6 +612,15 @@ test("production route and workspace enforce founder-only confirmation-before-ap
   assert.match(panel, /Future \{result\.merchant\} purchases/);
   assert.match(server, /replaceOrReactivateMerchantCategoryRule/);
   assert.match(server, /\.eq\("user_id", input\.userId\)/);
+  assert.match(route, /buildMerchantRuleAssignmentRecords/);
+  assert.match(route, /historicalAssignmentsApplied/);
+  assert.match(repair, /EXPECTED_MERCHANT = "WALMART"/);
+  assert.match(repair, /EXPECTED_PARENT_ID = "10000000-0000-4000-8000-000000000001"/);
+  assert.match(repair, /\.eq\("user_id", ruleRow\.user_id\)/);
+  assert.match(repair, /ruleRow\.user_id !== allowedUsers\[0\]/);
+  assert.match(repair, /process\.argv\.includes\("--apply"\)/);
+  assert.match(repair, /if \(apply && rows\.length\)/);
+  assert.doesNotMatch(repair, /\.(?:update|delete|upsert)\(/);
   assert.match(panel, /subcategoryDecision \? \{ \.\.\.subcategoryDecision, ruleScope \}/);
   assert.match(panelStyles, /@media\(max-width:700px\)/);
   assert.match(panelStyles, /\.suggestionResult/);

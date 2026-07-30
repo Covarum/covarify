@@ -101,6 +101,16 @@ export function recordToInsert(record: TransactionUnderstandingRecord) {
   };
 }
 
+export async function appendTransactionUnderstandingRecords(
+  records: TransactionUnderstandingRecord[],
+) {
+  if (!records.length) return;
+  const { error } = await createSupabaseAdminClient()
+    .from("transaction_understanding_confirmations")
+    .insert(records.map(recordToInsert));
+  if (error) throw new Error("CONFIRMATION_APPEND_FAILED");
+}
+
 const subcategoryFromRow = (row: Record<string, unknown>): CategorySubcategory => ({
   id: String(row.id),
   userId: row.user_id ? String(row.user_id) : null,

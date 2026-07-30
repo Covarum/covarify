@@ -447,19 +447,20 @@ export function effectiveTransactionState(
     .filter((rule) => rule.status === "active" && rule.normalizedMerchantName === normalizeMerchantName(transaction.name))
     .filter((rule) => rule.ruleScope === "past_and_future" || transaction.date >= rule.createdAt.slice(0, 10))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] || null : null;
+  const merchantAssignment = merchantRule ? canonicalMerchantRuleAssignment(merchantRule) : null;
   const sourceParent = parentForSourceCategory(transaction.sourceCategory || transaction.category);
   const confirmedParent = active?.confirmedParentCategoryId
     ? SYSTEM_CATEGORY_PARENTS.find((parent) => parent.id === active.confirmedParentCategoryId) || null
     : null;
-  const effectiveParent = confirmedParent || (merchantRule
-    ? SYSTEM_CATEGORY_PARENTS.find((parent) => parent.id === merchantRule.parentCategoryId) || sourceParent
+  const effectiveParent = confirmedParent || (merchantAssignment
+    ? SYSTEM_CATEGORY_PARENTS.find((parent) => parent.id === merchantAssignment.parentCategoryId) || sourceParent
     : sourceParent);
-  const effectiveSubcategoryId = active?.confirmedSubcategoryId || merchantRule?.subcategoryId || null;
-  const effectiveSubcategory = active?.confirmedSubcategory || merchantRule?.subcategoryName || null;
+  const effectiveSubcategoryId = active?.confirmedSubcategoryId || merchantAssignment?.subcategoryId || null;
+  const effectiveSubcategory = active?.confirmedSubcategory || merchantAssignment?.subcategory || null;
   return {
     sourceCategory: transaction.category,
     inferredCategory,
-    effectiveCategory: active?.confirmedParentCategory || confirmedCategory || merchantRule?.parentCategoryName || inferredCategory || transaction.category,
+    effectiveCategory: active?.confirmedParentCategory || confirmedCategory || merchantAssignment?.parentCategory || inferredCategory || transaction.category,
     effectiveParentCategoryId: effectiveParent.id,
     effectiveParentCategory: effectiveParent.displayName,
     effectiveSubcategoryId,
@@ -634,6 +635,54 @@ export function checkMerchantCategoryRule(
   const archived = matching.find((rule) =>
     rule.parentCategoryId === parentCategoryId && rule.subcategoryId === subcategoryId);
   return archived ? { kind: "archived", rule: archived } : { kind: "none" };
+}
+
+export function canonicalMerchantRuleAssignment(rule: MerchantCategoryRule) {
+  return {
+    parentCategoryId: rule.parentCategoryId,
+    parentCategory: rule.parentCategoryName,
+    subcategoryId: rule.subcategoryId,
+    subcategory: rule.subcategoryName,
+    requestedSubcategory: rule.subcategoryName,
+    assignmentSource: "merchant_rule" as const,
+    merchantRuleId: rule.id,
+  };
+}
+
+export function buildMerchantRuleAssignmentRecords(input: {
+  userId: string;
+  confirmedBy: string;
+  rule: MerchantCategoryRule;
+  intent: TransactionIntent;
+  transactions: MoneyTransaction[];
+  history: TransactionUnderstandingRecord[];
+  priorMerchantRules?: MerchantCategoryRule[];
+  confirmedAt: string;
+  idForTransaction: (transaction: MoneyTransaction) => string;
+}) {
+  if (input.rule.ruleScope !== "past_and_future") return [];
+  const alreadyAssigned = new Set(input.history
+    .filter((record) => record.merchantRuleId === input.rule.id)
+    .map((record) => record.transactionId));
+  const priorRules = (input.priorMerchantRules || [])
+    .filter((rule) => rule.id !== input.rule.id);
+  return exactMerchantTransactions(input.rule.normalizedMerchantName, input.transactions)
+    .filter((transaction) => !alreadyAssigned.has(transaction.id))
+    .map((transaction) => {
+      const priorState = effectiveTransactionState(transaction, null, input.history, priorRules);
+      return buildConfirmedUnderstandingRecord({
+        id: input.idForTransaction(transaction),
+        userId: input.userId,
+        confirmedBy: input.confirmedBy,
+        transaction,
+        intent: input.intent,
+        priorState,
+        supersedesRecordId: priorState.activeRecordId,
+        confirmedAt: input.confirmedAt,
+        matchConfidence: "high",
+        categoryAssignment: canonicalMerchantRuleAssignment(input.rule),
+      });
+    });
 }
 
 export type SavedTransactionClassification = {

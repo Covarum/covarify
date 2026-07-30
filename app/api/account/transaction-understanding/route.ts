@@ -9,6 +9,7 @@ import type { MoneyTransaction } from "@/lib/money-picture";
 import { formatCategoryPath } from "@/lib/money-picture";
 import {
   buildConfirmedUnderstandingRecord,
+  buildMerchantRuleAssignmentRecords,
   checkMerchantCategoryRule,
   exactMerchantTransactions,
   effectiveTransactionState,
@@ -21,11 +22,13 @@ import {
 } from "@/lib/transaction-understanding";
 import {
   parentForSourceCategory,
+  normalizeMerchantName,
   suggestSubcategories,
   SYSTEM_CATEGORY_PARENTS,
 } from "@/lib/category-hierarchy";
 import {
   createMerchantCategoryRule,
+  appendTransactionUnderstandingRecords,
   createUserSubcategory,
   loadAvailableSubcategories,
   loadMerchantCategoryRules,
@@ -349,17 +352,6 @@ export async function POST(request: Request) {
         parent.id,
         selectedSubcategory.id,
       );
-      if (existing.kind === "identical") {
-        return NextResponse.json({
-          kind: "merchant_rule_confirmed",
-          message: `You already have this rule for ${merchant}.`,
-          categoryPath: formatCategoryPath({
-            parentCategory: parent.displayName,
-            subcategory: selectedSubcategory.displayName,
-          }),
-          merchantMemory: { scope: existing.rule.ruleScope, saved: false },
-        });
-      }
       if (existing.kind === "conflict" && !decision.replaceExisting) {
         return NextResponse.json({
           error: "MERCHANT_RULE_CONFLICT",
@@ -372,6 +364,8 @@ export async function POST(request: Request) {
       if (existing.kind === "archived" && !decision.reactivateArchived) {
         return NextResponse.json({ error: "MERCHANT_RULE_ARCHIVED" }, { status: 409 });
       }
+      const ruleId = existing.kind === "none" ? randomUUID() : existing.rule.id;
+      const confirmedAt = new Date().toISOString();
       if (existing.kind === "conflict" || existing.kind === "archived") {
         await replaceOrReactivateMerchantCategoryRule({
           userId: user.id,
@@ -381,8 +375,8 @@ export async function POST(request: Request) {
           ruleScope: decision.ruleScope,
         });
       } else {
-        await createMerchantCategoryRule({
-          id: randomUUID(),
+        if (existing.kind === "none") await createMerchantCategoryRule({
+          id: ruleId,
           userId: user.id,
           merchantName: merchant,
           parentCategoryId: parent.id,
@@ -390,9 +384,35 @@ export async function POST(request: Request) {
           ruleScope: decision.ruleScope,
         });
       }
+      const canonicalRule = {
+        id: ruleId,
+        merchantIdentifier: existing.kind === "none" ? null : existing.rule.merchantIdentifier,
+        normalizedMerchantName: normalizeMerchantName(merchant),
+        parentCategoryId: parent.id,
+        parentCategoryName: parent.displayName,
+        subcategoryId: selectedSubcategory.id,
+        subcategoryName: selectedSubcategory.displayName,
+        ruleScope: decision.ruleScope,
+        status: "active" as const,
+        createdAt: existing.kind === "none" ? confirmedAt : existing.rule.createdAt,
+      };
+      const historicalRecords = buildMerchantRuleAssignmentRecords({
+        userId: user.id,
+        confirmedBy: user.id,
+        rule: canonicalRule,
+        intent,
+        transactions,
+        history,
+        priorMerchantRules: merchantRules,
+        confirmedAt,
+        idForTransaction: () => randomUUID(),
+      });
+      await appendTransactionUnderstandingRecords(historicalRecords);
       return NextResponse.json({
         kind: "merchant_rule_confirmed",
-        message: `Covarify will remember ${formatCategoryPath({
+        message: existing.kind === "identical" && !historicalRecords.length
+          ? `You already have this rule for ${merchant}.`
+          : `Covarify will remember ${formatCategoryPath({
           parentCategory: parent.displayName,
           subcategory: selectedSubcategory.displayName,
         })} for ${decision.ruleScope === "future" ? "future" : "past and future"} ${merchant} purchases.`,
@@ -401,6 +421,7 @@ export async function POST(request: Request) {
           subcategory: selectedSubcategory.displayName,
         }),
         merchantMemory: { scope: decision.ruleScope, saved: true },
+        historicalAssignmentsApplied: historicalRecords.length,
       });
     }
 
