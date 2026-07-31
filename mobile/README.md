@@ -12,15 +12,32 @@ From the repository root:
 pnpm install
 ```
 
-Copy `mobile/.env.example` to `mobile/.env` and provide:
+Copy `mobile/.env.example` to `mobile/.env` and fill in exactly these
+client-safe public variables:
 
 - `EXPO_PUBLIC_COVARIFY_API_URL`: the existing Covarify backend base URL.
 - `EXPO_PUBLIC_SUPABASE_URL`: the existing Supabase project URL.
 - `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`: the client-safe publishable key.
 
+Use this name mapping when copying public configuration from the root local
+environment:
+
+| Root local variable | Mobile variable |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | `EXPO_PUBLIC_SUPABASE_URL` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` |
+| Existing Covarify backend base URL | `EXPO_PUBLIC_COVARIFY_API_URL` |
+
+If a source entry is not present in the root local environment, obtain the
+corresponding public value through the project's approved local setup rather
+than substituting a server-only credential. Do not create or populate
+`mobile/.env` in source control; it is intentionally ignored by Git.
+
 All `EXPO_PUBLIC_*` values are compiled into the app and must be treated as
 public. Never place a service-role key, Plaid secret, database credential, or
-other server-only value in this file.
+other server-only value in this file. The app validates all three required
+variables at startup and reports missing variable names without logging their
+values.
 
 ## Run locally
 
