@@ -1,15 +1,10 @@
+import { mobileEnv } from "./env";
 import { supabase } from "./supabase";
-
-const apiUrl = process.env.EXPO_PUBLIC_COVARIFY_API_URL;
 
 export async function covarifyApiFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  if (!apiUrl) {
-    throw new Error("The Covarify API URL is not configured.");
-  }
-
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -24,5 +19,5 @@ export async function covarifyApiFetch(
     headers.set("Content-Type", "application/json");
   }
 
-  return fetch(new URL(path, apiUrl), { ...init, headers });
+  return fetch(new URL(path, mobileEnv.covarifyApiUrl), { ...init, headers });
 }
