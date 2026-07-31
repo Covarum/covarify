@@ -9,6 +9,13 @@ import {
   reconcileSupportingTransactions,
   recurringCommitmentSummary,
 } from "../lib/recurring-commitments.ts";
+import {
+  INSURANCE_PARENT,
+  INSURANCE_SUBCATEGORIES,
+  assistedCategoryProposalBoundary,
+  deterministicInsuranceProposal,
+  recurringCategoryProposal,
+} from "../lib/recurring-category-understanding.ts";
 
 const tx = (id, patch = {}) => ({
   id,
@@ -32,6 +39,153 @@ const monthly = (name = "Streaming subscription", amounts = [15.99, 15.99, 15.99
   ["2026-05-01", "2026-06-01", "2026-07-01"].map((date, index) =>
     tx(`${name}-${index}`, { name, description: name, amount: amounts[index], date }),
   );
+
+test("insurance notes produce canonical proposals without treating general notes as commands", () => {
+  for (const phrase of ["renter’s insurance", "renters insurance"]) {
+    const proposal = deterministicInsuranceProposal(phrase);
+    assert.equal(proposal.parentCategory, "Insurance");
+    assert.equal(proposal.subcategory, "Renters Insurance");
+  }
+  const mappings = new Map([
+    ["auto insurance", "Auto Insurance"],
+    ["car insurance", "Auto Insurance"],
+    ["homeowners insurance", "Homeowners Insurance"],
+    ["life insurance", "Life Insurance"],
+    ["health insurance", "Health Insurance"],
+    ["disability insurance", "Disability Insurance"],
+    ["pet insurance", "Pet Insurance"],
+  ]);
+  for (const [phrase, expected] of mappings) {
+    assert.equal(deterministicInsuranceProposal(phrase)?.subcategory, expected);
+  }
+  for (const note of [
+    "Need to look at this later",
+    "Called them Tuesday",
+    "Not sure why this increased",
+  ]) {
+    assert.equal(deterministicInsuranceProposal(note), null);
+  }
+  assert.equal(
+    assistedCategoryProposalBoundary(deterministicInsuranceProposal("pet insurance"))
+      ?.source,
+    "deterministic_note",
+  );
+});
+
+test("confirmed Insurance with Other requires review and accepted context wins canonically", () => {
+  const base = {
+    type: "insurance",
+    effectiveCategory: "Other",
+    decision: {
+      userNote: "renter's insurance",
+      categoryResolution: null,
+      effectiveParentCategory: null,
+    },
+  };
+  const proposal = recurringCategoryProposal(base);
+  assert.equal(proposal.subcategory, "Renters Insurance");
+  assert.equal(proposal.parentCategoryId, INSURANCE_PARENT.id);
+  assert.equal(
+    INSURANCE_SUBCATEGORIES.filter((item) => item.name === "Renters Insurance")
+      .length,
+    1,
+  );
+  assert.equal(
+    recurringCategoryProposal({
+      ...base,
+      decision: {
+        ...base.decision,
+        categoryResolution: "kept_current",
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    recurringCategoryProposal({
+      ...base,
+      decision: {
+        ...base.decision,
+        categoryResolution: "accepted",
+        effectiveParentCategory: "Insurance",
+      },
+    }),
+    null,
+  );
+});
+
+test("commitment-level category overrides weak evidence without mutating source transactions", () => {
+  const decision = {
+    recurringStatus: "confirmed",
+    recognitionStatus: "recognized",
+    disposition: "keep",
+    commitmentType: "insurance",
+    ownerLabel: "Household",
+    userNote: "renter's insurance",
+    identityNote: null,
+    loginStatus: null,
+    duplicateDecision: null,
+    manualOriginalPurpose: null,
+    manualCurrentBalance: null,
+    manualOriginalAmount: null,
+    manualPaymentsRemaining: null,
+    manualNextPaymentDate: null,
+    effectiveParentCategoryId: INSURANCE_PARENT.id,
+    effectiveSubcategoryId: INSURANCE_SUBCATEGORIES[0].id,
+    effectiveParentCategory: "Insurance",
+    effectiveSubcategory: "Renters Insurance",
+    categoryResolution: "accepted",
+    supportingTransactionsClassified: false,
+  };
+  const rows = monthly("Lemonade Insurance").map((row) => ({
+    ...row,
+    category: "OTHER",
+    sourceCategory: "OTHER",
+  }));
+  const detected = buildRecurringCommitments(rows);
+  const [unconfirmed] = detected;
+  const [confirmed] = buildRecurringCommitments(
+    rows,
+    new Map([[unconfirmed.patternKey, decision]]),
+  );
+  assert.equal(confirmed.type, "insurance");
+  assert.equal(confirmed.effectiveCategory, "Insurance → Renters Insurance");
+  assert.ok(confirmed.supportingTransactions.every((row) => row.sourceCategory === "OTHER"));
+  assert.ok(confirmed.supportingTransactions.every((row) => row.category === "OTHER"));
+});
+
+test("category migration and review flow are additive, owner-scoped, and explicit", () => {
+  const migration = readFileSync(
+    new URL(
+      "../supabase/migrations/20260731013000_recurring_commitment_categories.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const actions = readFileSync(
+    new URL("../app/account/recurring/actions.ts", import.meta.url),
+    "utf8",
+  );
+  const workspace = readFileSync(
+    new URL(
+      "../app/account/recurring/recurring-workspace.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /Renters Insurance/);
+  assert.match(migration, /on conflict \(id\) do nothing/);
+  assert.match(migration, /subcategory already|normalized_name/);
+  assert.match(migration, /p_user_id/);
+  assert.match(migration, /subcategory\.user_id is null or subcategory\.user_id = p_user_id/);
+  assert.match(migration, /security definer/);
+  assert.match(migration, /to service_role/);
+  assert.match(actions, /categorySource !== "user_confirmed"/);
+  assert.match(actions, /appendTransactionUnderstandingRecords/);
+  assert.match(workspace, /Yes, apply to these transactions/);
+  assert.match(workspace, /Use only for this commitment/);
+  assert.match(workspace, /Not now/);
+  assert.match(workspace, /Keep current classification/);
+});
 
 test("monthly commitments require sufficient posted evidence and remain explainable", () => {
   assert.equal(buildRecurringCommitments([tx("one")]).length, 0);
@@ -407,7 +561,7 @@ test("review choices are progressive, visibly selected, and saved once", () => {
   assert.match(review, /aria-pressed=\{selected\}/);
   assert.match(review, /type="button"/);
   assert.match(review, /type="submit"/);
-  assert.match(review, /disabled=\{!changed \|\| pending\}/);
+  assert.match(review, /disabled=\{!changed \|\| pending \|\| Boolean\(categoryProposal\)\}/);
   assert.match(review, /pending \? "Saving…" : "Save"/);
   assert.equal((review.match(/action=\{formAction\}/g) || []).length, 1);
   assert.doesNotMatch(review, /<form action=\{saveRecurringCommitmentDecision\}/);

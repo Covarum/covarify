@@ -67,6 +67,22 @@ function mapDecision(row: Record<string, unknown>): RecurringCommitmentDecision 
     manualNextPaymentDate: row.manual_next_payment_date
       ? String(row.manual_next_payment_date)
       : null,
+    effectiveParentCategoryId: row.effective_parent_category_id
+      ? String(row.effective_parent_category_id)
+      : null,
+    effectiveSubcategoryId: row.effective_subcategory_id
+      ? String(row.effective_subcategory_id)
+      : null,
+    effectiveParentCategory: row.effective_parent_category
+      ? String(row.effective_parent_category)
+      : null,
+    effectiveSubcategory: row.effective_subcategory
+      ? String(row.effective_subcategory)
+      : null,
+    categoryResolution: (row.category_resolution || null) as RecurringCommitmentDecision["categoryResolution"],
+    supportingTransactionsClassified: Boolean(
+      row.supporting_transactions_classified,
+    ),
   };
 }
 

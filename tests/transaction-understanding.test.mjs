@@ -630,6 +630,7 @@ test("preview and persistence remain founder-only, append-only, and free of Plai
 
 test("category hierarchy migration seeds system parents and subcategories with scoped duplicate and ownership protections", () => {
   const migration = readFileSync(new URL("../supabase/migrations/20260730010000_transaction_category_hierarchy.sql", import.meta.url), "utf8");
+  const recurringCategories = readFileSync(new URL("../supabase/migrations/20260731013000_recurring_commitment_categories.sql", import.meta.url), "utf8");
   assert.match(migration, /create table public\.category_parents/);
   assert.match(migration, /category_type text not null default 'system' check \(category_type = 'system'\)/);
   assert.match(migration, /create table public\.category_subcategories/);
@@ -643,7 +644,7 @@ test("category hierarchy migration seeds system parents and subcategories with s
   assert.match(migration, /effective_parent_category_id/);
   assert.match(migration, /effective_subcategory_id/);
   assert.match(migration, /create table public\.merchant_category_rules/);
-  assert.equal(SYSTEM_CATEGORY_PARENTS.every((parent) => migration.includes(parent.id)), true);
+  assert.equal(SYSTEM_CATEGORY_PARENTS.every((parent) => `${migration}\n${recurringCategories}`.includes(parent.id)), true);
 });
 
 test("production route and workspace enforce founder-only confirmation-before-append integration", () => {

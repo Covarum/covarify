@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { getAuthenticatedUser } from "@/lib/supabase/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -9,6 +10,19 @@ import type {
   RecurringCommitmentDecision,
   RecurringCommitmentType,
 } from "@/lib/recurring-commitments";
+import {
+  recurringCategoryProposal,
+  type RecurringCategoryProposal,
+} from "@/lib/recurring-category-understanding";
+import {
+  buildConfirmedUnderstandingRecord,
+  effectiveTransactionState,
+  parseTransactionIntent,
+} from "@/lib/transaction-understanding";
+import {
+  appendTransactionUnderstandingRecords,
+  loadTransactionUnderstandingHistory,
+} from "@/lib/transaction-understanding-server";
 
 export type RecurringReviewActionState = {
   status: "idle" | "saved" | "error";
@@ -19,6 +33,7 @@ export type RecurringReviewActionState = {
   destination: "confirmed" | "completed" | "possible" | "attention" | "suppressed" | null;
   message: string | null;
   savedLabels: string[];
+  categoryProposal: RecurringCategoryProposal | null;
 };
 
 const initialRecurringReviewActionState: RecurringReviewActionState = {
@@ -30,6 +45,7 @@ const initialRecurringReviewActionState: RecurringReviewActionState = {
   destination: null,
   message: null,
   savedLabels: [],
+  categoryProposal: null,
 };
 
 const allowedTypes = new Set<RecurringCommitmentType>([
@@ -212,6 +228,11 @@ async function resultAfterSave(
   const commitment =
     refreshed.commitments.find((item) => item.patternKey === patternKey) || null;
   const destination = destinationFor(commitment);
+  const categoryProposal = recurringCategoryProposal(commitment || {
+    decision,
+    effectiveCategory: "",
+    type: decision.commitmentType || "unknown_recurring",
+  });
   revalidatePath("/account/recurring");
   revalidatePath("/account");
   return {
@@ -221,8 +242,11 @@ async function resultAfterSave(
     decision,
     commitment,
     destination,
-    message: movementMessage(decision, destination),
+    message: categoryProposal
+      ? "The note was saved. Review the suggested classification below."
+      : movementMessage(decision, destination),
     savedLabels: labelsFor(decision),
+    categoryProposal,
   };
 }
 
@@ -289,6 +313,13 @@ export async function saveRecurringCommitmentDecision(
       manualOriginalAmount: optionalNumber(formData, "manualOriginalAmount"),
       manualPaymentsRemaining: optionalInteger(formData, "manualPaymentsRemaining"),
       manualNextPaymentDate: optionalDate(formData, "manualNextPaymentDate"),
+      effectiveParentCategoryId: prior?.effectiveParentCategoryId || null,
+      effectiveSubcategoryId: prior?.effectiveSubcategoryId || null,
+      effectiveParentCategory: prior?.effectiveParentCategory || null,
+      effectiveSubcategory: prior?.effectiveSubcategory || null,
+      categoryResolution: prior?.categoryResolution || null,
+      supportingTransactionsClassified:
+        prior?.supportingTransactionsClassified || false,
     };
     if (decision.recurringStatus === "not_recurring") {
       decision.recognitionStatus = "unsure";
@@ -318,6 +349,131 @@ export async function saveRecurringCommitmentDecision(
       ...initialRecurringReviewActionState,
       status: "error",
       error: message,
+      categoryProposal: null,
+    };
+  }
+}
+
+export async function saveRecurringCommitmentCategoryDecision(input: {
+  patternKey: string;
+  resolution: "accepted" | "kept_current";
+  parentCategoryId?: string;
+  parentCategory?: string;
+  subcategoryId?: string;
+  subcategory?: string;
+  applyToSupportingTransactions: boolean;
+}): Promise<RecurringReviewActionState> {
+  try {
+    const user = await getAuthenticatedUser();
+    if (!user) throw new Error("AUTHENTICATION_REQUIRED");
+    const data = await loadRecurringCommitments(user.id);
+    const commitment = data.commitments.find(
+      (item) => item.patternKey === input.patternKey,
+    );
+    if (!commitment?.decision) {
+      throw new Error("RECURRING_COMMITMENT_NOT_FOUND");
+    }
+    const accepted = input.resolution === "accepted";
+    if (
+      accepted &&
+      (!input.parentCategoryId ||
+        !input.parentCategory ||
+        !input.subcategoryId ||
+        !input.subcategory)
+    ) {
+      throw new Error("INVALID_CATEGORY_DECISION");
+    }
+
+    const { error } = await createSupabaseAdminClient().rpc(
+      "record_recurring_commitment_category_decision",
+      {
+        p_user_id: user.id,
+        p_pattern_key: input.patternKey,
+        p_resolution: input.resolution,
+        p_parent_category_id: accepted ? input.parentCategoryId : null,
+        p_subcategory_id: accepted ? input.subcategoryId : null,
+        p_supporting_transactions_classified: false,
+      },
+    );
+    if (error) throw new Error("RECURRING_CATEGORY_SAVE_FAILED");
+    let classifiedCount = 0;
+    if (accepted && input.applyToSupportingTransactions) {
+      const history = await loadTransactionUnderstandingHistory(user.id);
+      const now = new Date().toISOString();
+      const records = commitment.supportingTransactions
+        .filter((transaction) => transaction.categorySource !== "user_confirmed")
+        .map((transaction) => {
+          const prior = effectiveTransactionState(transaction, null, history);
+          return buildConfirmedUnderstandingRecord({
+            id: randomUUID(),
+            userId: user.id,
+            confirmedBy: user.id,
+            transaction,
+            intent: parseTransactionIntent(
+              `Classify this as ${input.subcategory}.`,
+              {
+                modality: "selected_transaction",
+                selectedTransactionId: transaction.id,
+              },
+            ),
+            priorState: prior,
+            supersedesRecordId: prior.activeRecordId,
+            confirmedAt: now,
+            matchConfidence: "high",
+            categoryAssignment: {
+              parentCategoryId: input.parentCategoryId!,
+              parentCategory: input.parentCategory!,
+              subcategoryId: input.subcategoryId!,
+              subcategory: input.subcategory!,
+              requestedSubcategory: input.subcategory!,
+              assignmentSource: "user_transaction",
+            },
+          });
+        });
+      await appendTransactionUnderstandingRecords(records);
+      classifiedCount = records.length;
+      if (classifiedCount) {
+        const { error: linkError } = await createSupabaseAdminClient().rpc(
+          "record_recurring_commitment_category_decision",
+          {
+            p_user_id: user.id,
+            p_pattern_key: input.patternKey,
+            p_resolution: input.resolution,
+            p_parent_category_id: input.parentCategoryId,
+            p_subcategory_id: input.subcategoryId,
+            p_supporting_transactions_classified: true,
+          },
+        );
+        if (linkError) throw new Error("RECURRING_CATEGORY_LINK_SAVE_FAILED");
+      }
+    }
+    const refreshed = await loadRecurringCommitments(user.id);
+    const updated =
+      refreshed.commitments.find((item) => item.patternKey === input.patternKey) ||
+      null;
+    revalidatePath("/account/recurring");
+    revalidatePath("/account");
+    return {
+      status: "saved",
+      error: null,
+      patternKey: input.patternKey,
+      decision: updated?.decision || null,
+      commitment: updated,
+      destination: destinationFor(updated),
+      message: accepted
+        ? `${commitment.displayName} is now understood as ${input.parentCategory} → ${input.subcategory}. The note was also saved.${classifiedCount ? ` ${classifiedCount} supporting transactions were updated.` : ""}`
+        : `The note was saved. ${commitment.effectiveCategory} remains the current classification.`,
+      savedLabels: accepted
+        ? [input.parentCategory!, input.subcategory!]
+        : ["Current classification kept"],
+      categoryProposal: null,
+    };
+  } catch {
+    return {
+      ...initialRecurringReviewActionState,
+      status: "error",
+      error:
+        "Covarify could not save this classification. Your note remains saved; please try again.",
     };
   }
 }
@@ -341,6 +497,12 @@ const decisionFromRow = (
   manualOriginalAmount: row.manual_original_amount == null ? null : Number(row.manual_original_amount),
   manualPaymentsRemaining: row.manual_payments_remaining == null ? null : Number(row.manual_payments_remaining),
   manualNextPaymentDate: row.manual_next_payment_date ? String(row.manual_next_payment_date) : null,
+  effectiveParentCategoryId: row.effective_parent_category_id ? String(row.effective_parent_category_id) : null,
+  effectiveSubcategoryId: row.effective_subcategory_id ? String(row.effective_subcategory_id) : null,
+  effectiveParentCategory: row.effective_parent_category ? String(row.effective_parent_category) : null,
+  effectiveSubcategory: row.effective_subcategory ? String(row.effective_subcategory) : null,
+  categoryResolution: (row.category_resolution || null) as RecurringCommitmentDecision["categoryResolution"],
+  supportingTransactionsClassified: Boolean(row.supporting_transactions_classified),
 });
 
 export async function undoRecurringCommitmentDecision(
@@ -397,6 +559,25 @@ export async function undoRecurringCommitmentDecision(
       p_decision: decision,
     });
     if (error) throw new Error("RECURRING_UNDO_FAILED");
+    const { error: categoryUndoError } = await admin.rpc(
+      "record_recurring_commitment_category_decision",
+      {
+        p_user_id: user.id,
+        p_pattern_key: patternKey,
+        p_resolution: decision.categoryResolution || "unresolved",
+        p_parent_category_id:
+          decision.categoryResolution === "accepted"
+            ? decision.effectiveParentCategoryId
+            : null,
+        p_subcategory_id:
+          decision.categoryResolution === "accepted"
+            ? decision.effectiveSubcategoryId
+            : null,
+        p_supporting_transactions_classified:
+          decision.supportingTransactionsClassified,
+      },
+    );
+    if (categoryUndoError) throw new Error("RECURRING_UNDO_FAILED");
     return await resultAfterSave(user.id, patternKey, decision);
   } catch {
     return {

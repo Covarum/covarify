@@ -29,6 +29,7 @@ export const SYSTEM_CATEGORY_PARENTS: CategoryParent[] = [
   { id: "10000000-0000-4000-8000-000000000010", displayName: "Transfers", normalizedName: "transfers", sourceKeys: ["TRANSFER_IN", "TRANSFER_OUT"] },
   { id: "10000000-0000-4000-8000-000000000011", displayName: "Loan Payments", normalizedName: "loan payments", sourceKeys: ["LOAN_PAYMENTS"] },
   { id: "10000000-0000-4000-8000-000000000012", displayName: "Other", normalizedName: "other", sourceKeys: ["GENERAL_SERVICES", "GOVERNMENT_AND_NON_PROFIT", "BANK_FEES", "OTHER", "UNCATEGORIZED"] },
+  { id: "10000000-0000-4000-8000-000000000013", displayName: "Insurance", normalizedName: "insurance", sourceKeys: ["INSURANCE"] },
 ];
 
 const protectedDistinctPairs = new Set([

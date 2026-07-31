@@ -25,9 +25,14 @@ import {
 } from "@/lib/money-picture";
 import {
   saveRecurringCommitmentDecision,
+  saveRecurringCommitmentCategoryDecision,
   undoRecurringCommitmentDecision,
   type RecurringReviewActionState,
 } from "./actions";
+import {
+  INSURANCE_SUBCATEGORIES,
+  type RecurringCategoryProposal,
+} from "@/lib/recurring-category-understanding";
 import styles from "./recurring.module.css";
 
 type RecurringData = {
@@ -77,6 +82,7 @@ const initialRecurringReviewActionState: RecurringReviewActionState = {
   destination: null,
   message: null,
   savedLabels: [],
+  categoryProposal: null,
 };
 
 const defaultDecision = (
@@ -96,6 +102,13 @@ const defaultDecision = (
   manualOriginalAmount: commitment.decision?.manualOriginalAmount ?? null,
   manualPaymentsRemaining: commitment.decision?.manualPaymentsRemaining ?? null,
   manualNextPaymentDate: commitment.decision?.manualNextPaymentDate || null,
+  effectiveParentCategoryId: commitment.decision?.effectiveParentCategoryId || null,
+  effectiveSubcategoryId: commitment.decision?.effectiveSubcategoryId || null,
+  effectiveParentCategory: commitment.decision?.effectiveParentCategory || null,
+  effectiveSubcategory: commitment.decision?.effectiveSubcategory || null,
+  categoryResolution: commitment.decision?.categoryResolution || null,
+  supportingTransactionsClassified:
+    commitment.decision?.supportingTransactionsClassified || false,
 });
 
 const decisionSignature = (decision: RecurringCommitmentDecision) =>
@@ -156,11 +169,20 @@ function ReviewForm({
       : "unsure",
   );
   const [touched, setTouched] = useState(false);
+  const [categoryChoice, setCategoryChoice] = useState<string>("");
+  const [transactionScope, setTransactionScope] =
+    useState<"transactions" | "commitment" | "not_now">("not_now");
+  const [categorySaving, startCategorySave] = useTransition();
+  const [categoryError, setCategoryError] = useState<string | null>(null);
   const [state, formAction, pending] = useActionState(
     saveRecurringCommitmentDecision,
     initialRecurringReviewActionState,
   );
   const handledState = useRef<RecurringReviewActionState | null>(null);
+  const categoryProposal: RecurringCategoryProposal | null =
+    state.categoryProposal;
+  const selectedCategoryId =
+    categoryChoice || categoryProposal?.subcategoryId || "";
   const changed = touched || decisionSignature(draft) !== decisionSignature(initial);
   const identityEligible = ["subscription", "membership", "software_service"].includes(
     commitment.type,
@@ -172,8 +194,36 @@ function ReviewForm({
   useEffect(() => {
     if (state.status !== "saved" || handledState.current === state) return;
     handledState.current = state;
+    if (state.categoryProposal) {
+      return;
+    }
     onSaved(state);
   }, [onSaved, state]);
+
+  const resolveCategory = (resolution: "accepted" | "kept_current") => {
+    if (!categoryProposal) return;
+    const selected =
+      INSURANCE_SUBCATEGORIES.find((item) => item.id === selectedCategoryId) ||
+      INSURANCE_SUBCATEGORIES[0];
+    setCategoryError(null);
+    startCategorySave(async () => {
+      const result = await saveRecurringCommitmentCategoryDecision({
+        patternKey: commitment.patternKey,
+        resolution,
+        parentCategoryId: categoryProposal.parentCategoryId,
+        parentCategory: categoryProposal.parentCategory,
+        subcategoryId: selected.id,
+        subcategory: selected.name,
+        applyToSupportingTransactions:
+          resolution === "accepted" && transactionScope === "transactions",
+      });
+      if (result.status === "saved") {
+        onSaved(result);
+      } else {
+        setCategoryError(result.error);
+      }
+    });
+  };
 
   const update = <K extends keyof RecurringCommitmentDecision>(
     key: K,
@@ -189,6 +239,51 @@ function ReviewForm({
       <input type="hidden" name="recurringStatus" value={draft.recurringStatus} />
       <input type="hidden" name="recognitionStatus" value={draft.recognitionStatus} />
       <input type="hidden" name="disposition" value={draft.disposition} />
+
+      {categoryProposal ? (
+        <section className={styles.categoryProposal} aria-live="polite">
+          <p>
+            {categoryProposal.source === "deterministic_note"
+              ? `You described this as ${categoryProposal.evidence}.`
+              : `This is marked as Insurance, but its category is still ${commitment.effectiveCategory}.`}
+          </p>
+          <strong>
+            Suggested classification: {categoryProposal.parentCategory} →{" "}
+            {INSURANCE_SUBCATEGORIES.find((item) => item.id === selectedCategoryId)?.name}
+          </strong>
+          <label>
+            Choose another category
+            <select
+              value={selectedCategoryId}
+              onChange={(event) => setCategoryChoice(event.target.value)}
+            >
+              {INSURANCE_SUBCATEGORIES.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <fieldset>
+            <legend>
+              Use this classification for the supporting{" "}
+              {commitment.displayName} transactions too?
+            </legend>
+            <label><input type="radio" name={`scope-${commitment.patternKey}`} checked={transactionScope === "transactions"} onChange={() => setTransactionScope("transactions")} /> Yes, apply to these transactions</label>
+            <label><input type="radio" name={`scope-${commitment.patternKey}`} checked={transactionScope === "commitment"} onChange={() => setTransactionScope("commitment")} /> Use only for this commitment</label>
+            <label><input type="radio" name={`scope-${commitment.patternKey}`} checked={transactionScope === "not_now"} onChange={() => setTransactionScope("not_now")} /> Not now</label>
+          </fieldset>
+          {categoryError ? <p className={styles.inlineError}>{categoryError}</p> : null}
+          <div className={styles.quickActions}>
+            <button type="button" className={styles.primary} disabled={categorySaving} onClick={() => resolveCategory("accepted")}>
+              Use this classification
+            </button>
+            <button type="button" disabled={categorySaving} onClick={() => resolveCategory("kept_current")}>
+              Keep current classification
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <ChoiceGroup
         legend="1. What is this charge?"
@@ -491,7 +586,7 @@ function ReviewForm({
       <button
         type="submit"
         className={styles.primary}
-        disabled={!changed || pending}
+        disabled={!changed || pending || Boolean(categoryProposal)}
       >
         {pending ? "Saving…" : "Save"}
       </button>

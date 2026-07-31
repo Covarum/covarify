@@ -41,6 +41,12 @@ export type RecurringCommitmentDecision = {
   manualOriginalAmount: number | null;
   manualPaymentsRemaining: number | null;
   manualNextPaymentDate: string | null;
+  effectiveParentCategoryId: string | null;
+  effectiveSubcategoryId: string | null;
+  effectiveParentCategory: string | null;
+  effectiveSubcategory: string | null;
+  categoryResolution: "accepted" | "kept_current" | "unresolved" | null;
+  supportingTransactionsClassified: boolean;
 };
 
 export type RecurringCommitment = {
@@ -144,11 +150,11 @@ export function buildRecurringCommitments(
     // Housing obligations already have a canonical, versioned model. Do not
     // create a second recurring truth for the same rent or mortgage payments.
     if (rows.some((row) => row.housingObligation)) continue;
-    const category = formatTransactionCategoryPath(rows.at(-1)!);
+    const supportingCategory = formatTransactionCategoryPath(rows.at(-1)!);
     const type = commitmentType(candidate.proposedType, candidate.displayName);
     if (
       type === "unknown_recurring" &&
-      generalRetailCategory.test(category)
+      generalRetailCategory.test(supportingCategory)
     ) {
       continue;
     }
@@ -228,7 +234,13 @@ export function buildRecurringCommitments(
           : nextExpected(candidate.lastObserved, candidate.cadence),
       paymentAccountId: candidate.account.id,
       paymentAccountLabel: candidate.account.label,
-      effectiveCategory: category,
+      effectiveCategory:
+        decision?.categoryResolution === "accepted" &&
+        decision.effectiveParentCategory
+          ? decision.effectiveSubcategory
+            ? `${decision.effectiveParentCategory} → ${decision.effectiveSubcategory}`
+            : decision.effectiveParentCategory
+          : supportingCategory,
       supportingTransactionIds: rows.map((row) => row.id),
       supportingTransactions: rows,
       variableAmount,
