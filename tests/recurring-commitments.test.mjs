@@ -171,7 +171,60 @@ test("Affirm and Klarna are possible installments and distinct amount plans stay
   assert.ok(commitments.every((item) => item.attentionReasons.some((reason) => /may include more than one payment plan/i.test(reason))));
   const klarna = buildRecurringCommitments(monthly("Klarna payment"))[0];
   assert.equal(klarna.type, "buy_now_pay_later");
+  assert.equal(klarna.detectedType, "buy_now_pay_later");
   assert.notEqual(klarna.type, "subscription");
+});
+
+test("confirmed installment type and completed activity remain independent", () => {
+  const detected = buildRecurringCommitments(monthly("Installment payment"))[0];
+  const completed = new Map([[detected.patternKey, {
+    recurringStatus: "completed",
+    recognitionStatus: "recognized",
+    disposition: "keep",
+    commitmentType: "installment_loan",
+    ownerLabel: "Mine",
+    userNote: null,
+    identityNote: null,
+    loginStatus: "unsure",
+    duplicateDecision: null,
+    manualOriginalPurpose: null,
+    manualCurrentBalance: null,
+    manualOriginalAmount: null,
+    manualPaymentsRemaining: null,
+    manualNextPaymentDate: null,
+  }]]);
+  const commitment = buildRecurringCommitments(monthly("Installment payment"), completed)[0];
+  assert.equal(commitment.detectedType, "unknown_recurring");
+  assert.equal(commitment.type, "installment_loan");
+  assert.equal(commitment.status, "completed");
+  assert.equal(recurringCommitmentSummary([commitment]).confirmed, 0);
+  assert.equal(recurringCommitmentSummary([commitment]).completed, 1);
+});
+
+test("known BNPL providers can be confirmed without losing cautious detection", () => {
+  const detected = buildRecurringCommitments(monthly("Klarna payment"))[0];
+  assert.equal(detected.decision, null);
+  assert.equal(detected.detectedType, "buy_now_pay_later");
+  const decisions = new Map([[detected.patternKey, {
+    recurringStatus: "confirmed",
+    recognitionStatus: "recognized",
+    disposition: "keep",
+    commitmentType: "buy_now_pay_later",
+    ownerLabel: "Mine",
+    userNote: null,
+    identityNote: null,
+    loginStatus: "unsure",
+    duplicateDecision: null,
+    manualOriginalPurpose: null,
+    manualCurrentBalance: null,
+    manualOriginalAmount: null,
+    manualPaymentsRemaining: null,
+    manualNextPaymentDate: null,
+  }]]);
+  const confirmed = buildRecurringCommitments(monthly("Klarna payment"), decisions)[0];
+  assert.equal(confirmed.type, "buy_now_pay_later");
+  assert.equal(confirmed.status, "needs_attention");
+  assert.ok(confirmed.installmentAmbiguous);
 });
 
 test("price attention requires both the absolute and percentage threshold", () => {
@@ -223,6 +276,13 @@ test("migration enforces owner-scoped evidence and append-only decision chains",
   assert.match(migration, /enable row level security/g);
   assert.match(migration, /housing_obligation_version_id[\s\S]*recurring_obligation_versions/);
   assert.doesNotMatch(migration, /\b(drop table|truncate|delete from)\b/i);
+});
+
+test("completed activity migration extends only the versioned decision status", () => {
+  const migration = readFileSync(new URL("../supabase/migrations/20260731010000_add_completed_recurring_commitment_state.sql", import.meta.url), "utf8");
+  assert.match(migration, /recurring_status in \('confirmed', 'completed', 'possible', 'not_recurring'\)/);
+  assert.match(migration, /without erasing commitment_type/);
+  assert.doesNotMatch(migration, /\b(drop table|truncate|delete from|update public\.)\b/i);
 });
 
 test("consumer UI is real, cautious, password-free, and responsive", () => {
@@ -280,11 +340,14 @@ test("supporting evidence is loaded through the authenticated owner scope", () =
 
 test("review choices are progressive, visibly selected, and saved once", () => {
   const review = readFileSync(new URL("../app/account/recurring/recurring-workspace.tsx", import.meta.url), "utf8");
-  assert.match(review, /1\. Does this charge repeat\?/);
-  assert.match(review, /2\. Do you recognize this charge\?/);
-  assert.match(review, /3\. What would you like to do\?/);
-  assert.match(review, /Yes, it’s recurring/);
-  assert.match(review, /No, it isn’t recurring/);
+  assert.match(review, /1\. What is this charge\?/);
+  assert.match(review, /2\. Does this payment still repeat\?/);
+  assert.match(review, /3\. Do you recognize it\?/);
+  assert.match(review, /4\. What would you like to do\?/);
+  assert.match(review, /Use \$\{typeLabel\[commitment\.detectedType\]\}/);
+  assert.match(review, /Choose another type/);
+  assert.match(review, /Yes, it is active/);
+  assert.match(review, /No, it is finished/);
   assert.match(review, /Yes, I recognize it/);
   assert.match(review, /No, I don’t recognize it/);
   assert.match(review, /aria-pressed=\{selected\}/);
@@ -294,6 +357,11 @@ test("review choices are progressive, visibly selected, and saved once", () => {
   assert.match(review, /pending \? "Saving…" : "Save"/);
   assert.equal((review.match(/action=\{formAction\}/g) || []).length, 1);
   assert.doesNotMatch(review, /<form action=\{saveRecurringCommitmentDecision\}/);
+  assert.doesNotMatch(review, /No, it isn’t recurring/);
+  assert.match(review, /draft\.recurringStatus === "completed"/);
+  assert.match(review, /Completed Plans/);
+  assert.match(review, /Possible installment payment/);
+  assert.match(review, /Buy now, pay later/);
 });
 
 test("save feedback, section movement, errors, and undo remain explicit", () => {
@@ -310,6 +378,7 @@ test("save feedback, section movement, errors, and undo remain explicit", () => 
   assert.match(action, /removed from recurring suggestions/);
   assert.match(action, /moved to Needs Attention/);
   assert.match(action, /remains in Possible Recurring/);
+  assert.match(action, /Saved as a completed installment plan/);
   assert.match(action, /supersedes_version_id/);
   assert.match(action, /record_recurring_commitment_decision/);
 });

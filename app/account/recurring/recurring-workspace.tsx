@@ -50,12 +50,22 @@ const typeLabel: Record<RecurringCommitment["type"], string> = {
   insurance: "Insurance",
   membership: "Membership",
   software_service: "Software or service",
-  installment_loan: "Possible installment payment",
-  buy_now_pay_later: "Possible installment payment",
+  installment_loan: "Installment payment",
+  buy_now_pay_later: "Buy now, pay later",
   loan_payment: "Loan payment",
   recurring_transfer: "Recurring transfer",
   other_recurring: "Other recurring",
   unknown_recurring: "Unknown recurring",
+};
+
+const detectedTypeLabel = (commitment: RecurringCommitment) => {
+  if (
+    !commitment.decision?.commitmentType &&
+    ["installment_loan", "buy_now_pay_later"].includes(commitment.detectedType)
+  ) {
+    return "Possible installment payment";
+  }
+  return typeLabel[commitment.type];
 };
 
 const initialRecurringReviewActionState: RecurringReviewActionState = {
@@ -75,7 +85,7 @@ const defaultDecision = (
   recurringStatus: commitment.decision?.recurringStatus || "possible",
   recognitionStatus: commitment.decision?.recognitionStatus || "unsure",
   disposition: commitment.decision?.disposition || "unsure",
-  commitmentType: commitment.decision?.commitmentType || commitment.type,
+  commitmentType: commitment.decision?.commitmentType || null,
   ownerLabel: commitment.decision?.ownerLabel || "Not sure",
   userNote: commitment.decision?.userNote || null,
   identityNote: commitment.decision?.identityNote || null,
@@ -138,6 +148,13 @@ function ReviewForm({
 }) {
   const initial = useMemo(() => defaultDecision(commitment), [commitment]);
   const [draft, setDraft] = useState(initial);
+  const [typeChoice, setTypeChoice] = useState<"suggested" | "other" | "unsure">(
+    commitment.decision?.commitmentType
+      ? commitment.decision.commitmentType === commitment.detectedType
+        ? "suggested"
+        : "other"
+      : "unsure",
+  );
   const [touched, setTouched] = useState(false);
   const [state, formAction, pending] = useActionState(
     saveRecurringCommitmentDecision,
@@ -174,85 +191,33 @@ function ReviewForm({
       <input type="hidden" name="disposition" value={draft.disposition} />
 
       <ChoiceGroup
-        legend="1. Does this charge repeat?"
-        value={draft.recurringStatus}
+        legend="1. What is this charge?"
+        value={typeChoice}
         onChange={(value) => {
-          update("recurringStatus", value);
-          if (value === "not_recurring") {
-            update("recognitionStatus", "unsure");
-            update("disposition", "unsure");
-          }
+          setTouched(true);
+          setTypeChoice(value);
+          if (value === "suggested") update("commitmentType", commitment.detectedType);
+          if (value === "unsure") update("commitmentType", null);
         }}
         options={[
-          { value: "confirmed", label: "Yes, it’s recurring" },
-          { value: "not_recurring", label: "No, it isn’t recurring" },
-          { value: "possible", label: "I’m not sure" },
+          {
+            value: "suggested",
+            label: `Use ${typeLabel[commitment.detectedType]}`,
+            help: "Suggested from posted-payment evidence.",
+          },
+          { value: "other", label: "Choose another type" },
+          { value: "unsure", label: "Not sure" },
         ]}
       />
-
-      {draft.recurringStatus !== "not_recurring" ? (
-        <ChoiceGroup
-          legend="2. Do you recognize this charge?"
-          value={draft.recognitionStatus}
-          onChange={(value) => {
-            update("recognitionStatus", value);
-            if (value === "unsure") {
-              update("disposition", "unsure");
-            } else if (value === "unrecognized" && draft.disposition === "keep") {
-              update("disposition", "unsure");
-            }
-          }}
-          options={[
-            { value: "recognized", label: "Yes, I recognize it" },
-            { value: "unrecognized", label: "No, I don’t recognize it" },
-            { value: "unsure", label: "Not sure" },
-          ]}
-        />
-      ) : null}
-
-      {draft.recurringStatus !== "not_recurring" &&
-      draft.recognitionStatus === "recognized" ? (
-        <ChoiceGroup
-          legend="3. What would you like to do?"
-          value={draft.disposition}
-          onChange={(value) => update("disposition", value)}
-          options={[
-            { value: "keep", label: "Keep" },
-            { value: "review", label: "Review later" },
-            {
-              value: "cancellation_requested",
-              label: "Mark for cancellation",
-              help: "Covarify will not cancel the service.",
-            },
-            { value: "unsure", label: "Not sure" },
-          ]}
-        />
-      ) : null}
-
-      {draft.recurringStatus !== "not_recurring" &&
-      draft.recognitionStatus === "unrecognized" ? (
-        <ChoiceGroup
-          legend="3. What would you like to do next?"
-          value={draft.disposition}
-          onChange={(value) => update("disposition", value)}
-          options={[
-            { value: "review", label: "I may need to investigate this" },
-            {
-              value: "cancellation_requested",
-              label: "Mark for cancellation",
-              help: "This records intent only and does not report fraud or cancel anything.",
-            },
-            { value: "unsure", label: "Not sure" },
-          ]}
-        />
-      ) : null}
-
-      <div className={styles.editor}>
-        <label>
-          Commitment type
+      <p className={styles.caution}>
+        Suggested type: <strong>{typeLabel[commitment.detectedType]}</strong>
+      </p>
+      {typeChoice === "other" ? (
+        <label className={styles.typePicker}>
+          Choose a type
           <select
             name="commitmentType"
-            value={draft.commitmentType || commitment.type}
+            value={draft.commitmentType || "unknown_recurring"}
             onChange={(event) =>
               update(
                 "commitmentType",
@@ -260,13 +225,93 @@ function ReviewForm({
               )
             }
           >
-            {Object.entries(typeLabel).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
+            {Object.entries(typeLabel)
+              .filter(([value]) => value !== "unknown_recurring")
+              .map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
           </select>
         </label>
+      ) : (
+        <input
+          type="hidden"
+          name="commitmentType"
+          value={draft.commitmentType || ""}
+        />
+      )}
+
+      <ChoiceGroup
+        legend="2. Does this payment still repeat?"
+        value={draft.recurringStatus}
+        onChange={(value) => {
+          update("recurringStatus", value);
+          if (value === "completed") update("disposition", "unsure");
+        }}
+        options={[
+          { value: "confirmed", label: "Yes, it is active" },
+          { value: "completed", label: "No, it is finished" },
+          { value: "possible", label: "I’m not sure" },
+        ]}
+      />
+
+      <ChoiceGroup
+        legend="3. Do you recognize it?"
+        value={draft.recognitionStatus}
+        onChange={(value) => {
+          update("recognitionStatus", value);
+          if (value === "unsure") {
+            update("disposition", "unsure");
+          } else if (value === "unrecognized" && draft.disposition === "keep") {
+            update("disposition", "unsure");
+          }
+        }}
+        options={[
+          { value: "recognized", label: "Yes, I recognize it" },
+          { value: "unrecognized", label: "No, I don’t recognize it" },
+          { value: "unsure", label: "Not sure" },
+        ]}
+      />
+
+      {draft.recognitionStatus === "recognized" ? (
+        <ChoiceGroup
+          legend="4. What would you like to do?"
+          value={draft.disposition}
+          onChange={(value) => update("disposition", value)}
+          options={[
+            { value: "keep", label: "Keep" },
+            { value: "review", label: "Review later" },
+            ...(draft.recurringStatus === "completed"
+              ? []
+              : [{
+                  value: "cancellation_requested" as const,
+                  label: "Mark for cancellation",
+                  help: "Covarify will not cancel the service.",
+                }]),
+            { value: "unsure", label: "Not sure" },
+          ]}
+        />
+      ) : null}
+
+      {draft.recognitionStatus === "unrecognized" ? (
+        <ChoiceGroup
+          legend="4. What would you like to do next?"
+          value={draft.disposition}
+          onChange={(value) => update("disposition", value)}
+          options={[
+            { value: "review", label: "I may need to investigate this" },
+            ...(draft.recurringStatus === "completed"
+              ? []
+              : [{
+                  value: "cancellation_requested" as const,
+                  label: "Mark for cancellation",
+                  help: "This records intent only and does not report fraud or cancel anything.",
+                }]),
+            { value: "unsure", label: "Not sure" },
+          ]}
+        />
+      ) : null}
+
+      <div className={styles.editor}>
         <label>
           Owner
           <select
@@ -480,16 +525,27 @@ function CommitmentCard({
     <article className={styles.card} id={`commitment-${commitment.patternKey}`}>
       <header>
         <div>
-          <span className={styles.kind}>{typeLabel[commitment.type]}</span>
+          <span className={styles.kind}>{detectedTypeLabel(commitment)}</span>
           <h3>{commitment.displayName}</h3>
           <p>{amountDescription(commitment)}</p>
         </div>
-        <span className={styles.status}>{commitment.status.replace("_", " ")}</span>
+        <span className={styles.status}>
+          {commitment.status === "confirmed"
+            ? "Active"
+            : commitment.status === "completed"
+              ? "Completed"
+              : commitment.status.replace("_", " ")}
+        </span>
       </header>
       <dl className={styles.facts}>
         <div><dt>Last charge</dt><dd>{commitment.lastObserved} · {money(commitment.lastAmount)}</dd></div>
         <div><dt>Payment account</dt><dd>{commitment.paymentAccountLabel}</dd></div>
+        <div><dt>Type</dt><dd>{detectedTypeLabel(commitment)}</dd></div>
         <div><dt>Category</dt><dd>{commitment.effectiveCategory}</dd></div>
+        <div>
+          <dt>Evidence</dt>
+          <dd>Detected from {commitment.supportingTransactionIds.length} posted payments</dd>
+        </div>
         {commitment.nextExpected ? <div><dt>Next</dt><dd>Expected around {commitment.nextExpected}</dd></div> : null}
         {commitment.decision?.ownerLabel ? <div><dt>Owner</dt><dd>{commitment.decision.ownerLabel}</dd></div> : null}
       </dl>
@@ -629,6 +685,7 @@ export function RecurringCommitmentsWorkspace({
   const attention = commitments.filter((item) => item.status === "needs_attention");
   const confirmed = commitments.filter((item) => item.status === "confirmed");
   const possible = commitments.filter((item) => item.status === "possible");
+  const completed = commitments.filter((item) => item.status === "completed");
 
   useEffect(
     () => () => {
@@ -656,6 +713,8 @@ export function RecurringCommitmentsWorkspace({
       const destinationId =
         state.destination === "confirmed"
           ? "confirmed-recurring"
+          : state.destination === "completed"
+            ? "completed-plans"
           : state.destination === "attention"
             ? "needs-attention"
             : state.destination === "possible"
@@ -718,6 +777,7 @@ export function RecurringCommitmentsWorkspace({
         <article><strong>{summary.confirmed}</strong><span>Confirmed recurring</span></article>
         <article><strong>{summary.possible}</strong><span>Possible recurring</span></article>
         <article><strong>{summary.needsAttention}</strong><span>Needs attention</span></article>
+        {summary.completed ? <article><strong>{summary.completed}</strong><span>Completed plans</span></article> : null}
         {summary.monthlyEquivalent !== null ? <article><strong>{money(summary.monthlyEquivalent)}</strong><span>Estimated monthly equivalent</span><small>Fixed confirmed weekly, biweekly, and monthly commitments only.</small></article> : null}
       </section>
       {!commitments.length ? (
@@ -731,6 +791,7 @@ export function RecurringCommitmentsWorkspace({
           <CommitmentSection id="needs-attention" title="Needs Attention" items={attention} onSaved={applyResult} />
           <CommitmentSection id="confirmed-recurring" title="Confirmed Recurring" items={confirmed} onSaved={applyResult} />
           <CommitmentSection id="possible-recurring" title="Possible Recurring" items={possible} onSaved={applyResult} />
+          <CommitmentSection id="completed-plans" title="Completed Plans" items={completed} onSaved={applyResult} />
         </>
       )}
     </main>

@@ -27,7 +27,7 @@ export type RecurringCommitmentType =
   | "unknown_recurring";
 
 export type RecurringCommitmentDecision = {
-  recurringStatus: "confirmed" | "possible" | "not_recurring";
+  recurringStatus: "confirmed" | "completed" | "possible" | "not_recurring";
   recognitionStatus: "recognized" | "unrecognized" | "unsure";
   disposition: "keep" | "review" | "cancellation_requested" | "unsure";
   commitmentType: RecurringCommitmentType | null;
@@ -49,8 +49,9 @@ export type RecurringCommitment = {
   engineRuleVersion: string;
   displayName: string;
   normalizedMerchant: string;
+  detectedType: RecurringCommitmentType;
   type: RecurringCommitmentType;
-  status: "confirmed" | "possible" | "needs_attention";
+  status: "confirmed" | "completed" | "possible" | "needs_attention";
   confidence: FinancialEventConfidence;
   confidenceExplanation: string;
   cadence: RecurrenceCadence;
@@ -194,8 +195,12 @@ export function buildRecurringCommitments(
     const recurringStatus = decision?.recurringStatus || "possible";
     if (recurringStatus === "not_recurring") continue;
     const status = attentionReasons.length
-      ? "needs_attention"
-      : recurringStatus === "confirmed"
+      ? recurringStatus === "completed"
+        ? "completed"
+        : "needs_attention"
+      : recurringStatus === "completed"
+        ? "completed"
+        : recurringStatus === "confirmed"
         ? "confirmed"
         : "possible";
     commitments.push({
@@ -204,6 +209,7 @@ export function buildRecurringCommitments(
       engineRuleVersion: candidate.engineRuleVersion,
       displayName: candidate.displayName,
       normalizedMerchant: normalizeMerchant(candidate.displayName),
+      detectedType: type,
       type: decision?.commitmentType || type,
       status,
       confidence: candidate.confidence,
@@ -250,8 +256,8 @@ export function buildRecurringCommitments(
   }
   return commitments.sort(
     (a, b) =>
-      ({ needs_attention: 0, confirmed: 1, possible: 2 }[a.status] -
-        { needs_attention: 0, confirmed: 1, possible: 2 }[b.status]) ||
+      ({ needs_attention: 0, confirmed: 1, possible: 2, completed: 3 }[a.status] -
+        { needs_attention: 0, confirmed: 1, possible: 2, completed: 3 }[b.status]) ||
       b.lastObserved.localeCompare(a.lastObserved) ||
       a.patternKey.localeCompare(b.patternKey),
   );
@@ -261,6 +267,7 @@ export function recurringCommitmentSummary(commitments: RecurringCommitment[]) {
   const confirmed = commitments.filter((item) => item.status === "confirmed");
   const possible = commitments.filter((item) => item.status === "possible");
   const needsAttention = commitments.filter((item) => item.status === "needs_attention");
+  const completed = commitments.filter((item) => item.status === "completed");
   const monthlyEligible =
     confirmed.length > 0 &&
     confirmed.every(
@@ -279,6 +286,7 @@ export function recurringCommitmentSummary(commitments: RecurringCommitment[]) {
     confirmed: confirmed.length,
     possible: possible.length,
     needsAttention: needsAttention.length,
+    completed: completed.length,
     monthlyEquivalent,
     meaningfulAttention:
       needsAttention

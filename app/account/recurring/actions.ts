@@ -16,7 +16,7 @@ export type RecurringReviewActionState = {
   patternKey: string | null;
   decision: RecurringCommitmentDecision | null;
   commitment: RecurringCommitment | null;
-  destination: "confirmed" | "possible" | "attention" | "suppressed" | null;
+  destination: "confirmed" | "completed" | "possible" | "attention" | "suppressed" | null;
   message: string | null;
   savedLabels: string[];
 };
@@ -45,7 +45,7 @@ const allowedTypes = new Set<RecurringCommitmentType>([
   "other_recurring",
   "unknown_recurring",
 ]);
-const recurringStatuses = new Set(["confirmed", "possible", "not_recurring"]);
+const recurringStatuses = new Set(["confirmed", "completed", "possible", "not_recurring"]);
 const recognitionStatuses = new Set(["recognized", "unrecognized", "unsure"]);
 const dispositions = new Set(["keep", "review", "cancellation_requested", "unsure"]);
 const owners = new Set(["Mine", "Household", "Business", "Someone else", "Not sure"]);
@@ -114,6 +114,7 @@ const assertNoCredential = (value: string | null) => {
 
 const destinationFor = (commitment: RecurringCommitment | null) => {
   if (!commitment) return "suppressed" as const;
+  if (commitment.status === "completed") return "completed" as const;
   return commitment.status === "confirmed"
     ? ("confirmed" as const)
     : commitment.status === "needs_attention"
@@ -131,6 +132,9 @@ const movementMessage = (
   if (destination === "confirmed") {
     return "This commitment was moved to Confirmed Recurring.";
   }
+  if (destination === "completed") {
+    return "Saved as a completed installment plan.";
+  }
   if (destination === "attention") {
     return "This commitment was moved to Needs Attention.";
   }
@@ -143,7 +147,9 @@ const movementMessage = (
 const labelsFor = (decision: RecurringCommitmentDecision) => {
   const labels = [
     decision.recurringStatus === "confirmed"
-      ? "Confirmed recurring"
+      ? "Active"
+      : decision.recurringStatus === "completed"
+        ? "Completed"
       : decision.recurringStatus === "not_recurring"
         ? "Not recurring"
         : "Recurrence not sure",
@@ -176,7 +182,7 @@ async function persistDecision(
         engineRuleVersion: commitment.engineRuleVersion,
         displayName: commitment.displayName,
         normalizedMerchant: commitment.normalizedMerchant,
-        commitmentType: commitment.type,
+        commitmentType: commitment.detectedType,
         confidence: commitment.confidence,
         cadence: commitment.cadence,
         typicalAmount: commitment.typicalAmount,
@@ -252,11 +258,11 @@ export async function saveRecurringCommitmentDecision(
         dispositions,
         prior?.disposition || "unsure",
       ) as RecurringCommitmentDecision["disposition"],
-      commitmentType: choice(
+      commitmentType: optionalChoice(
         formData,
         "commitmentType",
         allowedTypes,
-        prior?.commitmentType || commitment.type,
+        null,
       ),
       ownerLabel: choice(
         formData,
@@ -287,6 +293,11 @@ export async function saveRecurringCommitmentDecision(
     if (decision.recurringStatus === "not_recurring") {
       decision.recognitionStatus = "unsure";
       decision.disposition = "unsure";
+    } else if (decision.recurringStatus === "completed") {
+      decision.disposition =
+        decision.disposition === "cancellation_requested"
+          ? "unsure"
+          : decision.disposition;
     } else if (decision.recognitionStatus === "unsure") {
       decision.disposition = "unsure";
     } else if (
@@ -313,12 +324,13 @@ export async function saveRecurringCommitmentDecision(
 
 const decisionFromRow = (
   row: Record<string, unknown>,
-  fallbackType: RecurringCommitmentType,
 ): RecurringCommitmentDecision => ({
   recurringStatus: (row.recurring_status || "possible") as RecurringCommitmentDecision["recurringStatus"],
   recognitionStatus: (row.recognition_status || "unsure") as RecurringCommitmentDecision["recognitionStatus"],
   disposition: (row.disposition || "unsure") as RecurringCommitmentDecision["disposition"],
-  commitmentType: (row.commitment_type || fallbackType) as RecurringCommitmentType,
+  commitmentType: row.commitment_type
+    ? (row.commitment_type as RecurringCommitmentType)
+    : null,
   ownerLabel: (row.owner_label || "Not sure") as RecurringCommitmentDecision["ownerLabel"],
   userNote: row.user_note ? String(row.user_note) : null,
   identityNote: row.identity_note ? String(row.identity_note) : null,
@@ -373,12 +385,9 @@ export async function undoRecurringCommitmentDecision(
       ? versions.find((row) => row.id === current.supersedes_version_id)
       : null;
     const detection = stored.detection_evidence as Record<string, unknown>;
-    const fallbackType = String(
-      detection.commitmentType || "unknown_recurring",
-    ) as RecurringCommitmentType;
     const decision = previous
-      ? decisionFromRow(previous as Record<string, unknown>, fallbackType)
-      : decisionFromRow({}, fallbackType);
+      ? decisionFromRow(previous as Record<string, unknown>)
+      : decisionFromRow({});
 
     const { error } = await admin.rpc("record_recurring_commitment_decision", {
       p_user_id: user.id,
