@@ -12,13 +12,18 @@ import {
 import {
   amountDescription,
   money,
+  reconcileSupportingTransactions,
   recurringCommitmentSummary,
   type RecurringCommitment,
   type RecurringCommitmentDecision,
 } from "@/lib/recurring-commitments";
-import { formatTransactionDisplayAmount } from "@/lib/money-picture";
 import {
-  initialRecurringReviewActionState,
+  formatCategoryLabel,
+  formatTransactionCategoryPath,
+  formatTransactionDisplayAmount,
+  type MoneyTransaction,
+} from "@/lib/money-picture";
+import {
   saveRecurringCommitmentDecision,
   undoRecurringCommitmentDecision,
   type RecurringReviewActionState,
@@ -51,6 +56,17 @@ const typeLabel: Record<RecurringCommitment["type"], string> = {
   recurring_transfer: "Recurring transfer",
   other_recurring: "Other recurring",
   unknown_recurring: "Unknown recurring",
+};
+
+const initialRecurringReviewActionState: RecurringReviewActionState = {
+  status: "idle",
+  error: null,
+  patternKey: null,
+  decision: null,
+  commitment: null,
+  destination: null,
+  message: null,
+  savedLabels: [],
 };
 
 const defaultDecision = (
@@ -445,6 +461,21 @@ function CommitmentCard({
   commitment: RecurringCommitment;
   onSaved: (state: RecurringReviewActionState) => void;
 }) {
+  const { available, missingCount } = reconcileSupportingTransactions(commitment);
+  const [selectedTransaction, setSelectedTransaction] =
+    useState<MoneyTransaction | null>(null);
+  const closeButton = useRef<HTMLButtonElement | null>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (selectedTransaction) closeButton.current?.focus();
+  }, [selectedTransaction]);
+
+  const closeTransaction = () => {
+    setSelectedTransaction(null);
+    requestAnimationFrame(() => opener.current?.focus());
+  };
+
   return (
     <article className={styles.card} id={`commitment-${commitment.patternKey}`}>
       <header>
@@ -479,21 +510,78 @@ function CommitmentCard({
           <ReviewForm commitment={commitment} onSaved={onSaved} />
           <section id={`transactions-${commitment.patternKey}`} className={styles.transactions}>
             <h4>Supporting transactions</h4>
-            <p>{commitment.supportingTransactions.length} posted charges from {commitment.firstObserved} through {commitment.lastObserved}.</p>
-            <ul>
-              {commitment.supportingTransactions.map((transaction) => {
+            <p>
+              Supporting charges for {commitment.displayName} ({commitment.cadence}) from{" "}
+              {commitment.firstObserved} through {commitment.lastObserved}.
+            </p>
+            {available.length ? <ul>
+              {available.map((transaction) => {
                 const amount = formatTransactionDisplayAmount(transaction);
                 return (
                   <li key={transaction.id}>
                     <span><strong>{transaction.name}</strong><small>{transaction.date} · {transaction.accountLabel}</small></span>
-                    <strong>
-                      <span className="sr-only">{amount.accessibleText}</span>
-                      <span aria-hidden="true">{amount.displayAmount}</span>
-                    </strong>
+                    <span className={styles.transactionActions}>
+                      <strong>
+                        <span className="sr-only">{amount.accessibleText}</span>
+                        <span aria-hidden="true">{amount.displayAmount}</span>
+                      </strong>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          opener.current = event.currentTarget;
+                          setSelectedTransaction(transaction);
+                        }}
+                      >
+                        Review transaction
+                      </button>
+                    </span>
                   </li>
                 );
               })}
-            </ul>
+            </ul> : null}
+            {missingCount ? (
+              <p className={styles.unavailable} role="status">
+                {missingCount === 1
+                  ? "This supporting transaction is no longer available."
+                  : "One or more supporting transactions are no longer available."}
+              </p>
+            ) : null}
+            {selectedTransaction ? (
+              <div
+                className={styles.transactionDialog}
+                role="dialog"
+                aria-modal="false"
+                aria-labelledby={`transaction-title-${selectedTransaction.id}`}
+              >
+                <div className={styles.transactionDialogHeader}>
+                  <div>
+                    <span>Supporting transaction</span>
+                    <h5 id={`transaction-title-${selectedTransaction.id}`}>
+                      {selectedTransaction.name}
+                    </h5>
+                  </div>
+                  <button ref={closeButton} type="button" onClick={closeTransaction}>
+                    Close
+                  </button>
+                </div>
+                <dl>
+                  <div><dt>Amount</dt><dd>{formatTransactionDisplayAmount(selectedTransaction).displayAmount}</dd></div>
+                  <div><dt>Date</dt><dd>{selectedTransaction.date}</dd></div>
+                  <div><dt>Account</dt><dd>{selectedTransaction.accountLabel}</dd></div>
+                  <div>
+                    <dt>Source category</dt>
+                    <dd>{formatCategoryLabel(selectedTransaction.sourceCategory || selectedTransaction.category) || "Uncategorized"}</dd>
+                  </div>
+                  <div>
+                    <dt>Effective classification</dt>
+                    <dd>{formatTransactionCategoryPath(selectedTransaction)}</dd>
+                  </div>
+                </dl>
+                <button type="button" onClick={closeTransaction}>
+                  Back to {commitment.displayName}
+                </button>
+              </div>
+            ) : null}
           </section>
         </div>
       </details>
