@@ -15,6 +15,9 @@ import {
   type TransactionUnderstandingCompletedDetail,
   type TransactionIntent,
 } from "@/lib/transaction-understanding";
+import {
+  accountCostDisplayLabel,
+} from "@/lib/account-cost-classification";
 import styles from "./transaction-understanding.module.css";
 
 type Candidate = Pick<MoneyTransaction, "id" | "name" | "amount" | "currency" | "date" | "pending" | "accountLabel"> & {
@@ -533,6 +536,7 @@ export function TransactionUnderstanding() {
               <div><dt>Date</dt><dd>{selected.date}</dd></div>
               <div><dt>Account</dt><dd>{selected.accountLabel}</dd></div>
               <div><dt>Source</dt><dd>{formatCategoryLabel(selected.sourceCategory || selected.category)}</dd></div>
+              {accountCostDisplayLabel(selected) ? <div><dt>Account cost</dt><dd>{accountCostDisplayLabel(selected)}</dd></div> : null}
               <div><dt>Main category</dt><dd>{formatCategoryPath({ parentCategory: selected.effectiveParentCategory, sourceCategory: selected.sourceCategory || selected.category })}</dd></div>
               <div><dt>Subcategory</dt><dd>{formatCategoryLabel(selected.effectiveSubcategory) || "None"}</dd></div>
               <div><dt>Your classification</dt><dd>{selected.effectiveSubcategory ? formatCategoryPath({ parentCategory: selected.effectiveParentCategory, subcategory: selected.effectiveSubcategory, sourceCategory: selected.sourceCategory || selected.category }) : formatCategoryLabel(selected.userConfirmedMeaning?.category) || "None"}</dd></div>

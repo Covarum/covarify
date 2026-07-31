@@ -1,4 +1,5 @@
 import type { MoneyTransaction } from "./money-picture.ts";
+import { classifyAccountCost } from "./account-cost-classification.ts";
 
 export const FINANCIAL_EVENTS_RULE_VERSION =
   "financial-events-v2-preview-2026-07-27";
@@ -1129,7 +1130,8 @@ export function buildFinancialEventLayer(
   for (const inference of inferences) {
     if (
       inference.transaction.amount <= 0 ||
-      inference.transaction.transferRelationship !== null
+      inference.transaction.transferRelationship !== null ||
+      classifyAccountCost(inference.transaction)
     ) {
       continue;
     }

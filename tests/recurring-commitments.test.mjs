@@ -42,6 +42,60 @@ test("monthly commitments require sufficient posted evidence and remain explaina
   assert.ok(commitment.nextExpected);
 });
 
+test("credit-card interest and issuer fees never become commitments or duplicate warnings", () => {
+  const costs = [
+    ...monthly("Interest Charge").map((row) => ({
+      ...row,
+      description: "INTEREST CHARGE",
+      merchantName: null,
+      accountType: "credit",
+      accountSubtype: "credit card",
+    })),
+    ...monthly("Annual Fee").map((row) => ({
+      ...row,
+      description: "ANNUAL FEE",
+      merchantName: null,
+      accountType: "credit",
+      accountSubtype: "credit card",
+      plaidAccountId: "account-b",
+    })),
+  ];
+  const commitments = buildRecurringCommitments(costs);
+  assert.deepEqual(commitments, []);
+  assert.deepEqual(recurringCommitmentSummary(commitments), {
+    confirmed: 0,
+    possible: 0,
+    needsAttention: 0,
+    completed: 0,
+    monthlyEquivalent: null,
+    meaningfulAttention: null,
+  });
+});
+
+test("account costs remain in Recent Activity and transaction detail with source evidence", () => {
+  const activity = readFileSync(
+    new URL("../components/account/recent-activity.tsx", import.meta.url),
+    "utf8",
+  );
+  const detail = readFileSync(
+    new URL("../components/account/transaction-understanding.tsx", import.meta.url),
+    "utf8",
+  );
+  const server = readFileSync(
+    new URL("../lib/recurring-commitments-server.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(activity, /covarify:understand-transaction/);
+  assert.match(detail, /Transaction detail/);
+  assert.match(detail, /<dt>Source<\/dt>/);
+  assert.match(detail, /accountCostDisplayLabel/);
+  assert.match(detail, /Account cost/);
+  assert.match(server, /plaid_item_id,name,official_name,mask,type,subtype/);
+  assert.match(server, /institutionName/);
+  assert.match(server, /merchantName/);
+  assert.match(server, /category_data/);
+});
+
 test("supporting transaction reconciliation returns only exact requested evidence", () => {
   const [commitment] = buildRecurringCommitments(monthly());
   const extra = tx("different-user-or-pattern");

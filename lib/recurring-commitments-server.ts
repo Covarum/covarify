@@ -13,14 +13,23 @@ import { displaySeparated } from "@/lib/presentation-separators";
 
 function mapTransaction(
   row: Record<string, unknown>,
-  accountLabel: string,
+  account: {
+    label: string;
+    type: string | null;
+    subtype: string | null;
+    institutionName: string | null;
+  },
 ): MoneyTransaction {
   const category = normalizePersistedPlaidCategory(row.category_data);
   const amount = Number(row.amount);
   return {
     id: String(row.id),
     plaidAccountId: String(row.plaid_account_id),
-    accountLabel,
+    accountLabel: account.label,
+    accountType: account.type,
+    accountSubtype: account.subtype,
+    institutionName: account.institutionName,
+    merchantName: row.merchant_name ? String(row.merchant_name) : null,
     name: String(row.merchant_name || row.transaction_name),
     description: String(row.transaction_name || ""),
     amount,
@@ -99,7 +108,7 @@ export async function loadRecurringCommitments(userId: string) {
   const [accounts, transactions, sync, decisionMap] = await Promise.all([
     admin
       .from("plaid_accounts")
-      .select("id,name,official_name,mask")
+      .select("id,plaid_item_id,name,official_name,mask,type,subtype")
       .eq("user_id", userId)
       .in("plaid_item_id", itemIds)
       .eq("active_status", "active"),
@@ -123,19 +132,30 @@ export async function loadRecurringCommitments(userId: string) {
   if (accounts.error || transactions.error) {
     throw new Error("RECURRING_ACTIVITY_UNAVAILABLE");
   }
-  const labels = new Map(
+  const institutions = new Map(
+    items.map((item) => [item.id, item.institution_name || null]),
+  );
+  const accountContexts = new Map(
     (accounts.data || []).map((account) => [
       account.id,
-      displaySeparated(account.official_name || account.name, account.mask || null),
+      {
+        label: displaySeparated(
+          account.official_name || account.name,
+          account.mask || null,
+        ),
+        type: account.type || null,
+        subtype: account.subtype || null,
+        institutionName: institutions.get(account.plaid_item_id) || null,
+      },
     ]),
   );
   const source = annotateInternalTransfers(
     (transactions.data || [])
-      .filter((row) => labels.has(row.plaid_account_id))
+      .filter((row) => accountContexts.has(row.plaid_account_id))
       .map((row) =>
         mapTransaction(
           row as Record<string, unknown>,
-          labels.get(row.plaid_account_id) || "Connected account",
+          accountContexts.get(row.plaid_account_id)!,
         ),
       ),
   );

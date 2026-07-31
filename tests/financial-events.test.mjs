@@ -8,6 +8,10 @@ import {
   buildFinancialEvents,
 } from "../lib/financial-events.ts";
 import {
+  accountCostLabel,
+  classifyAccountCost,
+} from "../lib/account-cost-classification.ts";
+import {
   confirmationIsStale,
   effectiveEventType,
   effectiveDisplayTitle,
@@ -36,6 +40,139 @@ const tx = (id, patch = {}) => ({
   direction: "outflow",
   transferRelationship: null,
   ...patch,
+});
+
+test("account-cost classification is narrow, normalized, and credit-aware", () => {
+  const credit = {
+    accountType: "credit",
+    accountSubtype: "credit card",
+    accountLabel: "Credit card â€¢ 4242",
+    merchantName: null,
+  };
+  const cases = [
+    ["interest charge", "credit_card_interest"],
+    ["INTEREST   CHARGE", "credit_card_interest"],
+    ["Interest-Charge", "credit_card_interest"],
+    ["INT CHG", "credit_card_interest"],
+    ["Purchase Interest Charge", "credit_card_interest"],
+    ["Interest Charge on Purchases", "credit_card_interest"],
+    ["Credit Card Interest", "credit_card_interest"],
+    ["Minimum Interest Charge", "credit_card_interest"],
+    ["Cash Advance Interest", "credit_card_interest"],
+    ["Balance Transfer Interest", "credit_card_interest"],
+    ["Cash Advance Interest Charge", "credit_card_interest"],
+    ["Balance Transfer Interest Charge", "credit_card_interest"],
+    ["Finance Charge", "credit_card_interest"],
+    ["FIN CHG", "credit_card_interest"],
+    ["Annual Fee", "issuer_fee"],
+    ["Annual Membership Fee", "issuer_fee"],
+    ["Card Membership Fee", "issuer_fee"],
+    ["Foreign TXN Fee", "issuer_fee"],
+    ["Balance Xfer Fee", "issuer_fee"],
+    ["Cash Adv Fee", "issuer_fee"],
+    ["Paper Statement Fee", "issuer_fee"],
+    ["Statement Fee", "issuer_fee"],
+    ["Late Fee", "penalty_fee"],
+    ["Late Payment Fee", "penalty_fee"],
+    ["Returned PMT Fee", "penalty_fee"],
+    ["Returned Check Fee", "penalty_fee"],
+    ["Penalty Fee", "penalty_fee"],
+    ["Over Limit Fee", "penalty_fee"],
+    ["Overlimit Fee", "penalty_fee"],
+  ];
+  for (const [description, expected] of cases) {
+    assert.equal(
+      classifyAccountCost(tx(description, {
+        ...credit,
+        name: description,
+        description,
+      })),
+      expected,
+      description,
+    );
+  }
+
+  const nonMatches = [
+    tx("generic-fee", { ...credit, name: "Fee", description: "Fee" }),
+    tx("generic-charge", { ...credit, name: "Charge", description: "Charge" }),
+    tx("generic-interest", { ...credit, name: "Interest", description: "Interest" }),
+    tx("checking-late-fee", {
+      name: "Late fee",
+      description: "Late fee",
+      accountType: "depository",
+      accountSubtype: "checking",
+    }),
+    tx("merchant-annual-fee", {
+      ...credit,
+      name: "Community Association",
+      merchantName: "Community Association",
+      description: "Annual fee",
+    }),
+    tx("external-membership", {
+      ...credit,
+      name: "Local Museum",
+      merchantName: "Local Museum",
+      description: "Membership Fee",
+    }),
+    tx("hoa-fee", {
+      ...credit,
+      name: "Oak Street HOA",
+      merchantName: "Oak Street HOA",
+      description: "HOA Fee",
+    }),
+    tx("netflix-charge", {
+      ...credit,
+      name: "Netflix",
+      merchantName: "Netflix",
+      description: "Netflix charge",
+    }),
+  ];
+  nonMatches.forEach((row) => assert.equal(classifyAccountCost(row), null));
+});
+
+test("structured Plaid detail has priority and account-cost labels are human readable", () => {
+  assert.equal(
+    classifyAccountCost(tx("structured-interest", {
+      accountType: "depository",
+      detailedCategory: "BANK_FEES_INTEREST_CHARGE",
+    })),
+    "credit_card_interest",
+  );
+  assert.equal(
+    classifyAccountCost(tx("structured-penalty", {
+      detailedCategory: "BANK_FEES_LATE_PAYMENT_FEE",
+    })),
+    "penalty_fee",
+  );
+  assert.equal(
+    classifyAccountCost(tx("structured-issuer", {
+      detailedCategory: "BANK_FEES_FOREIGN_TRANSACTION_FEE",
+    })),
+    "issuer_fee",
+  );
+  assert.equal(accountCostLabel("credit_card_interest"), "Credit-card interest");
+  assert.equal(accountCostLabel("issuer_fee"), "Credit-card fee");
+  assert.equal(accountCostLabel("penalty_fee"), "Credit-card fee");
+});
+
+test("issuer account costs remain visible activity but are excluded before recurring grouping", () => {
+  const rows = ["2026-05-01", "2026-06-01", "2026-07-01"].map((date, index) =>
+    tx(`interest-${index}`, {
+      accountType: "credit",
+      accountSubtype: "credit card",
+      name: "Interest Charge",
+      description: "INTEREST CHARGE",
+      merchantName: null,
+      date,
+      amount: 27,
+    }),
+  );
+  const layer = buildFinancialEventLayer(rows);
+  assert.equal(layer.recurringPaymentReview.length, 0);
+  assert.equal(
+    layer.classifiedActivity.length + layer.unresolvedActivity.length + layer.events.length,
+    3,
+  );
 });
 
 test("event-worthiness separates events, classified activity, and unresolved activity", () => {
