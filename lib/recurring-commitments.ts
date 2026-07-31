@@ -74,6 +74,29 @@ export type RecurringCommitment = {
   housingObligationVersionId: string | null;
 };
 
+export function reconcileSupportingTransactions(
+  commitment: Pick<
+    RecurringCommitment,
+    "supportingTransactionIds" | "supportingTransactions"
+  >,
+) {
+  const availableById = new Map(
+    commitment.supportingTransactions.map((transaction) => [
+      transaction.id,
+      transaction,
+    ]),
+  );
+  const requestedIds = [...new Set(commitment.supportingTransactionIds)];
+  const available = requestedIds.flatMap((id) => {
+    const transaction = availableById.get(id);
+    return transaction ? [transaction] : [];
+  });
+  return {
+    available,
+    missingCount: requestedIds.length - available.length,
+  };
+}
+
 const normalizeMerchant = (value: string) =>
   value.toUpperCase().replace(/\b\d{2,}\b/g, "").replace(/[^A-Z]+/g, " ").trim();
 const installmentProvider =

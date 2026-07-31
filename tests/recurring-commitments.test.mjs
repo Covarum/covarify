@@ -6,6 +6,7 @@ import {
   PRICE_INCREASE_MINIMUM_PERCENT,
   amountDescription,
   buildRecurringCommitments,
+  reconcileSupportingTransactions,
   recurringCommitmentSummary,
 } from "../lib/recurring-commitments.ts";
 
@@ -39,6 +40,34 @@ test("monthly commitments require sufficient posted evidence and remain explaina
   assert.equal(commitment.supportingTransactionIds.length, 3);
   assert.match(commitment.confidenceExplanation, /3 posted charges/);
   assert.ok(commitment.nextExpected);
+});
+
+test("supporting transaction reconciliation returns only exact requested evidence", () => {
+  const [commitment] = buildRecurringCommitments(monthly());
+  const extra = tx("different-user-or-pattern");
+  commitment.supportingTransactions.push(extra);
+  assert.deepEqual(
+    reconcileSupportingTransactions(commitment).available.map((row) => row.id),
+    commitment.supportingTransactionIds,
+  );
+  assert.equal(reconcileSupportingTransactions(commitment).missingCount, 0);
+});
+
+test("supporting transaction reconciliation handles removed and partial evidence", () => {
+  const [commitment] = buildRecurringCommitments(monthly());
+  const partial = {
+    ...commitment,
+    supportingTransactions: commitment.supportingTransactions.slice(0, 2),
+  };
+  assert.equal(reconcileSupportingTransactions(partial).available.length, 2);
+  assert.equal(reconcileSupportingTransactions(partial).missingCount, 1);
+  assert.deepEqual(
+    reconcileSupportingTransactions({
+      ...commitment,
+      supportingTransactions: [],
+    }),
+    { available: [], missingCount: 3 },
+  );
 });
 
 test("pending copies, transfers, refunds, and payroll are not recurring commitments", () => {
@@ -209,10 +238,21 @@ test("consumer UI is real, cautious, password-free, and responsive", () => {
   assert.doesNotMatch(review, /name=["']password/i);
   assert.doesNotMatch(review, /Gmail|scan email/i);
   assert.match(review, /Supporting transactions/);
+  assert.match(review, /Supporting charges for/);
+  assert.match(review, /Review transaction/);
+  assert.match(review, /role="dialog"/);
+  assert.match(review, /Source category/);
+  assert.match(review, /Effective classification/);
+  assert.match(review, /Back to \{commitment\.displayName\}/);
+  assert.match(review, /This supporting transaction is no longer available/);
+  assert.match(review, /One or more supporting transactions are no longer available/);
+  assert.doesNotMatch(review, /href=.*transaction/i);
   assert.match(review, /Add installment details/);
   assert.match(workspace, /href="\/account\/recurring"/);
   assert.match(css, /@media\(max-width:560px\)/);
   assert.doesNotMatch(css, /min-width:\s*[4-9]\d\dpx/);
+  assert.match(css, /\.transactionDialog/);
+  assert.match(css, /\.transactionDialog dl\{grid-template-columns:1fr\}/);
 });
 
 test("identity notes reject credential-like values and editor fields can be cleared", () => {
@@ -222,6 +262,20 @@ test("identity notes reject credential-like values and editor fields can be clea
   assert.match(action, /manualCurrentBalance: optionalNumber/);
   assert.match(action, /INVALID_USER_PROVIDED_COUNT/);
   assert.match(action, /INVALID_USER_PROVIDED_DATE/);
+});
+
+test("server action module exports async functions only at runtime", () => {
+  const action = readFileSync(new URL("../app/account/recurring/actions.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(action, /export const initialRecurringReviewActionState/);
+  assert.match(action, /export async function saveRecurringCommitmentDecision/);
+  assert.match(action, /export async function undoRecurringCommitmentDecision/);
+});
+
+test("supporting evidence is loaded through the authenticated owner scope", () => {
+  const server = readFileSync(new URL("../lib/recurring-commitments-server.ts", import.meta.url), "utf8");
+  assert.match(server, /\.from\("plaid_transactions"\)[\s\S]*\.eq\("user_id", userId\)/);
+  assert.match(server, /\.from\("plaid_accounts"\)[\s\S]*\.eq\("user_id", userId\)/);
+  assert.match(server, /\.from\("plaid_items"\)[\s\S]*\.eq\("user_id", userId\)/);
 });
 
 test("review choices are progressive, visibly selected, and saved once", () => {

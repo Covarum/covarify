@@ -21,7 +21,7 @@ export type RecurringReviewActionState = {
   savedLabels: string[];
 };
 
-export const initialRecurringReviewActionState: RecurringReviewActionState = {
+const initialRecurringReviewActionState: RecurringReviewActionState = {
   status: "idle",
   error: null,
   patternKey: null,
