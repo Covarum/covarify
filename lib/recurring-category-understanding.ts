@@ -19,6 +19,61 @@ export const INSURANCE_SUBCATEGORIES = [
   { id: "20000000-0000-4000-8000-000000000025", name: "Other Insurance", aliases: ["insurance"] },
 ] as const;
 
+export const BUSINESS_CATEGORY = {
+  parentCategoryId: "10000000-0000-4000-8000-000000000014",
+  parentCategory: "Business",
+  subcategoryId: "20000000-0000-4000-8000-000000000026",
+  subcategory: "Software & Services",
+} as const;
+
+export type RecurringContextProposal = {
+  evidence: string;
+  service: "Calendar booking software/service" | null;
+  namedEntity: string | null;
+  purpose: string | null;
+  proposedType: "software_service" | null;
+  proposedCategory: typeof BUSINESS_CATEGORY | null;
+  nextQuestion: "entity_relationship" | "business_use" | "classification" | "supporting_transactions" | "merchant_memory" | null;
+};
+
+const generalNote = /^(?:check this later|called customer service|not sure why this increased)[.!]?$/i;
+
+export function recurringContextProposal(
+  commitment: Pick<RecurringCommitment, "displayName" | "decision">,
+): RecurringContextProposal | null {
+  const note = commitment.decision?.userNote?.trim();
+  if (!note || generalNote.test(note) || commitment.decision?.contextComplete) return null;
+  const calendly = /\bcalendly\b/i.test(commitment.displayName) || /\bcalendar booking (?:app|software|service)\b/i.test(note);
+  const entity = note.match(/\bfor\s+([A-Z][A-Za-z0-9&.' -]{1,60})[.!]?$/)?.[1]?.trim() || null;
+  const descriptive = calendly || /\b(?:business software|booking app|software|service subscription)\b/i.test(note) || Boolean(entity);
+  if (!descriptive) return null;
+  const decision = commitment.decision;
+  const nextQuestion = entity && !decision?.contextRelationship
+    ? "entity_relationship"
+    : decision?.businessUse == null
+      ? "business_use"
+      : !decision?.effectiveParentCategory
+        ? "classification"
+        : !decision.supportingTransactionsClassified
+          ? "supporting_transactions"
+          : "merchant_memory";
+  return {
+    evidence: note,
+    service: calendly ? "Calendar booking software/service" : null,
+    namedEntity: entity || decision?.contextEntityName || null,
+    purpose: calendly ? "Calendar booking" : decision?.contextPurpose || null,
+    proposedType: calendly ? "software_service" : null,
+    proposedCategory: calendly ? BUSINESS_CATEGORY : null,
+    nextQuestion,
+  };
+}
+
+export function assistedContextProposalBoundary(
+  proposal: RecurringContextProposal | null,
+) {
+  return proposal;
+}
+
 export type RecurringCategoryProposal = {
   source: "deterministic_note" | "confirmed_type";
   evidence: string;

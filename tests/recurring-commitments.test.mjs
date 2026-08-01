@@ -7,6 +7,7 @@ import {
   amountDescription,
   buildRecurringCommitments,
   reconcileSupportingTransactions,
+  filterRecurringCommitments,
   recurringCommitmentSummary,
 } from "../lib/recurring-commitments.ts";
 import {
@@ -15,7 +16,77 @@ import {
   assistedCategoryProposalBoundary,
   deterministicInsuranceProposal,
   recurringCategoryProposal,
+  recurringContextProposal,
+  BUSINESS_CATEGORY,
 } from "../lib/recurring-category-understanding.ts";
+
+const searchableCommitment = (status, patch = {}) => ({
+  patternKey: `lemonade-${status}`,
+  displayName: "Lemonade Insurance",
+  normalizedMerchant: "LEMONADE INSURANCE",
+  type: "insurance",
+  status,
+  effectiveCategory: "Insurance → Renters Insurance",
+  paymentAccountLabel: "Checking • 1111",
+  decision: { ownerLabel: "Mine", userNote: "renter's insurance", identityNote: null, manualOriginalPurpose: null },
+  supportingTransactions: [tx(`support-${status}`, { name: "LEMONADE INSURANCE CO", description: "Monthly renters policy", date: "2026-06-25" })],
+  ...patch,
+});
+
+test("recurring search uses all statuses and any in-period supporting evidence", () => {
+  const period = { start: "2026-04-01", end: "2026-06-30" };
+  const commitments = ["needs_attention", "confirmed", "possible", "completed"].map(searchableCommitment);
+  assert.equal(filterRecurringCommitments(commitments, { period, search: "Lemonade" }).length, 4);
+  assert.equal(filterRecurringCommitments(commitments, { period, search: "monthly renters policy" }).length, 4);
+  assert.equal(filterRecurringCommitments(commitments, { period, search: "renter's insurance" }).length, 4);
+  assert.equal(filterRecurringCommitments(commitments, { period, status: "needs_attention" }).length, 1);
+  const latestOutside = searchableCommitment("completed", { lastObserved: "2026-07-25", supportingTransactions: [
+    tx("june", { date: "2026-06-25" }), tx("july", { date: "2026-07-25" }),
+  ] });
+  assert.equal(filterRecurringCommitments([latestOutside], { period, search: "Lemonade" }).length, 1);
+  assert.equal(filterRecurringCommitments([latestOutside], { period: { start: "2026-01-01", end: "2026-03-31" }, search: "Lemonade" }).length, 0);
+  assert.doesNotMatch(JSON.stringify(filterRecurringCommitments(commitments, { period, search: "Lemonade" })), /pattern_key|normalized_merchant/);
+});
+
+test("descriptive recurring notes produce progressive business proposals without applying them", () => {
+  const commitment = searchableCommitment("possible", {
+    displayName: "Calendly",
+    type: "software_service",
+    decision: { userNote: "my calendar booking app for Covarum", contextRelationship: null, businessUse: null, effectiveParentCategory: null },
+  });
+  const proposal = recurringContextProposal(commitment);
+  assert.equal(proposal.namedEntity, "Covarum");
+  assert.equal(proposal.proposedType, "software_service");
+  assert.deepEqual(proposal.proposedCategory, BUSINESS_CATEGORY);
+  assert.equal(proposal.nextQuestion, "entity_relationship");
+  assert.equal(recurringContextProposal({ ...commitment, decision: { ...commitment.decision, userNote: "check this later" } }), null);
+  assert.doesNotMatch(JSON.stringify(proposal), /deductible|EIN|ownership percentage/i);
+});
+
+test("recurring UX exposes semantic search, dismissible completion, and contextual attention routing", () => {
+  const workspace = readFileSync(new URL("../app/account/recurring/recurring-workspace.tsx", import.meta.url), "utf8");
+  const account = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../app/account/recurring/recurring.module.css", import.meta.url), "utf8");
+  assert.match(workspace, /type="search"/);
+  assert.match(workspace, /Dismiss saved notice/);
+  assert.match(workspace, /setTimeout\(\(\) => setNotice\(null\), 9000\)/);
+  assert.match(workspace, /setOpen\(false\)/);
+  assert.match(account, /status=needs_attention/);
+  assert.match(account, /observationAction/);
+  assert.match(css, /@media\(max-width:560px\).*searchControls/);
+});
+
+test("business context migration is additive, owner-scoped, append-only, and service-role only", () => {
+  const migration = readFileSync(new URL("../supabase/migrations/20260801010000_recurring_context_and_business_categories.sql", import.meta.url), "utf8");
+  assert.match(migration, /'Business', 'business'/);
+  assert.match(migration, /'Software & Services'/);
+  assert.match(migration, /pg_advisory_xact_lock/);
+  assert.match(migration, /where user_id = p_user_id and pattern_key = p_pattern_key/);
+  assert.match(migration, /supersedes_version_id/);
+  assert.match(migration, /revoke all on function public\.record_recurring_commitment_context_decision.*authenticated/s);
+  assert.match(migration, /grant execute on function public\.record_recurring_commitment_context_decision.*service_role/s);
+  assert.doesNotMatch(migration, /\b(drop table|truncate|delete from|update public\.)\b/i);
+});
 
 const tx = (id, patch = {}) => ({
   id,
@@ -516,7 +587,7 @@ test("consumer UI is real, cautious, password-free, and responsive", () => {
   assert.match(review, /One or more supporting transactions are no longer available/);
   assert.doesNotMatch(review, /href=.*transaction/i);
   assert.match(review, /Add installment details/);
-  assert.match(workspace, /href="\/account\/recurring"/);
+  assert.match(workspace, /recurringHref|\/account\/recurring/);
   assert.match(css, /@media\(max-width:560px\)/);
   assert.doesNotMatch(css, /min-width:\s*[4-9]\d\dpx/);
   assert.match(css, /\.transactionDialog/);
@@ -561,8 +632,8 @@ test("review choices are progressive, visibly selected, and saved once", () => {
   assert.match(review, /aria-pressed=\{selected\}/);
   assert.match(review, /type="button"/);
   assert.match(review, /type="submit"/);
-  assert.match(review, /disabled=\{!changed \|\| pending \|\| Boolean\(categoryProposal\)\}/);
-  assert.match(review, /pending \? "Saving…" : "Save"/);
+  assert.match(review, /disabled=\{!changed \|\| pending \|\| state\.status === "saved" \|\| Boolean\(categoryProposal\) \|\| Boolean\(contextProposal\)\}/);
+  assert.match(review, /pending \? "Saving…" : state\.status === "saved" \? "Saved" : "Save"/);
   assert.equal((review.match(/action=\{formAction\}/g) || []).length, 1);
   assert.doesNotMatch(review, /<form action=\{saveRecurringCommitmentDecision\}/);
   assert.doesNotMatch(review, /No, it isn’t recurring/);

@@ -83,6 +83,13 @@ function mapDecision(row: Record<string, unknown>): RecurringCommitmentDecision 
     supportingTransactionsClassified: Boolean(
       row.supporting_transactions_classified,
     ),
+    contextOwnerKind: (row.context_owner_kind || null) as RecurringCommitmentDecision["contextOwnerKind"],
+    contextEntityName: row.context_entity_name ? String(row.context_entity_name) : null,
+    contextRelationship: (row.context_relationship || null) as RecurringCommitmentDecision["contextRelationship"],
+    contextPurpose: row.context_purpose ? String(row.context_purpose) : null,
+    businessUse: row.business_use == null ? null : Boolean(row.business_use),
+    contextComplete: Boolean(row.context_complete),
+    merchantMemoryCreated: Boolean(row.merchant_memory_created),
   };
 }
 
