@@ -7,6 +7,7 @@ import {
   formatTransactionCategoryPath,
   type MoneyTransaction,
 } from "./money-picture.ts";
+import type { ResolvedFinancialPeriod } from "./financial-periods.ts";
 
 export const RECURRING_COMMITMENT_RULE_VERSION =
   "recurring-commitments-v1-2026-07-30";
@@ -47,6 +48,13 @@ export type RecurringCommitmentDecision = {
   effectiveSubcategory: string | null;
   categoryResolution: "accepted" | "kept_current" | "unresolved" | null;
   supportingTransactionsClassified: boolean;
+  contextOwnerKind: "personal" | "household" | "business" | "unknown" | null;
+  contextEntityName: string | null;
+  contextRelationship: "owner" | "employee" | "contractor" | "other" | null;
+  contextPurpose: string | null;
+  businessUse: boolean | null;
+  contextComplete: boolean;
+  merchantMemoryCreated: boolean;
 };
 
 export type RecurringCommitment = {
@@ -80,6 +88,51 @@ export type RecurringCommitment = {
   decision: RecurringCommitmentDecision | null;
   housingObligationVersionId: string | null;
 };
+
+export type RecurringCommitmentStatusFilter = "all" | RecurringCommitment["status"];
+
+const searchableCommitmentText = (commitment: RecurringCommitment) => [
+  commitment.displayName,
+  commitment.normalizedMerchant,
+  commitment.type.replaceAll("_", " "),
+  commitment.effectiveCategory,
+  commitment.decision?.ownerLabel,
+  commitment.decision?.userNote,
+  commitment.decision?.identityNote,
+  commitment.decision?.manualOriginalPurpose,
+  commitment.paymentAccountLabel,
+  ...commitment.supportingTransactions.flatMap((transaction) => [
+    transaction.merchantName,
+    transaction.name,
+    transaction.description,
+  ]),
+].filter((value): value is string => Boolean(value));
+
+export function recurringCommitmentInPeriod(
+  commitment: RecurringCommitment,
+  period: Pick<ResolvedFinancialPeriod, "start" | "end">,
+) {
+  return commitment.supportingTransactions.some(
+    (transaction) => transaction.date >= period.start && transaction.date <= period.end,
+  );
+}
+
+export function filterRecurringCommitments(
+  commitments: RecurringCommitment[],
+  options: {
+    period: Pick<ResolvedFinancialPeriod, "start" | "end">;
+    search?: string;
+    status?: RecurringCommitmentStatusFilter;
+  },
+) {
+  const search = options.search?.trim().toLocaleLowerCase() || "";
+  return commitments.filter((commitment) =>
+    recurringCommitmentInPeriod(commitment, options.period) &&
+    (!options.status || options.status === "all" || commitment.status === options.status) &&
+    (!search || searchableCommitmentText(commitment).some((value) =>
+      value.toLocaleLowerCase().includes(search))),
+  );
+}
 
 export function reconcileSupportingTransactions(
   commitment: Pick<

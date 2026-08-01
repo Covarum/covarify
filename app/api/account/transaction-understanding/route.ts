@@ -120,12 +120,16 @@ const hierarchyForRequest = (
   requestedSubcategory: string,
   availableSubcategories: Awaited<ReturnType<typeof loadAvailableSubcategories>>,
   fallbackSourceCategory = "Uncategorized",
+  requestedParentName?: string | null,
 ) => {
   const rankedAcrossParents = SYSTEM_CATEGORY_PARENTS.flatMap((parent) =>
     suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories)
       .map((suggestion) => ({ ...suggestion, parent })))
     .sort((a, b) => b.score - a.score);
-  const parent = rankedAcrossParents[0]?.parent || parentForSourceCategory(fallbackSourceCategory);
+  const explicitParent = requestedParentName
+    ? SYSTEM_CATEGORY_PARENTS.find((candidate) => candidate.displayName === requestedParentName)
+    : null;
+  const parent = explicitParent || rankedAcrossParents[0]?.parent || parentForSourceCategory(fallbackSourceCategory);
   const suggestions = suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories);
   return {
     parent,
@@ -292,6 +296,7 @@ export async function POST(request: Request) {
           requestedSubcategory,
           availableSubcategories,
           matching[0]?.sourceCategory || matching[0]?.category,
+          intent.requestedParentCategory,
         );
         const selectedSuggestion = suggestions[0]?.category || null;
         const ruleCheck = selectedSuggestion
@@ -374,7 +379,10 @@ export async function POST(request: Request) {
           .map((suggestion) => ({ ...suggestion, parent })))
           .sort((a, b) => b.score - a.score)
         : [];
-      const parent = rankedAcrossParents[0]?.parent || sourceParent;
+      const requestedParent = intent.requestedParentCategory
+        ? SYSTEM_CATEGORY_PARENTS.find((candidate) => candidate.displayName === intent.requestedParentCategory)
+        : null;
+      const parent = requestedParent || rankedAcrossParents[0]?.parent || sourceParent;
       const suggestions = requestedSubcategory
         ? suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories)
         : [];
@@ -426,7 +434,7 @@ export async function POST(request: Request) {
       if (decision.ruleScope !== "future" && decision.ruleScope !== "past_and_future") {
         return NextResponse.json({ error: "MERCHANT_RULE_SCOPE_REQUIRED" }, { status: 400 });
       }
-      const { parent, suggestions } = hierarchyForRequest(requestedSubcategory, availableSubcategories);
+      const { parent, suggestions } = hierarchyForRequest(requestedSubcategory, availableSubcategories, "Uncategorized", intent.requestedParentCategory);
       let selectedSubcategory = decision.action === "use_existing"
         ? availableSubcategories.find((subcategory) =>
           subcategory.id === decision.subcategoryId &&
@@ -559,7 +567,10 @@ export async function POST(request: Request) {
       if (body.subcategoryDecision?.parentCategoryId && !requestedParent) {
         return NextResponse.json({ error: "PARENT_CATEGORY_NOT_AVAILABLE" }, { status: 403 });
       }
-      const parent = requestedParent || rankedAcrossParents[0]?.parent || sourceParent;
+      const intentParent = intent.requestedParentCategory
+        ? SYSTEM_CATEGORY_PARENTS.find((candidate) => candidate.displayName === intent.requestedParentCategory)
+        : null;
+      const parent = requestedParent || intentParent || rankedAcrossParents[0]?.parent || sourceParent;
       const suggestions = suggestSubcategories(requestedSubcategory, parent.id, availableSubcategories);
       const decision = body.subcategoryDecision;
       if (!decision) return NextResponse.json({ error: "SUBCATEGORY_DECISION_REQUIRED" }, { status: 400 });

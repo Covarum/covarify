@@ -52,6 +52,8 @@ export type TransactionIntent = {
   accountLabel: string | null;
   direction: "inflow" | "outflow" | null;
   category: UserTransactionCategory | null;
+  requestedParentCategory: string | null;
+  rejectedCategoryConcept: string | null;
   requestedSubcategory: string | null;
   treatment: TransactionTreatment | null;
   split: Array<{ treatment: "personal" | "business"; percentage: number }> | null;
@@ -169,6 +171,40 @@ const RECURRING_RULE_PATTERNS = [
   /\bcategorize\s+.+?\s+as\b/i,
   /\bmake every\b/i,
 ];
+
+const categoryConcept = (value: string) => value
+  .replace(/^(?:always|never)\s+/i, "")
+  .replace(/\s+(?:always|every time|from now on|in the future)$/i, "")
+  .trim();
+
+export function parseCategoryContrast(text: string) {
+  const patterns = [
+    /\b(.+?)\s*,?\s+not\s+(.+?)(?:[.!?]|$)/i,
+    /\b(.+?)\s+instead of\s+(.+?)(?:[.!?]|$)/i,
+    /\b(.+?)\s+rather than\s+(.+?)(?:[.!?]|$)/i,
+    /\bnot\s+(.+?)\s*,?\s+(?:it is|it(?:'|’)s)\s+(.+?)(?:[.!?]|$)/i,
+    /\balways\s+(.+?)\s*,?\s+never\s+(.+?)(?:[.!?]|$)/i,
+  ];
+  for (const [index, pattern] of patterns.entries()) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const reversed = index === 3;
+    const requested = categoryConcept(reversed ? match[2] : match[1])
+      .replace(/^.*?\b(?:is|as)\s+/i, "");
+    const rejected = categoryConcept(reversed ? match[1] : match[2]);
+    if (requested && rejected) return { requested, rejected };
+  }
+  return null;
+}
+
+const parentForConcept = (value: string | null) => {
+  if (!value) return null;
+  if (/\b(food|grocery|groceries|restaurant|dining)\b/i.test(value)) return "Food & Drink";
+  if (/\b(shopping|retail)\b/i.test(value)) return "Shopping";
+  if (/\b(gas|fuel|transportation)\b/i.test(value)) return "Transportation";
+  if (/\bbusiness\b/i.test(value)) return "Business";
+  return null;
+};
 
 const merchantFromRuleText = (text: string) => {
   const patterns = [
@@ -290,6 +326,7 @@ export function parseTransactionIntent(
   } = {},
 ): TransactionIntent {
   const classified = classifyTransactionUnderstandingIntent(text, options);
+  const contrast = parseCategoryContrast(text);
   const split = parseSplit(text);
   const category = CATEGORY_PATTERNS.find(([pattern]) => pattern.test(text))?.[1] || null;
   const action: TransactionUnderstandingAction = /\b(undo|revert)\b/i.test(text)
@@ -334,8 +371,14 @@ export function parseTransactionIntent(
         ? "outflow"
         : null,
     category,
+    requestedParentCategory: parentForConcept(contrast?.requested || null),
+    rejectedCategoryConcept: contrast?.rejected || null,
     requestedSubcategory: action === "classify"
-      ? classified.intentType === "merchant_rule"
+      ? contrast
+        ? /\bfood\b/i.test(contrast.requested) && /\b(food\s+market|grocery|grocer)\b/i.test(classified.merchant || "")
+          ? "Groceries"
+          : contrast.requested
+      : classified.intentType === "merchant_rule"
         ? category || categoryFromRuleText(text) || requestedSubcategoryFromText(text)
         : requestedSubcategoryFromText(text)
       : null,

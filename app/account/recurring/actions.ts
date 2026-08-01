@@ -12,7 +12,10 @@ import type {
 } from "@/lib/recurring-commitments";
 import {
   recurringCategoryProposal,
+  recurringContextProposal,
+  BUSINESS_CATEGORY,
   type RecurringCategoryProposal,
+  type RecurringContextProposal,
 } from "@/lib/recurring-category-understanding";
 import {
   buildConfirmedUnderstandingRecord,
@@ -34,6 +37,7 @@ export type RecurringReviewActionState = {
   message: string | null;
   savedLabels: string[];
   categoryProposal: RecurringCategoryProposal | null;
+  contextProposal: RecurringContextProposal | null;
 };
 
 const initialRecurringReviewActionState: RecurringReviewActionState = {
@@ -46,6 +50,7 @@ const initialRecurringReviewActionState: RecurringReviewActionState = {
   message: null,
   savedLabels: [],
   categoryProposal: null,
+  contextProposal: null,
 };
 
 const allowedTypes = new Set<RecurringCommitmentType>([
@@ -233,6 +238,7 @@ async function resultAfterSave(
     effectiveCategory: "",
     type: decision.commitmentType || "unknown_recurring",
   });
+  const contextProposal = commitment ? recurringContextProposal(commitment) : null;
   revalidatePath("/account/recurring");
   revalidatePath("/account");
   return {
@@ -242,11 +248,12 @@ async function resultAfterSave(
     decision,
     commitment,
     destination,
-    message: categoryProposal
-      ? "The note was saved. Review the suggested classification below."
+    message: categoryProposal || contextProposal
+      ? "The note was saved. Review the suggested understanding below."
       : movementMessage(decision, destination),
     savedLabels: labelsFor(decision),
     categoryProposal,
+    contextProposal,
   };
 }
 
@@ -320,6 +327,13 @@ export async function saveRecurringCommitmentDecision(
       categoryResolution: prior?.categoryResolution || null,
       supportingTransactionsClassified:
         prior?.supportingTransactionsClassified || false,
+      contextOwnerKind: prior?.contextOwnerKind || null,
+      contextEntityName: prior?.contextEntityName || null,
+      contextRelationship: prior?.contextRelationship || null,
+      contextPurpose: prior?.contextPurpose || null,
+      businessUse: prior?.businessUse ?? null,
+      contextComplete: prior?.contextComplete || false,
+      merchantMemoryCreated: prior?.merchantMemoryCreated || false,
     };
     if (decision.recurringStatus === "not_recurring") {
       decision.recognitionStatus = "unsure";
@@ -350,6 +364,7 @@ export async function saveRecurringCommitmentDecision(
       status: "error",
       error: message,
       categoryProposal: null,
+      contextProposal: null,
     };
   }
 }
@@ -467,6 +482,7 @@ export async function saveRecurringCommitmentCategoryDecision(input: {
         ? [input.parentCategory!, input.subcategory!]
         : ["Current classification kept"],
       categoryProposal: null,
+      contextProposal: null,
     };
   } catch {
     return {
@@ -474,6 +490,84 @@ export async function saveRecurringCommitmentCategoryDecision(input: {
       status: "error",
       error:
         "Covarify could not save this classification. Your note remains saved; please try again.",
+    };
+  }
+}
+
+export async function saveRecurringCommitmentContextDecision(input: {
+  patternKey: string;
+  relationship?: RecurringCommitmentDecision["contextRelationship"];
+  businessUse?: boolean;
+  acceptBusinessClassification?: boolean;
+  complete?: boolean;
+  rememberMerchant?: boolean;
+}): Promise<RecurringReviewActionState> {
+  try {
+    const user = await getAuthenticatedUser();
+    if (!user) throw new Error("AUTHENTICATION_REQUIRED");
+    const data = await loadRecurringCommitments(user.id);
+    const commitment = data.commitments.find((item) => item.patternKey === input.patternKey);
+    if (!commitment?.decision) throw new Error("RECURRING_COMMITMENT_NOT_FOUND");
+    const proposal = recurringContextProposal(commitment);
+    if (!proposal) throw new Error("CONTEXT_PROPOSAL_NOT_AVAILABLE");
+    const decision: RecurringCommitmentDecision = {
+      ...commitment.decision,
+      contextEntityName: proposal.namedEntity || commitment.decision.contextEntityName,
+      contextRelationship: input.relationship ?? commitment.decision.contextRelationship,
+      contextOwnerKind: input.relationship
+        ? "business"
+        : input.businessUse === true
+          ? "business"
+          : input.businessUse === false
+            ? "personal"
+            : commitment.decision.contextOwnerKind,
+      businessUse: input.businessUse ?? commitment.decision.businessUse,
+      contextPurpose: proposal.purpose || commitment.decision.contextPurpose,
+      commitmentType: input.businessUse === true && proposal.proposedType
+        ? proposal.proposedType
+        : commitment.decision.commitmentType,
+      ...(input.acceptBusinessClassification === true ? {
+        effectiveParentCategoryId: BUSINESS_CATEGORY.parentCategoryId,
+        effectiveParentCategory: BUSINESS_CATEGORY.parentCategory,
+        effectiveSubcategoryId: BUSINESS_CATEGORY.subcategoryId,
+        effectiveSubcategory: BUSINESS_CATEGORY.subcategory,
+        categoryResolution: "accepted" as const,
+      } : input.acceptBusinessClassification === false ? {
+        categoryResolution: "kept_current" as const,
+      } : {}),
+      contextComplete: input.acceptBusinessClassification === false || input.businessUse === false
+        ? true
+        : input.complete ?? commitment.decision.contextComplete,
+      merchantMemoryCreated: input.rememberMerchant ?? commitment.decision.merchantMemoryCreated,
+    };
+    const { error } = await createSupabaseAdminClient().rpc(
+      "record_recurring_commitment_context_decision",
+      {
+        p_user_id: user.id,
+        p_pattern_key: input.patternKey,
+        p_context: {
+          contextOwnerKind: decision.contextOwnerKind,
+          contextEntityName: decision.contextEntityName,
+          contextRelationship: decision.contextRelationship,
+          contextPurpose: decision.contextPurpose,
+          businessUse: decision.businessUse,
+          effectiveParentCategoryId: decision.effectiveParentCategoryId,
+          effectiveSubcategoryId: decision.effectiveSubcategoryId,
+          effectiveParentCategory: decision.effectiveParentCategory,
+          effectiveSubcategory: decision.effectiveSubcategory,
+          categoryResolution: decision.categoryResolution,
+          contextComplete: decision.contextComplete,
+          merchantMemoryCreated: decision.merchantMemoryCreated,
+        },
+      },
+    );
+    if (error) throw new Error("RECURRING_CONTEXT_SAVE_FAILED");
+    return resultAfterSave(user.id, input.patternKey, decision);
+  } catch {
+    return {
+      ...initialRecurringReviewActionState,
+      status: "error",
+      error: "Covarify could not save that answer. Your note remains unchanged; please try again.",
     };
   }
 }
@@ -503,6 +597,13 @@ const decisionFromRow = (
   effectiveSubcategory: row.effective_subcategory ? String(row.effective_subcategory) : null,
   categoryResolution: (row.category_resolution || null) as RecurringCommitmentDecision["categoryResolution"],
   supportingTransactionsClassified: Boolean(row.supporting_transactions_classified),
+  contextOwnerKind: (row.context_owner_kind || null) as RecurringCommitmentDecision["contextOwnerKind"],
+  contextEntityName: row.context_entity_name ? String(row.context_entity_name) : null,
+  contextRelationship: (row.context_relationship || null) as RecurringCommitmentDecision["contextRelationship"],
+  contextPurpose: row.context_purpose ? String(row.context_purpose) : null,
+  businessUse: row.business_use == null ? null : Boolean(row.business_use),
+  contextComplete: Boolean(row.context_complete),
+  merchantMemoryCreated: Boolean(row.merchant_memory_created),
 });
 
 export async function undoRecurringCommitmentDecision(

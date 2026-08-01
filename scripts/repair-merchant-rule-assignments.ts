@@ -150,6 +150,8 @@ const records = buildMerchantRuleAssignmentRecords({
     accountLabel: null,
     direction: null,
     category: "Groceries",
+    requestedParentCategory: "Food & Drink",
+    rejectedCategoryConcept: null,
     requestedSubcategory: "Groceries",
     treatment: null,
     split: null,

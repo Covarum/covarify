@@ -27,11 +27,40 @@ import {
   exactMerchantTransactions,
   merchantBreadthForName,
   parseTransactionIntent,
+  parseCategoryContrast,
   reconcilePendingUnderstanding,
   restoreTransactionCategoryView,
   resolveTransactionIntent,
   sourceConditionSignature,
 } from "../lib/transaction-understanding.ts";
+
+test("contrast corrections separate requested and rejected categories", () => {
+  for (const phrase of [
+    "Sunset Food Market is always food, not shopping",
+    "Sunset Food Market is always food instead of shopping",
+    "Sunset Food Market is always food rather than shopping",
+  ]) {
+    const intent = parseTransactionIntent(phrase);
+    assert.equal(intent.intentType, "merchant_rule");
+    assert.equal(intent.scopeSignal, "recurring");
+    assert.equal(intent.merchant, "Sunset Food Market");
+    assert.equal(intent.requestedParentCategory, "Food & Drink");
+    assert.equal(intent.requestedSubcategory, "Groceries");
+    assert.match(intent.rejectedCategoryConcept, /shopping/i);
+    assert.doesNotMatch(intent.requestedSubcategory, /not shopping|instead of|rather than/i);
+  }
+  assert.deepEqual(parseCategoryContrast("Gas, not groceries"), { requested: "Gas", rejected: "groceries" });
+});
+
+test("contrast parent replacement reuses canonical Food & Drink and Groceries", () => {
+  const food = SYSTEM_CATEGORY_PARENTS.find((parent) => parent.displayName === "Food & Drink");
+  assert.ok(food);
+  const groceries = { id: "groceries", userId: null, parentCategoryId: food.id, displayName: "Groceries", normalizedName: "grocery", aliases: ["grocery"], categoryType: "system", status: "active" };
+  assert.equal(suggestSubcategories("Groceries", food.id, [groceries])[0].category.id, "groceries");
+  const route = readFileSync(new URL("../app/api/account/transaction-understanding/route.ts", import.meta.url), "utf8");
+  assert.match(route, /intent\.requestedParentCategory/);
+  assert.match(route, /requestedParent \|\| intentParent \|\| rankedAcrossParents/);
+});
 import {
   housingObligationType,
   recurringObligationInput,
@@ -631,6 +660,7 @@ test("preview and persistence remain founder-only, append-only, and free of Plai
 test("category hierarchy migration seeds system parents and subcategories with scoped duplicate and ownership protections", () => {
   const migration = readFileSync(new URL("../supabase/migrations/20260730010000_transaction_category_hierarchy.sql", import.meta.url), "utf8");
   const recurringCategories = readFileSync(new URL("../supabase/migrations/20260731013000_recurring_commitment_categories.sql", import.meta.url), "utf8");
+  const businessCategories = readFileSync(new URL("../supabase/migrations/20260801010000_recurring_context_and_business_categories.sql", import.meta.url), "utf8");
   assert.match(migration, /create table public\.category_parents/);
   assert.match(migration, /category_type text not null default 'system' check \(category_type = 'system'\)/);
   assert.match(migration, /create table public\.category_subcategories/);
@@ -644,7 +674,7 @@ test("category hierarchy migration seeds system parents and subcategories with s
   assert.match(migration, /effective_parent_category_id/);
   assert.match(migration, /effective_subcategory_id/);
   assert.match(migration, /create table public\.merchant_category_rules/);
-  assert.equal(SYSTEM_CATEGORY_PARENTS.every((parent) => `${migration}\n${recurringCategories}`.includes(parent.id)), true);
+  assert.equal(SYSTEM_CATEGORY_PARENTS.every((parent) => `${migration}\n${recurringCategories}\n${businessCategories}`.includes(parent.id)), true);
 });
 
 test("production route and workspace enforce founder-only confirmation-before-append integration", () => {
