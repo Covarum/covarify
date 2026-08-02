@@ -8,7 +8,9 @@ import {
   buildRecurringCommitments,
   reconcileSupportingTransactions,
   filterRecurringCommitments,
+  recurringCommitmentSearchResult,
   recurringCommitmentSummary,
+  resolveOwnedRecurringCommitment,
 } from "../lib/recurring-commitments.ts";
 import {
   INSURANCE_PARENT,
@@ -48,6 +50,37 @@ test("recurring search uses all statuses and any in-period supporting evidence",
   assert.doesNotMatch(JSON.stringify(filterRecurringCommitments(commitments, { period, search: "Lemonade" })), /pattern_key|normalized_merchant/);
 });
 
+test("recurring search reports cross-status matches without corrupting the canonical set", () => {
+  const period = { start: "2026-04-01", end: "2026-06-30" };
+  const confirmed = searchableCommitment("confirmed", {
+    decision: { ...searchableCommitment("confirmed").decision, contextEntityName: "Covarum", contextPurpose: "Calendar booking" },
+  });
+  const result = recurringCommitmentSearchResult([confirmed], {
+    period,
+    search: "Lemonade",
+    status: "needs_attention",
+  });
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.visible.length, 0);
+  assert.equal(result.otherStatusMatches[0].status, "confirmed");
+  assert.equal(filterRecurringCommitments([confirmed], { period, search: "Covarum" }).length, 1);
+  assert.equal(filterRecurringCommitments([confirmed], { period, search: "Calendar booking" }).length, 1);
+  const outside = recurringCommitmentSearchResult([confirmed], {
+    period: { start: "2026-01-01", end: "2026-03-31" },
+    search: "Lemonade",
+    status: "all",
+  });
+  assert.equal(outside.visible.length, 0);
+  assert.equal(outside.outsidePeriodMatches.length, 1);
+});
+
+test("specific recurring commitment targets are validated against the owned loaded set", () => {
+  const owned = searchableCommitment("needs_attention");
+  assert.equal(resolveOwnedRecurringCommitment([owned], owned.patternKey), owned);
+  assert.equal(resolveOwnedRecurringCommitment([owned], "another-users-pattern"), null);
+  assert.equal(resolveOwnedRecurringCommitment([owned], null), null);
+});
+
 test("descriptive recurring notes produce progressive business proposals without applying them", () => {
   const commitment = searchableCommitment("possible", {
     displayName: "Calendly",
@@ -71,9 +104,22 @@ test("recurring UX exposes semantic search, dismissible completion, and contextu
   assert.match(workspace, /Dismiss saved notice/);
   assert.match(workspace, /setTimeout\(\(\) => setNotice\(null\), 9000\)/);
   assert.match(workspace, /setOpen\(false\)/);
-  assert.match(account, /status=needs_attention/);
+  assert.match(account, /recurringAttentionQuery\.set\("status", "needs_attention"\)/);
+  assert.match(account, /recurringAttentionQuery\.set\("commitment"/);
   assert.match(account, /observationAction/);
   assert.match(css, /@media\(max-width:560px\).*searchControls/);
+  assert.match(workspace, /aria-pressed=\{status === "confirmed"\}/);
+  assert.match(workspace, /navigateStatus\("needs_attention"\)/);
+  assert.match(workspace, /statusDestination\[nextStatus\]\.id/);
+  assert.match(workspace, /resolveOwnedRecurringCommitment/);
+  assert.match(workspace, /scrollIntoView/);
+  assert.match(workspace, /prefers-reduced-motion: reduce/);
+  assert.match(workspace, /Choose one to continue/);
+  assert.match(workspace, /Yes, business-related/);
+  assert.doesNotMatch(workspace, />Yes<\/button>|>No<\/button>/);
+  assert.match(workspace, /window\.confirm\("You have unsaved review choices/);
+  assert.match(css, /button\[aria-pressed="true"\]/);
+  assert.match(css, /\.contextChoices/);
 });
 
 test("business context migration is additive, owner-scoped, append-only, and service-role only", () => {
@@ -294,6 +340,7 @@ test("credit-card interest and issuer fees never become commitments or duplicate
     completed: 0,
     monthlyEquivalent: null,
     meaningfulAttention: null,
+    meaningfulAttentionCommitmentPatternKey: null,
   });
 });
 

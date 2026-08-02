@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   useActionState,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -12,10 +13,12 @@ import {
 } from "react";
 import {
   amountDescription,
-  filterRecurringCommitments,
   money,
   reconcileSupportingTransactions,
+  recurringCommitmentInPeriod,
+  recurringCommitmentSearchResult,
   recurringCommitmentSummary,
+  resolveOwnedRecurringCommitment,
   type RecurringCommitment,
   type RecurringCommitmentDecision,
   type RecurringCommitmentStatusFilter,
@@ -70,6 +73,15 @@ const typeLabel: Record<RecurringCommitment["type"], string> = {
   other_recurring: "Other recurring",
   unknown_recurring: "Unknown recurring",
 };
+
+const statusDestination: Record<Exclude<RecurringCommitmentStatusFilter, "all">, { id: string; title: string }> = {
+  confirmed: { id: "confirmed-recurring", title: "Confirmed Recurring" },
+  possible: { id: "possible-recurring", title: "Possible Recurring" },
+  needs_attention: { id: "needs-attention", title: "Needs Attention" },
+  completed: { id: "completed-plans", title: "Completed Plans" },
+};
+
+const statusLabel = (status: RecurringCommitment["status"]) => statusDestination[status].title;
 
 const detectedTypeLabel = (commitment: RecurringCommitment) => {
   if (
@@ -171,9 +183,11 @@ function ChoiceGroup<T extends string>({
 function ReviewForm({
   commitment,
   onSaved,
+  onDirtyChange,
 }: {
   commitment: RecurringCommitment;
   onSaved: (state: RecurringReviewActionState) => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const initial = useMemo(() => defaultDecision(commitment), [commitment]);
   const [draft, setDraft] = useState(initial);
@@ -193,6 +207,9 @@ function ReviewForm({
   const [contextFollowup, setContextFollowup] = useState<RecurringContextProposal | null>(null);
   const [contextSaving, startContextSave] = useTransition();
   const [contextError, setContextError] = useState<string | null>(null);
+  const [contextGuidance, setContextGuidance] = useState<string | null>(null);
+  const [selectedContextAnswer, setSelectedContextAnswer] = useState<string | null>(null);
+  const contextQuestion = useRef<HTMLElement | null>(null);
   const [state, formAction, pending] = useActionState(
     saveRecurringCommitmentDecision,
     initialRecurringReviewActionState,
@@ -219,6 +236,21 @@ function ReviewForm({
     }
     onSaved(state);
   }, [onSaved, state]);
+
+  useEffect(() => onDirtyChange(changed), [changed, onDirtyChange]);
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+
+  useEffect(() => {
+    if (!contextProposal?.nextQuestion) return;
+    const frame = requestAnimationFrame(() => {
+      const question = contextQuestion.current;
+      if (!question) return;
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      question.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+      question.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [contextProposal?.nextQuestion]);
 
   const resolveCategory = (resolution: "accepted" | "kept_current") => {
     if (!categoryProposal) return;
@@ -248,16 +280,22 @@ function ReviewForm({
   const answerContext = (
     answer: Omit<Parameters<typeof saveRecurringCommitmentContextDecision>[0], "patternKey">,
   ) => {
+    setSelectedContextAnswer(JSON.stringify(answer));
     setContextError(null);
+    setContextGuidance(null);
     startContextSave(async () => {
       const result = await saveRecurringCommitmentContextDecision({ ...answer, patternKey: commitment.patternKey });
       if (result.status !== "saved") setContextError(result.error);
-      else if (result.contextProposal?.nextQuestion) setContextFollowup(result.contextProposal);
+      else if (result.contextProposal?.nextQuestion) {
+        setSelectedContextAnswer(null);
+        setContextFollowup(result.contextProposal);
+      }
       else onSaved(result);
     });
   };
 
   const answerSupportingTransactions = (apply: boolean) => {
+    setSelectedContextAnswer(apply ? "supporting_yes" : "supporting_no");
     startContextSave(async () => {
       const result = await saveRecurringCommitmentCategoryDecision({
         patternKey: commitment.patternKey,
@@ -266,7 +304,10 @@ function ReviewForm({
         applyToSupportingTransactions: apply,
       });
       if (result.status !== "saved") setContextError(result.error);
-      else if (contextProposal) setContextFollowup({ ...contextProposal, nextQuestion: "merchant_memory" });
+      else if (contextProposal) {
+        setSelectedContextAnswer(null);
+        setContextFollowup({ ...contextProposal, nextQuestion: "merchant_memory" });
+      }
     });
   };
 
@@ -286,22 +327,28 @@ function ReviewForm({
       <input type="hidden" name="disposition" value={draft.disposition} />
 
       {contextProposal ? (
-        <section className={styles.categoryProposal} aria-live="polite">
+        <section ref={contextQuestion} tabIndex={-1} className={styles.categoryProposal} aria-live="polite" aria-label="Next question">
           <p>You told Covarify that {commitment.displayName} is {contextProposal.evidence}.</p>
           {contextProposal.service ? <strong>Possible service: {contextProposal.service}</strong> : null}
+          <p className={styles.questionProgress}>Understanding {commitment.displayName} · Choose one to continue.</p>
           {contextProposal.nextQuestion === "entity_relationship" ? (
             <fieldset><legend>Is {contextProposal.namedEntity} a business you own or work for?</legend>
-              <button type="button" disabled={contextSaving} onClick={() => answerContext({ relationship: "owner" })}>My business</button>
-              <button type="button" disabled={contextSaving} onClick={() => answerContext({ relationship: "employee" })}>A business I work for</button>
-              <button type="button" disabled={contextSaving} onClick={() => answerContext({ relationship: "other", businessUse: false })}>Personal project</button>
-              <button type="button" disabled={contextSaving} onClick={() => answerContext({ relationship: "other" })}>Something else</button>
-              <button type="button" disabled={contextSaving} onClick={() => answerContext({ relationship: "other" })}>Not sure</button>
+              <div className={styles.contextChoices} role="group" aria-label="Relationship to named entity">
+                <button type="button" aria-pressed={selectedContextAnswer === JSON.stringify({ relationship: "owner" })} disabled={contextSaving} onClick={() => answerContext({ relationship: "owner" })}><strong>My business</strong><small>Record that you own the named business.</small></button>
+                <button type="button" aria-pressed={selectedContextAnswer === JSON.stringify({ relationship: "employee" })} disabled={contextSaving} onClick={() => answerContext({ relationship: "employee" })}><strong>A business I work for</strong><small>Record an employment relationship without assuming ownership.</small></button>
+                <button type="button" aria-pressed={selectedContextAnswer === JSON.stringify({ relationship: "other", businessUse: false })} disabled={contextSaving} onClick={() => answerContext({ relationship: "other", businessUse: false })}><strong>Personal project</strong><small>Keep this outside business-expense understanding.</small></button>
+                <button type="button" aria-pressed={selectedContextAnswer === JSON.stringify({ relationship: "other" })} disabled={contextSaving} onClick={() => answerContext({ relationship: "other" })}><strong>Something else</strong><small>Continue without assuming ownership or employment.</small></button>
+                <button type="button" aria-pressed={selectedContextAnswer === "unsure"} disabled={contextSaving} onClick={() => { setSelectedContextAnswer("unsure"); setContextGuidance("That’s okay. Leave this review open until you’re ready to choose."); }}><strong>I’m not sure</strong><small>Keep this relationship unresolved.</small></button>
+              </div>
             </fieldset>
           ) : null}
           {contextProposal.nextQuestion === "business_use" ? (
             <fieldset><legend>Should {commitment.displayName} be treated as a business-related expense?</legend>
-              <button type="button" disabled={contextSaving} onClick={() => answerContext({ businessUse: true })}>Yes</button>
-              <button type="button" disabled={contextSaving} onClick={() => answerContext({ businessUse: false })}>No</button>
+              <div className={styles.contextChoices} role="group" aria-label="Business use">
+                <button type="button" aria-pressed={selectedContextAnswer === JSON.stringify({ businessUse: true })} disabled={contextSaving} onClick={() => answerContext({ businessUse: true })}><strong>Yes, business-related</strong><small>Continue toward a proposed business classification.</small></button>
+                <button type="button" aria-pressed={selectedContextAnswer === JSON.stringify({ businessUse: false })} disabled={contextSaving} onClick={() => answerContext({ businessUse: false })}><strong>No, personal</strong><small>Keep this outside business-expense understanding.</small></button>
+                <button type="button" aria-pressed={selectedContextAnswer === "unsure"} disabled={contextSaving} onClick={() => { setSelectedContextAnswer("unsure"); setContextGuidance("That’s okay. Leave this review open until you’re ready to choose."); }}><strong>I’m not sure</strong><small>Do not classify this yet.</small></button>
+              </div>
             </fieldset>
           ) : null}
           {contextProposal.nextQuestion === "classification" && contextProposal.proposedCategory ? (
@@ -319,6 +366,7 @@ function ReviewForm({
             <button type="button" disabled={contextSaving} onClick={() => answerContext({ rememberMerchant: true, complete: true })}>Yes, remember it</button>
             <button type="button" disabled={contextSaving} onClick={() => answerContext({ rememberMerchant: false, complete: true })}>Not now</button>
           </fieldset> : null}
+          {contextGuidance ? <p className={styles.questionGuidance} role="status">{contextGuidance}</p> : null}
           {contextError ? <p className={styles.inlineError}>{contextError}</p> : null}
         </section>
       ) : null}
@@ -679,9 +727,13 @@ function ReviewForm({
 function CommitmentCard({
   commitment,
   onSaved,
+  onDirtyChange,
+  focusRequested = false,
 }: {
   commitment: RecurringCommitment;
   onSaved: (state: RecurringReviewActionState) => void;
+  onDirtyChange: (patternKey: string, dirty: boolean) => void;
+  focusRequested?: boolean;
 }) {
   const { available, missingCount } = reconcileSupportingTransactions(commitment);
   const [selectedTransaction, setSelectedTransaction] =
@@ -690,6 +742,19 @@ function CommitmentCard({
   const opener = useRef<HTMLButtonElement | null>(null);
   const row = useRef<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
+  const reportDirty = useCallback(
+    (dirty: boolean) => onDirtyChange(commitment.patternKey, dirty),
+    [commitment.patternKey, onDirtyChange],
+  );
+
+  useEffect(() => {
+    if (!focusRequested) return;
+    requestAnimationFrame(() => {
+      setOpen(true);
+      row.current?.scrollIntoView({ behavior: "auto", block: "start" });
+      row.current?.focus({ preventScroll: true });
+    });
+  }, [focusRequested]);
 
   useEffect(() => {
     if (selectedTransaction) closeButton.current?.focus();
@@ -751,7 +816,7 @@ function CommitmentCard({
             <p>{commitment.confidenceExplanation}</p>
             <p>This is a detected pattern, not a user-confirmed fact.</p>
           </section>
-          <ReviewForm commitment={commitment} onSaved={completeSave} />
+          <ReviewForm commitment={commitment} onSaved={completeSave} onDirtyChange={reportDirty} />
           <section id={`transactions-${commitment.patternKey}`} className={styles.transactions}>
             <h4>Supporting transactions</h4>
             <p>
@@ -838,11 +903,15 @@ function CommitmentSection({
   title,
   items,
   onSaved,
+  onDirtyChange,
+  focusedPatternKey,
 }: {
   id: string;
   title: string;
   items: RecurringCommitment[];
   onSaved: (state: RecurringReviewActionState) => void;
+  onDirtyChange: (patternKey: string, dirty: boolean) => void;
+  focusedPatternKey?: string | null;
 }) {
   if (!items.length) return null;
   return (
@@ -850,7 +919,7 @@ function CommitmentSection({
       <header><h2>{title}</h2><span>{items.length}</span></header>
       <div className={styles.cards}>
         {items.map((item) => (
-          <CommitmentCard key={item.patternKey} commitment={item} onSaved={onSaved} />
+          <CommitmentCard key={item.patternKey} commitment={item} onSaved={onSaved} onDirtyChange={onDirtyChange} focusRequested={item.patternKey === focusedPatternKey} />
         ))}
       </div>
     </section>
@@ -873,6 +942,7 @@ export function RecurringCommitmentsWorkspace({
       ? initialQuery.status as RecurringCommitmentStatusFilter
       : "all",
   );
+  const [dirtyPatternKeys, setDirtyPatternKeys] = useState<Set<string>>(() => new Set());
   const [undoing, startUndo] = useTransition();
   const moveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const summary = useMemo(
@@ -883,12 +953,58 @@ export function RecurringCommitmentsWorkspace({
   const confirmed = commitments.filter((item) => item.status === "confirmed");
   const possible = commitments.filter((item) => item.status === "possible");
   const completed = commitments.filter((item) => item.status === "completed");
-  const filtered = useMemo(() => filterRecurringCommitments(commitments, {
+  const searchResult = useMemo(() => recurringCommitmentSearchResult(commitments, {
     period: initialData.period,
     search,
     status,
   }), [commitments, initialData.period, search, status]);
-  const filtering = Boolean(search.trim()) || status !== "all";
+  const ownedTarget = useMemo(
+    () => resolveOwnedRecurringCommitment(commitments, initialQuery.commitment),
+    [commitments, initialQuery.commitment],
+  );
+  const eligibleTarget = ownedTarget && recurringCommitmentInPeriod(ownedTarget, initialData.period)
+    ? ownedTarget
+    : null;
+  const filtered = eligibleTarget ? [eligibleTarget] : searchResult.visible;
+  const filtering = Boolean(search.trim()) || status !== "all" || Boolean(eligibleTarget);
+  const onDirtyChange = useCallback((patternKey: string, dirty: boolean) => {
+    setDirtyPatternKeys((current) => {
+      const next = new Set(current);
+      if (dirty) next.add(patternKey);
+      else next.delete(patternKey);
+      return next;
+    });
+  }, []);
+
+  const queryFor = useCallback((next: {
+    status?: RecurringCommitmentStatusFilter;
+    search?: string;
+    commitment?: string | null;
+  }) => {
+    const query = new URLSearchParams({ period: initialData.period.key });
+    if (initialData.period.key === "custom") {
+      query.set("start", initialData.period.start);
+      query.set("end", initialData.period.end);
+    }
+    const nextSearch = next.search ?? search;
+    const nextStatus = next.status ?? status;
+    if (nextSearch.trim()) query.set("search", nextSearch.trim());
+    if (nextStatus !== "all") query.set("status", nextStatus);
+    if (next.commitment) query.set("commitment", next.commitment);
+    return `/account/recurring?${query.toString()}`;
+  }, [initialData.period, search, status]);
+
+  const navigateStatus = (nextStatus: Exclude<RecurringCommitmentStatusFilter, "all">) => {
+    if (dirtyPatternKeys.size && !window.confirm("You have unsaved review choices. Discard them and open another section?")) return;
+    setSearch("");
+    setStatus(nextStatus);
+    router.replace(queryFor({ status: nextStatus, search: "", commitment: null }), { scroll: false });
+    requestAnimationFrame(() => {
+      const section = document.getElementById(statusDestination[nextStatus].id);
+      section?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+      section?.focus({ preventScroll: true });
+    });
+  };
 
   useEffect(
     () => () => {
@@ -904,11 +1020,32 @@ export function RecurringCommitmentsWorkspace({
   }, [notice]);
 
   useEffect(() => {
-    if (!initialQuery.commitment) return;
-    requestAnimationFrame(() =>
-      document.getElementById(`commitment-${initialQuery.commitment}`)?.focus(),
-    );
-  }, [initialQuery.commitment]);
+    const frame = requestAnimationFrame(() => {
+      setSearch(initialQuery.search);
+      setStatus(
+        ["needs_attention", "confirmed", "possible", "completed"].includes(initialQuery.status)
+          ? initialQuery.status as RecurringCommitmentStatusFilter
+          : "all",
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [initialQuery.search, initialQuery.status]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const destination = eligibleTarget
+        ? document.getElementById(`commitment-${eligibleTarget.patternKey}`)
+        : status !== "all"
+          ? document.getElementById(statusDestination[status].id)
+          : search.trim()
+            ? document.getElementById("recurring-search-results")
+            : null;
+      if (!destination) return;
+      destination.scrollIntoView({ behavior: "auto", block: "start" });
+      destination.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [eligibleTarget, search, status]);
 
   const applyResult = (state: RecurringReviewActionState) => {
     if (state.status !== "saved" || !state.patternKey || !state.message) return;
@@ -993,22 +1130,15 @@ export function RecurringCommitmentsWorkspace({
       ) : null}
       {initialData.syncPending ? <p className={styles.notice}>Your recurring commitments are still updating as transactions finish syncing.</p> : null}
       <section className={styles.summary} id="recurring-summary" tabIndex={-1} aria-label="Recurring commitments summary">
-        <article><strong>{summary.confirmed}</strong><span>Confirmed recurring</span></article>
-        <article><strong>{summary.possible}</strong><span>Possible recurring</span></article>
-        <article><strong>{summary.needsAttention}</strong><span>Needs attention</span></article>
-        {summary.completed ? <article><strong>{summary.completed}</strong><span>Completed plans</span></article> : null}
+        <button type="button" aria-pressed={status === "confirmed"} onClick={() => navigateStatus("confirmed")}><strong>{summary.confirmed}</strong><span>Confirmed recurring</span><small>View confirmed commitments</small></button>
+        <button type="button" aria-pressed={status === "possible"} onClick={() => navigateStatus("possible")}><strong>{summary.possible}</strong><span>Possible recurring</span><small>View possible commitments</small></button>
+        <button type="button" aria-pressed={status === "needs_attention"} onClick={() => navigateStatus("needs_attention")}><strong>{summary.needsAttention}</strong><span>Needs attention</span><small>View commitments needing attention</small></button>
+        <button type="button" aria-pressed={status === "completed"} onClick={() => navigateStatus("completed")}><strong>{summary.completed}</strong><span>Completed plans</span><small>View completed plans</small></button>
         {summary.monthlyEquivalent !== null ? <article><strong>{money(summary.monthlyEquivalent)}</strong><span>Estimated monthly equivalent</span><small>Fixed confirmed weekly, biweekly, and monthly commitments only.</small></article> : null}
       </section>
       <form className={styles.searchControls} onSubmit={(event) => {
         event.preventDefault();
-        const query = new URLSearchParams({ period: initialData.period.key });
-        if (initialData.period.key === "custom") {
-          query.set("start", initialData.period.start);
-          query.set("end", initialData.period.end);
-        }
-        if (search.trim()) query.set("search", search.trim());
-        if (status !== "all") query.set("status", status);
-        router.replace(`/account/recurring?${query.toString()}`, { scroll: false });
+        router.replace(queryFor({ commitment: null }), { scroll: false });
       }}>
         <label>
           Search recurring commitments
@@ -1034,7 +1164,29 @@ export function RecurringCommitmentsWorkspace({
         </section>
       ) : filtering ? (
         filtered.length ? (
-          <CommitmentSection id="recurring-search-results" title="Search Results" items={filtered} onSaved={applyResult} />
+          <CommitmentSection
+            id={eligibleTarget ? statusDestination[eligibleTarget.status].id : status === "all" ? "recurring-search-results" : statusDestination[status].id}
+            title={eligibleTarget ? statusLabel(eligibleTarget.status) : status === "all" ? "Search Results" : statusDestination[status].title}
+            items={filtered}
+            onSaved={applyResult}
+            onDirtyChange={onDirtyChange}
+            focusedPatternKey={eligibleTarget?.patternKey}
+          />
+        ) : search.trim() && status !== "all" && searchResult.otherStatusMatches.length ? (
+          <section className={styles.empty}>
+            <h2>{searchResult.otherStatusMatches[0].displayName} is not in {statusDestination[status].title}.</h2>
+            <p>It is currently in {statusLabel(searchResult.otherStatusMatches[0].status)}.</p>
+            <button type="button" className={styles.primary} onClick={() => {
+              const match = searchResult.otherStatusMatches[0];
+              setStatus(match.status);
+              router.replace(queryFor({ status: match.status, commitment: match.patternKey }), { scroll: false });
+            }}>View {searchResult.otherStatusMatches[0].displayName}</button>
+          </section>
+        ) : search.trim() && searchResult.outsidePeriodMatches.length ? (
+          <section className={styles.empty}>
+            <h2>No matches in {initialData.period.label}.</h2>
+            <p>{searchResult.outsidePeriodMatches[0].displayName} appears in another period.</p>
+          </section>
         ) : (
           <section className={styles.empty}>
             <h2>No recurring commitments match ‘{search.trim()}’ in this period.</h2>
@@ -1044,10 +1196,10 @@ export function RecurringCommitmentsWorkspace({
       ) : (
         <>
           {!confirmed.length && possible.length ? <p className={styles.notice}>We found a few charges that may repeat. Review them to help Covarify understand.</p> : null}
-          <CommitmentSection id="needs-attention" title="Needs Attention" items={attention} onSaved={applyResult} />
-          <CommitmentSection id="confirmed-recurring" title="Confirmed Recurring" items={confirmed} onSaved={applyResult} />
-          <CommitmentSection id="possible-recurring" title="Possible Recurring" items={possible} onSaved={applyResult} />
-          <CommitmentSection id="completed-plans" title="Completed Plans" items={completed} onSaved={applyResult} />
+          <CommitmentSection id="needs-attention" title="Needs Attention" items={attention} onSaved={applyResult} onDirtyChange={onDirtyChange} />
+          <CommitmentSection id="confirmed-recurring" title="Confirmed Recurring" items={confirmed} onSaved={applyResult} onDirtyChange={onDirtyChange} />
+          <CommitmentSection id="possible-recurring" title="Possible Recurring" items={possible} onSaved={applyResult} onDirtyChange={onDirtyChange} />
+          <CommitmentSection id="completed-plans" title="Completed Plans" items={completed} onSaved={applyResult} onDirtyChange={onDirtyChange} />
         </>
       )}
     </main>

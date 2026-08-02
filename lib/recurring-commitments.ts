@@ -100,6 +100,8 @@ const searchableCommitmentText = (commitment: RecurringCommitment) => [
   commitment.decision?.userNote,
   commitment.decision?.identityNote,
   commitment.decision?.manualOriginalPurpose,
+  commitment.decision?.contextEntityName,
+  commitment.decision?.contextPurpose,
   commitment.paymentAccountLabel,
   ...commitment.supportingTransactions.flatMap((transaction) => [
     transaction.merchantName,
@@ -107,6 +109,12 @@ const searchableCommitmentText = (commitment: RecurringCommitment) => [
     transaction.description,
   ]),
 ].filter((value): value is string => Boolean(value));
+
+const recurringCommitmentMatchesSearch = (
+  commitment: RecurringCommitment,
+  search: string,
+) => !search || searchableCommitmentText(commitment).some((value) =>
+  value.toLocaleLowerCase().includes(search));
 
 export function recurringCommitmentInPeriod(
   commitment: RecurringCommitment,
@@ -126,12 +134,48 @@ export function filterRecurringCommitments(
   },
 ) {
   const search = options.search?.trim().toLocaleLowerCase() || "";
-  return commitments.filter((commitment) =>
-    recurringCommitmentInPeriod(commitment, options.period) &&
-    (!options.status || options.status === "all" || commitment.status === options.status) &&
-    (!search || searchableCommitmentText(commitment).some((value) =>
-      value.toLocaleLowerCase().includes(search))),
-  );
+  const eligible = commitments.filter((commitment) =>
+    recurringCommitmentInPeriod(commitment, options.period));
+  const searched = search
+    ? eligible.filter((commitment) => recurringCommitmentMatchesSearch(commitment, search))
+    : eligible;
+  return !options.status || options.status === "all"
+    ? searched
+    : searched.filter((commitment) => commitment.status === options.status);
+}
+
+export function recurringCommitmentSearchResult(
+  commitments: RecurringCommitment[],
+  options: {
+    period: Pick<ResolvedFinancialPeriod, "start" | "end">;
+    search?: string;
+    status?: RecurringCommitmentStatusFilter;
+  },
+) {
+  const search = options.search?.trim().toLocaleLowerCase() || "";
+  const allSearchMatches = commitments.filter((commitment) =>
+    recurringCommitmentMatchesSearch(commitment, search));
+  const matches = filterRecurringCommitments(commitments, {
+    ...options,
+    status: "all",
+  });
+  const visible = !options.status || options.status === "all"
+    ? matches
+    : matches.filter((commitment) => commitment.status === options.status);
+  return {
+    matches,
+    visible,
+    otherStatusMatches: matches.filter((commitment) => !visible.includes(commitment)),
+    outsidePeriodMatches: allSearchMatches.filter((commitment) => !matches.includes(commitment)),
+  };
+}
+
+export function resolveOwnedRecurringCommitment(
+  commitments: RecurringCommitment[],
+  requestedPatternKey: string | null | undefined,
+) {
+  if (!requestedPatternKey) return null;
+  return commitments.find((commitment) => commitment.patternKey === requestedPatternKey) || null;
 }
 
 export function reconcileSupportingTransactions(
@@ -347,6 +391,9 @@ export function recurringCommitmentSummary(commitments: RecurringCommitment[]) {
         return total + item.typicalAmount * factor;
       }, 0)
     : null;
+  const meaningfulAttentionCommitment = needsAttention.find((item) =>
+    item.attentionReasons.some((reason) =>
+      !/cancellation requested for review/i.test(reason)));
   return {
     confirmed: confirmed.length,
     possible: possible.length,
@@ -354,12 +401,10 @@ export function recurringCommitmentSummary(commitments: RecurringCommitment[]) {
     completed: completed.length,
     monthlyEquivalent,
     meaningfulAttention:
-      needsAttention
-        .flatMap((item) => item.attentionReasons)
-        .find(
-          (reason) =>
-            !/cancellation requested for review/i.test(reason),
-        ) || null,
+      meaningfulAttentionCommitment?.attentionReasons.find((reason) =>
+        !/cancellation requested for review/i.test(reason)) || null,
+    meaningfulAttentionCommitmentPatternKey:
+      meaningfulAttentionCommitment?.patternKey || null,
   };
 }
 
