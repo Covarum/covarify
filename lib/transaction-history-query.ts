@@ -6,6 +6,18 @@ export type TransactionHistoryQuery = { intentType: TransactionHistoryIntent; me
 
 export const normalizeHistoryMerchant = (value: string) => value.normalize("NFKD").toUpperCase().replace(/[’']/g, "").replace(/[^A-Z0-9]+/g, " ").trim();
 const compactMerchant = (value: string) => normalizeHistoryMerchant(value).replace(/\s+/g, "");
+const merchantTokens = (value: string) => normalizeHistoryMerchant(value).split(" ").filter((token) => token.length > 1);
+
+export function matchesHistoryMerchant(merchant: string, row: MoneyTransaction) {
+  const requested = normalizeHistoryMerchant(merchant);
+  const stable = normalizeHistoryMerchant(row.merchantName || "");
+  const display = normalizeHistoryMerchant(row.name || "");
+  if (stable === requested || display === requested) return true;
+  const requestedTokens = merchantTokens(merchant);
+  if (!requestedTokens.length) return false;
+  const descriptionTokens = new Set(merchantTokens(row.description || ""));
+  return requestedTokens.every((token) => descriptionTokens.has(token));
+}
 
 export function ambiguousHistoryMerchantNames(merchant: string, transactions: MoneyTransaction[]) {
   const requested = compactMerchant(merchant);
@@ -41,8 +53,7 @@ const refund = (row: MoneyTransaction) => row.direction === "inflow" || /REFUND/
 
 export function answerTransactionHistoryQuery(input: { query: TransactionHistoryQuery; transactions: MoneyTransaction[]; activePeriod: ResolvedFinancialPeriod; now?: Date }) {
   const period = input.query.periodKey === "all-connected-history" ? null : input.query.customPeriod || (input.query.periodKey ? resolveFinancialPeriod({ key: input.query.periodKey }, input.now) : input.activePeriod);
-  const key = normalizeHistoryMerchant(input.query.merchant || "");
-  const merchantRows = input.transactions.filter((row) => normalizeHistoryMerchant(row.merchantName || row.name) === key || normalizeHistoryMerchant(row.description || "") === key);
+  const merchantRows = input.transactions.filter((row) => matchesHistoryMerchant(input.query.merchant || "", row));
   const within = period ? merchantRows.filter((row) => row.date >= period.start && row.date <= period.end) : merchantRows;
   const postedPendingIds = new Set(within.filter((row) => !row.pending).map((row) => row.pendingTransactionId).filter(Boolean));
   const deduped = within.filter((row) => !row.pending || !postedPendingIds.has(row.id));

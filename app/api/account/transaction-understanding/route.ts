@@ -43,6 +43,8 @@ import {
 } from "@/lib/recurring-obligations";
 import { ambiguousHistoryMerchantNames, answerTransactionHistoryQuery, parseTransactionHistoryQuery } from "@/lib/transaction-history-query";
 import { formatFinancialPeriodDateRange, type ResolvedFinancialPeriod } from "@/lib/financial-periods";
+import { orchestrateConversation } from "@/lib/conversation/orchestrator";
+import type { ConversationContext } from "@/lib/conversation/types";
 
 export const dynamic = "force-dynamic";
 
@@ -177,6 +179,9 @@ export async function POST(request: Request) {
       };
       obligationTransactionId?: string;
       activePeriod?: ResolvedFinancialPeriod;
+      sessionId?: string;
+      conversationContext?: ConversationContext | null;
+      conversationProposalReview?: boolean;
     };
     const transactions = await loadTransactions(user.id);
     const [history, availableSubcategories, merchantRules] = await Promise.all([
@@ -271,6 +276,26 @@ export async function POST(request: Request) {
     if (body.operation === "interpret") {
       const text = String(body.text || "").trim();
       if (!text || text.length > 500) return NextResponse.json({ error: "INVALID_INTENT" }, { status: 400 });
+      const conversation = orchestrateConversation({
+        text,
+        userId: user.id,
+        sessionId: String(body.sessionId || "default"),
+        selectedTransactionId: body.selectedTransactionId,
+        context: body.conversationContext,
+        activePeriod: body.activePeriod,
+        transactions,
+      });
+      console.info("conversation_core", {
+        intent: conversation.intent.type,
+        scope: conversation.scope.type,
+        tool: conversation.intent.capability,
+        clarificationRequired: conversation.kind === "clarification_question",
+        evidenceCount: conversation.evidence?.transactionIds.length || 0,
+        proposalGenerated: Boolean(conversation.proposal),
+      });
+      if (!body.conversationProposalReview && conversation.intent.type !== "ambiguous" && conversation.intent.type !== "merchant_rule" && conversation.intent.type !== "transaction_correction") {
+        return NextResponse.json(conversation);
+      }
       const historyQuery = parseTransactionHistoryQuery(text);
       if (historyQuery) {
         if (!historyQuery.merchant) return NextResponse.json({ kind: "no_match", message: "Which merchant or category should I look for?" });

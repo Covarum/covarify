@@ -1,0 +1,2 @@
+export type ConfirmedMemoryWrite = { userId: string; contextType: string; canonicalValues: Record<string, string>; supportingEvidence: string[]; originalStatement: string; confirmedAt: string; supersedesId: string | null; confidence: "high" | "medium" };
+export function requireConfirmedMemory(input: ConfirmedMemoryWrite | null) { if (!input?.confirmedAt) throw new Error("CONFIRMED_MEMORY_REQUIRED"); return input; }

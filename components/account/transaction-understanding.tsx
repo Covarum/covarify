@@ -20,11 +20,13 @@ import {
 } from "@/lib/account-cost-classification";
 import styles from "./transaction-understanding.module.css";
 import type { ResolvedFinancialPeriod } from "@/lib/financial-periods";
+import type { ConversationContext, ConversationResponse } from "@/lib/conversation/types";
 
 type Candidate = Pick<MoneyTransaction, "id" | "name" | "amount" | "currency" | "date" | "pending" | "accountLabel"> & {
   sourceCategory: string;
 };
 type Result =
+  | ConversationResponse
   | { kind: "clear"; message: string; transaction: Candidate; proposedCategory: string | null; parentCategory: { id: string; displayName: string }; sourceParentCategory: { id: string; displayName: string }; categoryOptions: Array<{ id: string; displayName: string; subcategories: Array<{ id: string; displayName: string }> }>; requestedSubcategory: string | null; suggestions: Array<{ id: string; displayName: string; match: "exact" | "alias" }>; parentSubcategories: Array<{ id: string; displayName: string }>; intent: TransactionIntent; sourceSignature: string }
   | { kind: "ambiguous"; message: string; candidates: Candidate[]; intent: TransactionIntent }
   | { kind: "no_match"; message: string }
@@ -72,6 +74,8 @@ export function TransactionUnderstanding({ period }: { period: ResolvedFinancial
   const [paymentType, setPaymentType] = useState<"full" | "partial" | "catch_up" | "late" | "extra" | "unsure">("unsure");
   const [ongoingStatus, setOngoingStatus] = useState<"ongoing" | "ended" | "unsure">("unsure");
   const [remainingDue, setRemainingDue] = useState("");
+  const [conversationContext, setConversationContext] = useState<ConversationContext | null>(null);
+  const sessionId = useRef(crypto.randomUUID());
   const trigger = useRef<HTMLElement | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const panel = useRef<HTMLElement>(null);
@@ -120,7 +124,7 @@ export function TransactionUnderstanding({ period }: { period: ResolvedFinancial
     });
   }, [result]);
 
-  async function interpret(selectedTransactionId?: string, statementOverride?: string) {
+  async function interpret(selectedTransactionId?: string, statementOverride?: string, conversationProposalReview = false) {
     const statement = (statementOverride || text).trim();
     if (!statement) return;
     setBusy(true);
@@ -134,10 +138,14 @@ export function TransactionUnderstanding({ period }: { period: ResolvedFinancial
           modality: selectedTransactionId || selected ? "selected_transaction" : "typed",
           selectedTransactionId: selectedTransactionId || selected?.id || null,
           activePeriod: period,
+          sessionId: sessionId.current,
+          conversationContext,
+          conversationProposalReview,
         }),
       });
       if (!response.ok) throw new Error();
       const payload = await response.json() as Result;
+      if ("context" in payload && payload.context) setConversationContext(payload.context);
       if (payload.kind === "clear") {
         setSelectedParentId(payload.parentCategory.id);
         setSelectedSubcategoryId(payload.suggestions[0]?.id || "");
@@ -420,6 +428,24 @@ export function TransactionUnderstanding({ period }: { period: ResolvedFinancial
               document.getElementById("recent-activity-heading")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
             }}>View these payments</button> : null}
           </div> : null}
+          {(result.kind === "direct_answer" || result.kind === "transaction_list") && result.actions?.length ? (
+            <div className={styles.evidenceCards}>
+              {result.evidence ? <p><strong>Coverage:</strong> {result.evidence.period.label}{result.evidence.limitations.length ? ` · ${result.evidence.limitations[0]}` : ""}</p> : null}
+              {result.actions.map((action) => <button key={action.type} type="button" onClick={() => {
+                window.dispatchEvent(new CustomEvent("covarify:category-filter", { detail: { transactionIds: action.transactionIds, periodStart: action.start || undefined, periodEnd: action.end || undefined, search: action.search || undefined } }));
+                document.getElementById("recent-activity-heading")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+              }}>{action.label}</button>)}
+            </div>
+          ) : null}
+          {result.kind === "structured_proposal" && result.proposal ? (
+            <section className={styles.proposal} aria-label={result.proposal.title}>
+              <h3>{result.proposal.title}</h3>
+              <dl>{result.proposal.values.map((value) => <div key={value.label}><dt>{value.label}</dt><dd>{value.value}</dd></div>)}</dl>
+              <p><strong>Would change:</strong> {result.proposal.changes.join("; ")}</p>
+              <p><strong>Would stay unchanged:</strong> {result.proposal.unchanged.join("; ")}</p>
+              <div className={styles.choiceActions}><button className={styles.primary} type="button" onClick={() => void interpret(result.proposal!.transactionIds[0], result.proposal!.values.some((value) => value.value.includes("Gifts")) ? "Classify this transaction as Gifts" : "Classify this transaction as Software & Services", true)}>Review transaction proposal</button><button type="button" onClick={() => setResult(null)}>Not now</button></div>
+            </section>
+          ) : null}
           {result.kind === "intent_clarification" ? (
             <div className={styles.scopeChoices}>
               <button type="button" onClick={() => setResult({
