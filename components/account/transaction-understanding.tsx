@@ -19,6 +19,7 @@ import {
   accountCostDisplayLabel,
 } from "@/lib/account-cost-classification";
 import styles from "./transaction-understanding.module.css";
+import type { ResolvedFinancialPeriod } from "@/lib/financial-periods";
 
 type Candidate = Pick<MoneyTransaction, "id" | "name" | "amount" | "currency" | "date" | "pending" | "accountLabel"> & {
   sourceCategory: string;
@@ -27,6 +28,7 @@ type Result =
   | { kind: "clear"; message: string; transaction: Candidate; proposedCategory: string | null; parentCategory: { id: string; displayName: string }; sourceParentCategory: { id: string; displayName: string }; categoryOptions: Array<{ id: string; displayName: string; subcategories: Array<{ id: string; displayName: string }> }>; requestedSubcategory: string | null; suggestions: Array<{ id: string; displayName: string; match: "exact" | "alias" }>; parentSubcategories: Array<{ id: string; displayName: string }>; intent: TransactionIntent; sourceSignature: string }
   | { kind: "ambiguous"; message: string; candidates: Candidate[]; intent: TransactionIntent }
   | { kind: "no_match"; message: string }
+  | { kind: "history_query"; message: string; merchant: string; transactionIds: string[]; periodStart: string | null; periodEnd: string | null; accounts: Array<{ label: string; count: number }> }
   | { kind: "intent_clarification"; message: string; merchant: string | null; requestedSubcategory: string | null; originalText: string; intent: TransactionIntent }
   | {
       kind: "merchant_rule";
@@ -54,7 +56,7 @@ type Result =
 
 const money = (amount: number, currency = "USD") =>
   new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Math.abs(amount));
-export function TransactionUnderstanding() {
+export function TransactionUnderstanding({ period }: { period: ResolvedFinancialPeriod }) {
   const router = useRouter();
   const [text, setText] = useState("");
   const [result, setResult] = useState<Result | null>(null);
@@ -131,6 +133,7 @@ export function TransactionUnderstanding() {
           text: statement,
           modality: selectedTransactionId || selected ? "selected_transaction" : "typed",
           selectedTransactionId: selectedTransactionId || selected?.id || null,
+          activePeriod: period,
         }),
       });
       if (!response.ok) throw new Error();
@@ -410,6 +413,10 @@ export function TransactionUnderstanding() {
               ))}
             </div>
           ) : null}
+          {result.kind === "history_query" ? <div className={styles.merchantRule}>
+            {result.accounts.length > 1 ? <p><strong>Paid from:</strong> {result.accounts.map((account) => `${account.label}: ${account.count}`).join(" · ")}</p> : null}
+            {result.transactionIds.length ? <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("covarify:category-filter", { detail: { transactionIds: result.transactionIds, periodStart: result.periodStart || undefined, periodEnd: result.periodEnd || undefined, search: result.merchant } }))}>View these payments</button> : null}
+          </div> : null}
           {result.kind === "intent_clarification" ? (
             <div className={styles.scopeChoices}>
               <button type="button" onClick={() => setResult({

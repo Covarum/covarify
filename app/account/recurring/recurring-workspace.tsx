@@ -39,7 +39,6 @@ import {
 } from "./actions";
 import {
   INSURANCE_SUBCATEGORIES,
-  BUSINESS_CATEGORY,
   type RecurringCategoryProposal,
   type RecurringContextProposal,
 } from "@/lib/recurring-category-understanding";
@@ -295,12 +294,13 @@ function ReviewForm({
   };
 
   const answerSupportingTransactions = (apply: boolean) => {
+    if (!contextProposal?.proposedCategory) return;
     setSelectedContextAnswer(apply ? "supporting_yes" : "supporting_no");
     startContextSave(async () => {
       const result = await saveRecurringCommitmentCategoryDecision({
         patternKey: commitment.patternKey,
         resolution: "accepted",
-        ...BUSINESS_CATEGORY,
+        ...contextProposal.proposedCategory,
         applyToSupportingTransactions: apply,
       });
       if (result.status !== "saved") setContextError(result.error);
@@ -342,6 +342,18 @@ function ReviewForm({
               </div>
             </fieldset>
           ) : null}
+          {contextProposal.nextQuestion === "person_relationship" ? (
+            <fieldset><legend>Who is {contextProposal.namedEntity}?</legend>
+              <div className={styles.contextChoices} role="group" aria-label="Relationship to recipient">
+                <button type="button" disabled={contextSaving} onClick={() => answerContext({ relationship: "child" })}><strong>My child</strong></button>
+                <button type="button" disabled={contextSaving} onClick={() => answerContext({ relationship: "partner" })}><strong>My partner or spouse</strong></button>
+                <button type="button" disabled={contextSaving} onClick={() => answerContext({ relationship: "household_member" })}><strong>Another household member</strong></button>
+                <button type="button" disabled={contextSaving} onClick={() => answerContext({ relationship: "friend_family" })}><strong>Friend or family</strong></button>
+                <button type="button" disabled={contextSaving} onClick={() => answerContext({ relationship: "someone_else" })}><strong>Someone else</strong></button>
+                <button type="button" onClick={() => setContextGuidance("That’s okay. Keep this relationship unresolved.")}><strong>Not sure</strong></button>
+              </div>
+            </fieldset>
+          ) : null}
           {contextProposal.nextQuestion === "business_use" ? (
             <fieldset><legend>Should {commitment.displayName} be treated as a business-related expense?</legend>
               <div className={styles.contextChoices} role="group" aria-label="Business use">
@@ -352,13 +364,13 @@ function ReviewForm({
             </fieldset>
           ) : null}
           {contextProposal.nextQuestion === "classification" && contextProposal.proposedCategory ? (
-            <fieldset><legend>Would you like Covarify to classify this as business software?</legend>
-              <strong>{BUSINESS_CATEGORY.parentCategory} → {BUSINESS_CATEGORY.subcategory}</strong>
+            <fieldset><legend>Use {contextProposal.proposedCategory.parentCategory} → {contextProposal.proposedCategory.subcategory}?</legend>
+              <strong>{contextProposal.proposedCategory.parentCategory} → {contextProposal.proposedCategory.subcategory}</strong>
               <button type="button" disabled={contextSaving} onClick={() => answerContext({ acceptBusinessClassification: true })}>Use this classification</button>
               <button type="button" disabled={contextSaving} onClick={() => answerContext({ acceptBusinessClassification: false })}>Keep current classification</button>
             </fieldset>
           ) : null}
-          {contextProposal.nextQuestion === "supporting_transactions" ? <fieldset><legend>Use this business classification for the supporting {commitment.displayName} transactions too?</legend>
+          {contextProposal.nextQuestion === "supporting_transactions" ? <fieldset><legend>Use this classification for the supporting {commitment.displayName} transactions too?</legend>
             <button type="button" disabled={contextSaving} onClick={() => answerSupportingTransactions(true)}>Yes, update these transactions</button>
             <button type="button" disabled={contextSaving} onClick={() => answerSupportingTransactions(false)}>Use only for this commitment</button>
           </fieldset> : null}

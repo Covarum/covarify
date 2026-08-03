@@ -50,7 +50,7 @@ export type RecurringCommitmentDecision = {
   supportingTransactionsClassified: boolean;
   contextOwnerKind: "personal" | "household" | "business" | "unknown" | null;
   contextEntityName: string | null;
-  contextRelationship: "owner" | "employee" | "contractor" | "other" | null;
+  contextRelationship: "owner" | "employee" | "contractor" | "child" | "partner" | "household_member" | "friend_family" | "someone_else" | "other" | null;
   contextPurpose: string | null;
   businessUse: boolean | null;
   contextComplete: boolean;
