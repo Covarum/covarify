@@ -6,6 +6,10 @@ import { resolveConversationScope } from "../lib/conversation/scope-resolver.ts"
 import { resolveConversationEntities } from "../lib/conversation/entity-resolver.ts";
 import { validConversationContext } from "../lib/conversation/conversation-context.ts";
 import { buildHousingGap, candidateLevers, confirmRecoveryPlan, generateRecoveryOptions, monitorPlan, proposeRecoveryPlan, rankFinancialPriority } from "../lib/conversation/financial-triage.ts";
+import { competingGoalClarification } from "../lib/conversation/goals.ts";
+import { assembleWholePicture } from "../lib/conversation/whole-picture.ts";
+import { applyStrategyConstraints, recommendPersonalizedStrategy } from "../lib/conversation/strategy-engine.ts";
+import { selectNextBestStep } from "../lib/conversation/next-best-step.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -107,4 +111,63 @@ test("monitoring uses actual activity, handles stale data, and offers calm adjus
   assert.equal(monitorPlan({ gap, actualContribution: 100, expectedContribution: 200, stale: false }).status, "behind");
   assert.match(monitorPlan({ gap, actualContribution: 100, expectedContribution: 200, stale: false }).message, /adjustment|extend/i);
   assert.equal(monitorPlan({ gap, actualContribution: 100, expectedContribution: 200, stale: true }).status, "blocked_by_missing_data");
+});
+
+const goal = (overrides = {}) => ({ id: "goal-1", userId: "user-1", type: "housing_catch_up", label: "Catch up on rent", targetAmount: 500, targetDate: "2026-09-01", priority: 1, status: "confirmed", confirmedAt: "2026-08-03T12:00:00Z", evidenceIds: ["rent"], assumptions: [], ...overrides });
+const situation = (overrides = {}) => assembleWholePicture({ userId: "user-1", accounts: [{ id: "cash", kind: "cash", currentBalance: 1200, availableBalance: 1000, minimumPayment: null, fresh: true }, { id: "card", kind: "credit", currentBalance: 2000, availableBalance: 3000, minimumPayment: 75, fresh: true }, { id: "invest", kind: "investment", currentBalance: 10000, availableBalance: null, minimumPayment: null, fresh: true }], expectedIncome: 1800, recentCashFlow: 100, protectedObligations: 1500, evidenceIds: ["cash", "income"], ...overrides });
+
+test("whole-picture situation excludes investments and available credit from cash", () => {
+  const current = situation(); assert.equal(current.availableCash, 1000); assert.equal(current.investmentsExcluded, 10000); assert.equal(current.requiredMinimums, 75);
+});
+
+test("unknown and stale whole-picture values lower confidence instead of becoming zero", () => {
+  const current = assembleWholePicture({ userId: "user-1", accounts: [{ id: "cash", kind: "cash", currentBalance: null, availableBalance: null, minimumPayment: null, fresh: false }], evidenceIds: [] });
+  assert.equal(current.availableCash, null); assert.equal(current.confidence, "low"); assert.deepEqual(current.staleAccountIds, ["cash"]);
+});
+
+test("generic strategy is rejected without a confirmed goal and whole-picture evidence", () => {
+  assert.throws(() => recommendPersonalizedStrategy({ goal: goal({ status: "candidate", confirmedAt: null }), situation: situation(), options: [], constraints: [] }), /CONFIRMED_GOAL_REQUIRED/);
+  assert.throws(() => recommendPersonalizedStrategy({ goal: goal(), situation: { ...situation(), evidenceIds: [] }, options: [], constraints: [] }), /EVIDENCE_BACKED_OPTIONS_REQUIRED|WHOLE_PICTURE_EVIDENCE_REQUIRED/);
+});
+
+test("competing unranked goals require one priority clarification", () => {
+  assert.match(competingGoalClarification([goal({ priority: null }), goal({ id: "goal-2", type: "debt_payoff", label: "Pay off card", priority: null })]), /Which goal should come first/);
+});
+
+test("identical facts with different goals produce different strategy rankings", () => {
+  const gap = buildHousingGap({ obligation: "Rent", normalMonthlyRent: 2200, amountPaid: 1700, outstanding: 500, evidenceIds: ["rent"] });
+  const levers = candidateLevers([{ key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }, { key: "subscriptions", label: "Subscriptions", category: "Subscriptions", amount: 100, transactionIds: ["s1", "s2"], flexibility: "potentially_cancellable", recurring: true }]);
+  const options = generateRecoveryOptions(gap, levers);
+  const housing = recommendPersonalizedStrategy({ goal: goal(), situation: situation(), options, constraints: [] });
+  const reserve = recommendPersonalizedStrategy({ goal: goal({ id: "reserve", type: "emergency_reserve", label: "Build reserve" }), situation: situation(), options, constraints: [] });
+  assert.notEqual(housing.whyHighest[0], reserve.whyHighest[0]); assert.equal(housing.genericAdviceRejected, true);
+});
+
+test("constraints materially remove protected levers and recalculate options", () => {
+  const levers = candidateLevers([{ key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }, { key: "gym", label: "Gym", category: "Subscription", amount: 50, transactionIds: ["g1", "g2"], flexibility: "potentially_cancellable", recurring: true }]);
+  assert.equal(applyStrategyConstraints(levers, [{ kind: "protect", key: "gym", value: "Do not cancel the gym" }]).length, 1);
+});
+
+test("recommended strategies explain ranking, retain alternatives, and preserve protections", () => {
+  const gap = buildHousingGap({ obligation: "Rent", normalMonthlyRent: 2200, amountPaid: 1700, outstanding: 300, evidenceIds: ["rent"] });
+  const levers = candidateLevers([{ key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }, { key: "subscriptions", label: "Subscriptions", category: "Subscriptions", amount: 100, transactionIds: ["s1", "s2"], flexibility: "potentially_cancellable", recurring: true }]);
+  const options = generateRecoveryOptions(gap, levers, [{ kind: "protect", key: "groceries", value: "Groceries" }]);
+  const strategy = recommendPersonalizedStrategy({ goal: goal({ targetAmount: 300 }), situation: situation(), options, constraints: [{ kind: "protect", key: "groceries", value: "Groceries" }] });
+  assert.ok(strategy.whyHighest.length >= 2); assert.ok(strategy.alternatives.length >= 1); assert.deepEqual(strategy.protected, ["Groceries"]); assert.ok(strategy.tradeoffs.length);
+});
+
+test("every supported turn evaluates one primary next step and no-action is valid", () => {
+  const result = orchestrateConversation(request("How many payments were made to OLU’KAI?")); assert.equal(typeof result.nextBestStep.type, "string");
+  assert.equal(selectNextBestStep({}).type, "no_action"); assert.equal(selectNextBestStep({ stale: true }).type, "wait_for_data");
+  assert.equal(selectNextBestStep({ optionsReady: true, priority: "urgent" }).type, "compare_options");
+});
+
+test("behind plans offer adjustment and mutating strategy steps require confirmation", () => {
+  assert.equal(selectNextBestStep({ activePlanStatus: "behind" }).type, "adjust_plan"); assert.equal(selectNextBestStep({ activePlanStatus: "behind" }).confirmationRequired, true);
+  assert.equal(selectNextBestStep({ strategyReady: true }).confirmationRequired, true);
+});
+
+test("strategy and next-step copy avoids shame, guarantees, tax, legal, and investment advice", () => {
+  const copy = JSON.stringify([selectNextBestStep({ optionsReady: true }), selectNextBestStep({ activePlanStatus: "behind" })]);
+  assert.doesNotMatch(copy, /lazy|failure|guarantee|deductible|legal conclusion|buy|sell/i);
 });

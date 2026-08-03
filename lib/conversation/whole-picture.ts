@@ -1,0 +1,11 @@
+export type SituationAccount = { id: string; kind: "cash" | "credit" | "loan" | "investment"; currentBalance: number | null; availableBalance: number | null; minimumPayment: number | null; fresh: boolean };
+export type WholePictureSituation = { userId: string; availableCash: number | null; expectedIncome: number | null; recentCashFlow: number | null; requiredMinimums: number | null; protectedObligations: number | null; investmentsExcluded: number | null; staleAccountIds: string[]; missingInputs: string[]; evidenceIds: string[]; confidence: "high" | "medium" | "low" };
+
+export function assembleWholePicture(input: { userId: string; accounts: SituationAccount[]; expectedIncome?: number | null; recentCashFlow?: number | null; protectedObligations?: number | null; evidenceIds: string[] }): WholePictureSituation {
+  const cash = input.accounts.filter((account) => account.kind === "cash");
+  const knownCash = cash.map((account) => account.availableBalance ?? account.currentBalance).filter((value): value is number => value != null);
+  const minimums = input.accounts.filter((account) => account.kind === "credit" || account.kind === "loan").map((account) => account.minimumPayment).filter((value): value is number => value != null);
+  const staleAccountIds = input.accounts.filter((account) => !account.fresh).map((account) => account.id);
+  const missingInputs = [...(cash.length && !knownCash.length ? ["available cash"] : []), ...(input.expectedIncome == null ? ["expected income"] : [])];
+  return { userId: input.userId, availableCash: cash.length && knownCash.length === cash.length ? knownCash.reduce((sum, value) => sum + value, 0) : null, expectedIncome: input.expectedIncome ?? null, recentCashFlow: input.recentCashFlow ?? null, requiredMinimums: minimums.length ? minimums.reduce((sum, value) => sum + value, 0) : null, protectedObligations: input.protectedObligations ?? null, investmentsExcluded: input.accounts.filter((account) => account.kind === "investment").map((account) => account.currentBalance).filter((value): value is number => value != null).reduce((sum, value) => sum + value, 0) || null, staleAccountIds, missingInputs, evidenceIds: input.evidenceIds, confidence: staleAccountIds.length || missingInputs.length ? "low" : "high" };
+}
