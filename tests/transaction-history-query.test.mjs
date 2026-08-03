@@ -72,3 +72,19 @@ test("person relationship migration expands only the existing append-only contex
   assert.match(migration, /'child','partner','household_member','friend_family','someone_else'/);
   assert.doesNotMatch(migration, /\b(update|delete|truncate|drop table|disable row level security|grant)\b/i);
 });
+
+test("forward repair replaces truncated duplicate vocabulary checks with one canonical constraint", () => {
+  const migration = readFileSync(new URL("../supabase/migrations/20260803130000_repair_recurring_person_relationship_constraint.sql", import.meta.url), "utf8");
+  assert.match(migration, /pg_catalog\.pg_constraint/);
+  assert.match(migration, /c\.conkey = array\[v_attnum\]::smallint\[\]/);
+  assert.match(migration, /pg_get_constraintdef/);
+  assert.match(migration, /unexpected context_relationship check constraint/);
+  assert.match(migration, /format\([\s\S]*drop constraint %I/);
+  assert.match(migration, /rcdv_context_relationship_check/);
+  assert.match(migration, /expected exactly one context_relationship check/);
+  for (const relationship of ["owner", "employee", "contractor", "child", "partner", "household_member", "friend_family", "someone_else", "other"]) {
+    assert.match(migration, new RegExp(`''${relationship}''|'${relationship}'`));
+  }
+  assert.doesNotMatch(migration, /\b(update|delete|truncate|drop table|disable row level security|grant|revoke)\b/i);
+  assert.doesNotMatch(migration, /alter table public\.(?!recurring_commitment_decision_versions)/);
+});
