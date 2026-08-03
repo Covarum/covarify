@@ -10,6 +10,7 @@ import { competingGoalClarification } from "../lib/conversation/goals.ts";
 import { assembleWholePicture } from "../lib/conversation/whole-picture.ts";
 import { applyStrategyConstraints, recommendPersonalizedStrategy } from "../lib/conversation/strategy-engine.ts";
 import { selectNextBestStep } from "../lib/conversation/next-best-step.ts";
+import { readFileSync } from "node:fs";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -170,4 +171,33 @@ test("behind plans offer adjustment and mutating strategy steps require confirma
 test("strategy and next-step copy avoids shame, guarantees, tax, legal, and investment advice", () => {
   const copy = JSON.stringify([selectNextBestStep({ optionsReady: true }), selectNextBestStep({ activePlanStatus: "behind" })]);
   assert.doesNotMatch(copy, /lazy|failure|guarantee|deductible|legal conclusion|buy|sell/i);
+});
+
+test("authenticated founder preview renders both controlled conversation flows", () => {
+  const page = readFileSync(new URL("../app/account/transaction-understanding/preview/page.tsx", import.meta.url), "utf8");
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(page, /requireFounderReviewUser/); assert.match(page, /ConversationStrategyPreview/);
+  for (const copy of ["How many payments were made to OLU’KAI?", "Which card did I use?", "birthday gift for Caleb", "Rent recovery strategy preview"]) assert.match(ui, new RegExp(copy.replace(/[?]/g, "\\?")));
+});
+
+test("preview preserves confirmation and no-plan-activation boundaries", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /Proposal · confirmation required/); assert.match(ui, /No durable change occurs/); assert.match(ui, /Plan activation and durable saving are not available/); assert.match(ui, /disabled>Activate plan/);
+  assert.doesNotMatch(ui, /fetch\(|record_|insert\(|upsert\(/);
+});
+
+test("strategy preview exposes rationale, alternatives, evidence, constraints, stale semantics, and one primary step pattern", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  for (const copy of ["Recommended", "Alternative", "Why ", "Evidence and assumptions", "Protect Callie’s activities", "Missing information", "Next best step"]) assert.match(ui, new RegExp(copy));
+  assert.match(ui, /aria-label="Primary next best step"/); assert.match(ui, /aria-label="Whole-picture situation preview"/); assert.match(ui, /aria-label="Proposed change requiring confirmation"/);
+});
+
+test("preview CSS stacks options at mobile width without horizontal comparison scrolling", () => {
+  const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
+  assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.inputs,\.situation,\.options\{grid-template-columns:1fr\}/); assert.match(css, /min-height:44px/); assert.match(css, /prefers-reduced-motion/); assert.doesNotMatch(css, /overflow-x:\s*(?:auto|scroll)/);
+});
+
+test("preview supports keyboard submission and screen-reader state labels", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /event\.ctrlKey \|\| event\.metaKey/); assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-pressed=/); assert.match(ui, /aria-label="Strategy options"/);
 });

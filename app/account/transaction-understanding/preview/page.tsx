@@ -1,5 +1,6 @@
 import { requireFounderReviewUser } from "@/lib/founder-review-auth";
 import { TransactionUnderstandingPreview } from "@/components/account/transaction-understanding-preview";
+import { ConversationStrategyPreview } from "@/components/account/conversation-strategy-preview";
 
 export const dynamic = "force-dynamic";
 
@@ -13,5 +14,5 @@ export default async function TransactionUnderstandingPreviewPage({
     process.env.NODE_ENV === "development" &&
     params.capture === "founder-preview";
   if (!localCapture) await requireFounderReviewUser();
-  return <TransactionUnderstandingPreview />;
+  return <><ConversationStrategyPreview /><TransactionUnderstandingPreview /></>;
 }
