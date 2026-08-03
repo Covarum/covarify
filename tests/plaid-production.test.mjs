@@ -27,13 +27,14 @@ const productionEnvironment = () => ({
 test("founder workspace scopes and aggregates all owned Plaid Items", () => {
   const accountPage = readFileSync(new URL("../app/account/page.tsx", import.meta.url), "utf8");
   const workspace = readFileSync(new URL("../components/account/authenticated-workspace.tsx", import.meta.url), "utf8");
+  const connectionHealth = readFileSync(new URL("../components/account/connection-health-panel.tsx", import.meta.url), "utf8");
   assert.match(accountPage, /const itemIds = items\.map\(\(item\) => item\.id\)/);
   assert.match(accountPage, /from\("transaction_sync_states"\).*\.in\("plaid_item_id", itemIds\)/s);
   assert.doesNotMatch(accountPage, /from\("transaction_sync_states"\).*\.eq\("user_id"/s);
   assert.match(accountPage, /const accountRows = \(accounts\.data \|\| \[\]\)\.map/);
   assert.match(accountPage, /\.in\("plaid_item_id", itemIds\)/);
   assert.match(workspace, /connected accounts/i);
-  assert.match(workspace, /Add another institution/);
+  assert.match(connectionHealth, /Add another institution/);
   assert.match(workspace, /account\.institution/);
   assert.match(workspace, /financialData\.accounts\.map/);
 });

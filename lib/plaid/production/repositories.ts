@@ -14,7 +14,7 @@ export interface PlaidProductionRepository {
 }
 
 export interface PlaidSyncQueue {
-  enqueue(input: { plaidItemId: string; webhookCode: string; deduplicationKey: string }): Promise<void>;
+  enqueue(input: { plaidItemId: string; webhookCode: string; deduplicationKey: string }): Promise<"queued" | "coalesced" | "duplicate" | "unavailable">;
 }
 
 export interface PlaidSyncWorkerRepository extends PlaidProductionRepository {
