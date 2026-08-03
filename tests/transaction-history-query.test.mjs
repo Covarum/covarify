@@ -67,7 +67,8 @@ test("history results preserve exact supporting IDs and owner-scoped route bound
 
 test("person relationship migration expands only the existing append-only context vocabulary", () => {
   const migration = readFileSync(new URL("../supabase/migrations/20260803120000_recurring_person_relationships.sql", import.meta.url), "utf8");
-  assert.match(migration, /alter table public\.recurring_commitment_decisions/);
+  assert.match(migration, /alter table public\.recurring_commitment_decision_versions/);
+  assert.match(migration, /recurring_commitment_decision_versions_context_relationship_check/);
   assert.match(migration, /'child','partner','household_member','friend_family','someone_else'/);
   assert.doesNotMatch(migration, /\b(update|delete|truncate|drop table|disable row level security|grant)\b/i);
 });
