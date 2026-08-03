@@ -415,7 +415,10 @@ export function TransactionUnderstanding({ period }: { period: ResolvedFinancial
           ) : null}
           {result.kind === "history_query" ? <div className={styles.merchantRule}>
             {result.accounts.length > 1 ? <p><strong>Paid from:</strong> {result.accounts.map((account) => `${account.label}: ${account.count}`).join(" · ")}</p> : null}
-            {result.transactionIds.length ? <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("covarify:category-filter", { detail: { transactionIds: result.transactionIds, periodStart: result.periodStart || undefined, periodEnd: result.periodEnd || undefined, search: result.merchant } }))}>View these payments</button> : null}
+            {result.transactionIds.length ? <button type="button" onClick={() => {
+              window.dispatchEvent(new CustomEvent("covarify:category-filter", { detail: { transactionIds: result.transactionIds, periodStart: result.periodStart || undefined, periodEnd: result.periodEnd || undefined, search: result.merchant } }));
+              document.getElementById("recent-activity-heading")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+            }}>View these payments</button> : null}
           </div> : null}
           {result.kind === "intent_clarification" ? (
             <div className={styles.scopeChoices}>
