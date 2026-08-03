@@ -216,6 +216,7 @@ export function RecentActivity({
           periodStart?: string;
           periodEnd?: string;
           transactionIds?: string[];
+          search?: string;
         }>
       ).detail;
       change({
@@ -225,6 +226,7 @@ export function RecentActivity({
         transactionIds: detail.transactionIds?.length
           ? detail.transactionIds
           : undefined,
+        search: detail.search || undefined,
       });
     };
     window.addEventListener("covarify:category-filter", handleCategoryFilter);

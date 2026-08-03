@@ -41,6 +41,8 @@ import {
   recurringObligationInput,
   type ObligationPaymentType,
 } from "@/lib/recurring-obligations";
+import { ambiguousHistoryMerchantNames, answerTransactionHistoryQuery, parseTransactionHistoryQuery } from "@/lib/transaction-history-query";
+import { formatFinancialPeriodDateRange, type ResolvedFinancialPeriod } from "@/lib/financial-periods";
 
 export const dynamic = "force-dynamic";
 
@@ -90,7 +92,9 @@ async function loadTransactions(userId: string) {
         id: String(row.id),
         plaidAccountId: String(row.plaid_account_id),
         accountLabel: labels.get(row.plaid_account_id) || "Connected account",
+        merchantName: row.merchant_name ? String(row.merchant_name) : null,
         name: String(row.merchant_name || row.transaction_name),
+        description: String(row.transaction_name || ""),
         amount,
         currency: String(row.currency || "USD"),
         date: String(row.transaction_date),
@@ -172,6 +176,7 @@ export async function POST(request: Request) {
         remainingDue?: number | null;
       };
       obligationTransactionId?: string;
+      activePeriod?: ResolvedFinancialPeriod;
     };
     const transactions = await loadTransactions(user.id);
     const [history, availableSubcategories, merchantRules] = await Promise.all([
@@ -266,6 +271,25 @@ export async function POST(request: Request) {
     if (body.operation === "interpret") {
       const text = String(body.text || "").trim();
       if (!text || text.length > 500) return NextResponse.json({ error: "INVALID_INTENT" }, { status: 400 });
+      const historyQuery = parseTransactionHistoryQuery(text);
+      if (historyQuery) {
+        if (!historyQuery.merchant) return NextResponse.json({ kind: "no_match", message: "Which merchant or category should I look for?" });
+        if (!body.activePeriod) return NextResponse.json({ error: "ACTIVE_PERIOD_REQUIRED" }, { status: 400 });
+        const variants = ambiguousHistoryMerchantNames(historyQuery.merchant, transactions);
+        if (variants.length) return NextResponse.json({ kind: "no_match", message: `I found ${variants.join(" and ")}. Should I include both?` });
+        const answer = answerTransactionHistoryQuery({ query: historyQuery, transactions, activePeriod: body.activePeriod });
+        const range = answer.period ? formatFinancialPeriodDateRange(answer.period) : "all connected history";
+        const merchant = historyQuery.merchant;
+        const count = answer.purchases.length;
+        const total = new Intl.NumberFormat("en-US", { style: "currency", currency: answer.purchases[0]?.currency || "USD" }).format(answer.total);
+        const base = count === 0
+          ? `I didn’t find any ${merchant} payments from ${range}.${answer.hasEarlierActivity ? ` ${merchant} appears in an earlier period.` : ""}`
+          : historyQuery.intentType === "transaction_total_query"
+            ? `You paid ${merchant} ${total} across ${count} ${count === 1 ? "transaction" : "transactions"} from ${range}.`
+            : `I found ${count} ${count === 1 ? "payment" : "payments"} to ${merchant} from ${range}. Total paid: ${total}.`;
+        const refundCopy = answer.refunds.length ? ` ${answer.refunds.length} ${answer.refunds.length === 1 ? "refund" : "refunds"} totaling ${new Intl.NumberFormat("en-US", { style: "currency", currency: answer.refunds[0].currency }).format(answer.refundTotal)} were kept separate.` : "";
+        return NextResponse.json({ kind: "history_query", message: base + refundCopy, merchant, transactionIds: answer.purchases.map((row) => row.id), periodStart: answer.period?.start || null, periodEnd: answer.period?.end || null, accounts: answer.accounts });
+      }
       const intent = parseTransactionIntent(text, {
         modality: body.modality || (body.selectedTransactionId ? "selected_transaction" : "typed"),
         selectedTransactionId: body.selectedTransactionId || null,

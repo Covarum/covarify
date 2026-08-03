@@ -13,7 +13,6 @@ import type {
 import {
   recurringCategoryProposal,
   recurringContextProposal,
-  BUSINESS_CATEGORY,
   type RecurringCategoryProposal,
   type RecurringContextProposal,
 } from "@/lib/recurring-category-understanding";
@@ -515,7 +514,7 @@ export async function saveRecurringCommitmentContextDecision(input: {
       contextEntityName: proposal.namedEntity || commitment.decision.contextEntityName,
       contextRelationship: input.relationship ?? commitment.decision.contextRelationship,
       contextOwnerKind: input.relationship
-        ? "business"
+        ? ["owner", "employee", "contractor"].includes(input.relationship) ? "business" : ["child", "partner", "household_member"].includes(input.relationship) ? "household" : "personal"
         : input.businessUse === true
           ? "business"
           : input.businessUse === false
@@ -526,11 +525,11 @@ export async function saveRecurringCommitmentContextDecision(input: {
       commitmentType: input.businessUse === true && proposal.proposedType
         ? proposal.proposedType
         : commitment.decision.commitmentType,
-      ...(input.acceptBusinessClassification === true ? {
-        effectiveParentCategoryId: BUSINESS_CATEGORY.parentCategoryId,
-        effectiveParentCategory: BUSINESS_CATEGORY.parentCategory,
-        effectiveSubcategoryId: BUSINESS_CATEGORY.subcategoryId,
-        effectiveSubcategory: BUSINESS_CATEGORY.subcategory,
+      ...(input.acceptBusinessClassification === true && proposal.proposedCategory ? {
+        effectiveParentCategoryId: proposal.proposedCategory.parentCategoryId,
+        effectiveParentCategory: proposal.proposedCategory.parentCategory,
+        effectiveSubcategoryId: proposal.proposedCategory.subcategoryId,
+        effectiveSubcategory: proposal.proposedCategory.subcategory,
         categoryResolution: "accepted" as const,
       } : input.acceptBusinessClassification === false ? {
         categoryResolution: "kept_current" as const,

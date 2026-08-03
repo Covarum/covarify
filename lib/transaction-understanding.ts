@@ -35,6 +35,9 @@ export type TransactionUnderstandingAction =
   | "remove_label";
 
 export type TransactionUnderstandingIntentType =
+  | "transaction_count_query"
+  | "transaction_total_query"
+  | "transaction_list_query"
   | "specific_transaction"
   | "merchant_rule"
   | "category_instruction"
@@ -243,6 +246,10 @@ export function classifyTransactionUnderstandingIntent(
   scopeSignal: TransactionIntent["scopeSignal"];
   merchant: string | null;
 } {
+  const historyQuery = /\b(?:how many|how often|number of|count|times did i)\b/i.test(text) ? "transaction_count_query" as const
+    : /\b(?:how much|total (?:spent|paid)|sum|what did i (?:spend|pay)|how much have i paid)\b/i.test(text) ? "transaction_total_query" as const
+      : /\b(?:show me|list|which transactions|every payment|all purchases|all transactions)\b/i.test(text) ? "transaction_list_query" as const : null;
+  if (historyQuery) return { intentType: historyQuery, scopeSignal: "recurring", merchant: null };
   if (options.selectedTransactionId) {
     return { intentType: "specific_transaction", scopeSignal: "single", merchant: null };
   }

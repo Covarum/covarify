@@ -25,15 +25,17 @@ export const BUSINESS_CATEGORY = {
   subcategoryId: "20000000-0000-4000-8000-000000000026",
   subcategory: "Software & Services",
 } as const;
+export const GIFTS_CATEGORY = { parentCategoryId: "10000000-0000-4000-8000-000000000003", parentCategory: "Shopping", subcategoryId: "20000000-0000-4000-8000-000000000015", subcategory: "Gifts" } as const;
 
 export type RecurringContextProposal = {
   evidence: string;
   service: "Calendar booking software/service" | null;
   namedEntity: string | null;
+  contextType: "person" | "business" | "project" | "other";
   purpose: string | null;
   proposedType: "software_service" | null;
-  proposedCategory: typeof BUSINESS_CATEGORY | null;
-  nextQuestion: "entity_relationship" | "business_use" | "classification" | "supporting_transactions" | "merchant_memory" | null;
+  proposedCategory: typeof BUSINESS_CATEGORY | typeof GIFTS_CATEGORY | null;
+  nextQuestion: "entity_relationship" | "person_relationship" | "business_use" | "classification" | "supporting_transactions" | "merchant_memory" | null;
 };
 
 const generalNote = /^(?:check this later|called customer service|not sure why this increased)[.!]?$/i;
@@ -44,13 +46,19 @@ export function recurringContextProposal(
   const note = commitment.decision?.userNote?.trim();
   if (!note || generalNote.test(note) || commitment.decision?.contextComplete) return null;
   const calendly = /\bcalendly\b/i.test(commitment.displayName) || /\bcalendar booking (?:app|software|service)\b/i.test(note);
-  const entity = note.match(/\bfor\s+([A-Z][A-Za-z0-9&.' -]{1,60})[.!]?$/)?.[1]?.trim() || null;
-  const descriptive = calendly || /\b(?:business software|booking app|software|service subscription)\b/i.test(note) || Boolean(entity);
+  const gift = /\b(?:(birthday|christmas|holiday|anniversary|wedding|graduation|baby shower)\s+)?gift\s+for\s+([A-Z][A-Za-z'’-]{1,40})\b/i.exec(note);
+  const possessivePerson = /\b([A-Z][A-Za-z'’-]{1,40})[’']s\s+(?:shoes|subscription)\b/.exec(note);
+  const relationshipPerson = /\bfor my\s+(son|daughter|child|spouse|partner|friend)\b/i.exec(note);
+  const project = /\bfor\s+(?:my side project|a personal project|my hobby|school)\b/i.test(note);
+  const explicitBusiness = /\b(?:for my business|for work|business software|company expense|client expense|office expense|for .+? LLC|for the (?:business|company))\b/i.test(note);
+  const entity = gift?.[2] || possessivePerson?.[1] || relationshipPerson?.[1] || note.match(/\bfor\s+([A-Z][A-Za-z0-9&.' -]{1,60})[.!]?$/)?.[1]?.trim() || null;
+  const contextType = gift || possessivePerson || relationshipPerson ? "person" as const : project ? "project" as const : explicitBusiness || calendly ? "business" as const : "other" as const;
+  const descriptive = calendly || project || Boolean(gift || possessivePerson || relationshipPerson) || /\b(?:business software|booking app|software|service subscription)\b/i.test(note) || Boolean(entity);
   if (!descriptive) return null;
   const decision = commitment.decision;
   const nextQuestion = entity && !decision?.contextRelationship
-    ? "entity_relationship"
-    : decision?.businessUse == null
+    ? contextType === "person" ? "person_relationship" : contextType === "business" ? "entity_relationship" : "business_use"
+    : contextType === "business" && decision?.businessUse == null
       ? "business_use"
       : !decision?.effectiveParentCategory
         ? "classification"
@@ -61,9 +69,10 @@ export function recurringContextProposal(
     evidence: note,
     service: calendly ? "Calendar booking software/service" : null,
     namedEntity: entity || decision?.contextEntityName || null,
-    purpose: calendly ? "Calendar booking" : decision?.contextPurpose || null,
+    contextType,
+    purpose: gift ? `${gift[1] ? `${gift[1][0].toUpperCase()}${gift[1].slice(1).toLowerCase()} ` : ""}gift` : calendly ? "Calendar booking" : decision?.contextPurpose || null,
     proposedType: calendly ? "software_service" : null,
-    proposedCategory: calendly ? BUSINESS_CATEGORY : null,
+    proposedCategory: gift ? GIFTS_CATEGORY : calendly ? BUSINESS_CATEGORY : null,
     nextQuestion,
   };
 }

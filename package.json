@@ -12,8 +12,9 @@
     "test:financial-events": "node --experimental-strip-types --test --test-isolation=none tests/financial-events.test.mjs",
     "test:recurring-commitments": "node --experimental-strip-types --test --test-isolation=none tests/recurring-commitments.test.mjs",
     "test:transaction-understanding": "node --experimental-strip-types --test --test-isolation=none tests/transaction-understanding.test.mjs",
+    "test:transaction-history": "node --experimental-strip-types --test --test-isolation=none tests/transaction-history-query.test.mjs",
     "preview:financial-events": "node --experimental-strip-types scripts/preview-financial-events.ts",
-    "test": "pnpm run test:early-access && pnpm run test:plaid-production && pnpm run test:intelligence && pnpm run test:financial-events && pnpm run test:recurring-commitments && pnpm run test:transaction-understanding",
+    "test": "pnpm run test:early-access && pnpm run test:plaid-production && pnpm run test:intelligence && pnpm run test:financial-events && pnpm run test:recurring-commitments && pnpm run test:transaction-understanding && pnpm run test:transaction-history",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
