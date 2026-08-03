@@ -11,6 +11,11 @@ test("aggregate merchant questions route independently and normalize OLU’KAI v
   assert.equal(parseTransactionHistoryQuery("How many payments were made to OLU’KAI?")?.intentType, "transaction_count_query");
   assert.equal(parseTransactionHistoryQuery("How much did I spend at Amazon last quarter?")?.intentType, "transaction_total_query");
   assert.equal(parseTransactionHistoryQuery("Show me my OLU'KAI purchases.")?.intentType, "transaction_list_query");
+  assert.equal(parseTransactionHistoryQuery("Show me my OLU'KAI purchases.")?.merchant, "OLU'KAI");
+  assert.equal(parseTransactionHistoryQuery("How many Starbucks charges are there?")?.merchant, "Starbucks");
+  const july = parseTransactionHistoryQuery("Show all Walmart transactions from July.", new Date("2026-08-03T12:00:00Z"));
+  assert.equal(july?.merchant, "Walmart");
+  assert.deepEqual(july?.customPeriod, { label: "July 2026", start: "2026-07-01", end: "2026-07-31" });
   assert.equal(normalizeHistoryMerchant("OLU’KAI"), normalizeHistoryMerchant("OluKai"));
 });
 
