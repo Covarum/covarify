@@ -643,9 +643,9 @@ test("preview and persistence remain founder-only, append-only, and free of Plai
   const component = readFileSync(new URL("../components/account/transaction-understanding-preview.tsx", import.meta.url), "utf8");
   const migration = readFileSync(new URL("../supabase/migrations/20260728133000_transaction_understanding_v1.sql", import.meta.url), "utf8");
   const source = readFileSync(new URL("../lib/transaction-understanding.ts", import.meta.url), "utf8");
-  assert.match(previewPage, /requireFounderReviewUser/);
-  assert.match(previewPage, /NODE_ENV === "development"/);
-  assert.match(previewPage, /capture === "founder-preview"/);
+  assert.match(previewPage, /getAuthenticatedUser/);
+  assert.match(previewPage, /getAuthorizedFounderPreviewUser/);
+  assert.doesNotMatch(previewPage, /capture=founder-preview|localCapture/);
   assert.match(component, /no production writes/i);
   assert.match(migration, /append-only structured user meaning/i);
   assert.match(migration, /grant select, insert/);

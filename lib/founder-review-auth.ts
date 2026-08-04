@@ -3,6 +3,15 @@ import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/supabase/auth";
 import { readProductionPlaidConfig } from "@/lib/plaid/production/config";
 import { isExactFounderAllowlistMatch } from "@/lib/financial-event-confirmations";
+import { isFounderAdmin } from "@/lib/waitlist-core";
+
+export async function getAuthorizedFounderPreviewUser(
+  authenticated?: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>,
+) {
+  const user = authenticated || await getAuthenticatedUser();
+  if (!user) return null;
+  return isFounderAdmin(user, process.env.COVARIFY_ADMIN_EMAILS) ? user : null;
+}
 
 export async function requireFounderReviewUser() {
   const authenticated = await getAuthenticatedUser();
