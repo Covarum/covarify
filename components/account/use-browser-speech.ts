@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { transcriptNeedsExplicitReview } from "@/lib/conversation/transcript-review";
 
 type SpeechResult = { isFinal: boolean; 0: { transcript: string; confidence: number } };
 type SpeechResultEvent = { resultIndex: number; results: ArrayLike<SpeechResult> };
@@ -21,9 +20,9 @@ const recognitionConstructor = () => {
 };
 const subscribeToBrowserCapability = () => () => undefined;
 
-export type VoiceTranscriptMeta = { confidence: number | null; reviewRequired: boolean };
+export type VoiceTranscriptMeta = { confidence: number | null };
 
-export function useBrowserSpeech({ appendTranscript, stopSpeaking }: { appendTranscript: (transcript: string, meta: VoiceTranscriptMeta) => void; stopSpeaking: () => void }) {
+export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalTranscript: (transcript: string, meta: VoiceTranscriptMeta) => void; stopSpeaking: () => void }) {
   const supported = useSyncExternalStore(subscribeToBrowserCapability, () => Boolean(recognitionConstructor()), () => false);
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState("Microphone off. You can type at any time.");
@@ -43,9 +42,8 @@ export function useBrowserSpeech({ appendTranscript, stopSpeaking }: { appendTra
         const transcript = result[0].transcript.trim();
         if (!transcript) continue;
         const confidence = Number.isFinite(result[0].confidence) ? result[0].confidence : null;
-        const reviewRequired = transcriptNeedsExplicitReview(transcript, confidence);
-        appendTranscript(transcript, { confidence, reviewRequired });
-        setStatus(reviewRequired ? "Transcript added. Review and correct it before sending." : "Transcript added. Review it, then send when ready.");
+        onFinalTranscript(transcript, { confidence });
+        setStatus("Final transcript received.");
       }
     };
     recognition.onerror = (event) => {
@@ -55,7 +53,7 @@ export function useBrowserSpeech({ appendTranscript, stopSpeaking }: { appendTra
     recognition.onend = () => setListening(false);
     recognitionRef.current = recognition;
     return () => { recognition.abort?.(); recognitionRef.current = null; };
-  }, [appendTranscript]);
+  }, [onFinalTranscript]);
 
   const start = useCallback(() => {
     stopSpeaking();

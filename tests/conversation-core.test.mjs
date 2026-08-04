@@ -12,7 +12,7 @@ import { applyStrategyConstraints, recommendPersonalizedStrategy } from "../lib/
 import { selectNextBestStep } from "../lib/conversation/next-best-step.ts";
 import { readFileSync } from "node:fs";
 import { isFounderAdmin } from "../lib/waitlist-core.ts";
-import { transcriptNeedsExplicitReview } from "../lib/conversation/transcript-review.ts";
+import { assessVoiceTurn, transcriptNeedsExplicitReview } from "../lib/conversation/transcript-review.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -47,6 +47,20 @@ test("fixture mode identifies simulated data without changing connected answer s
 test("sensitive or uncertain voice transcripts always require explicit review", () => {
   for (const transcript of ["The eighty-nine dollar one was a birthday gift for Caleb.", "My son.", "Use the card ending in 4242", "Confirm that change", "Catch up by September 1"]) assert.equal(transcriptNeedsExplicitReview(transcript, 0.99), true);
   assert.equal(transcriptNeedsExplicitReview("Which card did I use?", 0.5), true);
+});
+
+test("safe final read-only voice questions are eligible for transport auto-send", () => {
+  const result = assessVoiceTurn({ transcript: "How many payments were made to OLU’KAI?", confidence: 0.96, pendingProposal: false, knownMerchants: ["OLU’KAI"] });
+  assert.equal(result.autoSend, true); assert.equal(result.reviewRequired, false);
+  assert.equal(assessVoiceTurn({ transcript: "Which card did I use?", confidence: 0.94, pendingProposal: false }).autoSend, true);
+});
+
+test("uncertain merchants, retries, concatenation, and consequential confirmations stay held", () => {
+  const correction = assessVoiceTurn({ transcript: "How many payments were made to elujay?", confidence: 0.97, pendingProposal: false, knownMerchants: ["OLU’KAI"] });
+  assert.equal(correction.autoSend, false); assert.equal(correction.correction.canonical, "OLU’KAI"); assert.match(correction.correction.correctedTranscript, /OLU’KAI/);
+  assert.equal(assessVoiceTurn({ transcript: "How many payments were made to OLU’KAI? How many payments were made to OLU’KAI?", confidence: 0.98, pendingProposal: false }).autoSend, false);
+  assert.equal(assessVoiceTurn({ transcript: "Which card did I use?", confidence: 0.98, pendingProposal: false, lastSubmittedTranscript: "Which card did I use?" }).autoSend, false);
+  for (const transcript of ["Yes", "Yes, classify it.", "Use that plan.", "Remember Caleb is my son.", "Move the money."]) assert.equal(assessVoiceTurn({ transcript, confidence: 0.99, pendingProposal: true }).autoSend, false);
 });
 
 test("account follow-up reuses the exact prior result", () => {
@@ -272,9 +286,9 @@ test("preview supports keyboard submission and screen-reader state labels", () =
 
 test("typed, reviewed voice, and guided taps converge on one shared send path", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
-  assert.match(ui, /function send\(raw = text\)/);
-  assert.match(ui, /onClick=\{\(\) => send\(prompt\)\}/);
-  assert.match(ui, /appendTranscript[\s\S]*setText/);
+  assert.match(ui, /const send = useCallback\(\(raw = text/);
+  assert.match(ui, /onClick=\{\(\) => send\(prompt, "tap"\)\}/);
+  assert.match(ui, /onFinalTranscript[\s\S]*setText\(transcript\)/);
   assert.match(ui, /onClick=\{\(\) => send\(\)\}/);
   assert.equal((ui.match(/orchestrateConversation\(/g) || []).length, 1);
 });
@@ -283,7 +297,7 @@ test("voice adapter is review-first and preserves drafts on unsupported, denied,
   const adapter = readFileSync(new URL("../components/account/use-browser-speech.ts", import.meta.url), "utf8");
   assert.match(adapter, /speechWindow\.SpeechRecognition \|\| speechWindow\.webkitSpeechRecognition/);
   assert.match(adapter, /if \(!result\.isFinal\) continue/);
-  assert.match(adapter, /appendTranscript\(transcript/);
+  assert.match(adapter, /onFinalTranscript\(transcript/);
   assert.doesNotMatch(adapter, /orchestrateConversation|FinancialMemory|fetch\(|localStorage|sessionStorage|MediaRecorder|getUserMedia/);
   assert.match(adapter, /access was denied\. Your draft is unchanged/);
   assert.match(adapter, /Voice recognition is unavailable in this browser\. Keep typing/);
@@ -293,8 +307,8 @@ test("speech output reads rendered response exactly and can always be interrupte
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /new SpeechSynthesisUtterance\(response\.message\)/);
   assert.match(ui, /speechSynthesis\.cancel\(\)/);
-  assert.match(ui, /useBrowserSpeech\(\{ appendTranscript, stopSpeaking \}\)/);
-  assert.match(ui, /Speak Covarify responses/); assert.match(ui, /Stop speaking/);
+  assert.match(ui, /useBrowserSpeech\(\{ onFinalTranscript, stopSpeaking \}\)/);
+  assert.match(ui, /Speak responses/); assert.match(ui, /non-production founder-preview fallback/); assert.match(ui, /Stop speaking/);
 });
 
 test("founder simulation and browser speech privacy disclosures remain visible", () => {
@@ -321,7 +335,21 @@ test("voice controls remain accessible and stack at the 390px breakpoint", () =>
   const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
   assert.match(ui, /aria-label=\{voice\.listening \? "Stop microphone" : "Start microphone"\}/); assert.match(ui, /aria-pressed=\{voice\.listening\}/);
   assert.match(ui, /aria-label="Voice input controls"/); assert.match(ui, /aria-live="polite"/);
-  assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.prompts,\.goal,\.voiceControls\{display:grid\}/); assert.match(css, /min-height:44px/);
+  assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.prompts,\.goal,\.voiceControls,\.reviewActions\{display:grid\}/); assert.match(css, /min-height:44px/);
+});
+
+test("voice retry replaces its draft while typed text requires an explicit merge choice", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /if \(text\.trim\(\) && draftOrigin === "typed"\)/); assert.match(ui, /setText\(transcript\)/);
+  for (const label of ["Replace draft", "Append", "Cancel"]) assert.match(ui, new RegExp(label));
+  assert.match(ui, /setText\(""\); setTranscriptMeta\(null\)/); assert.match(ui, /setDraftOrigin\(null\)/);
+});
+
+test("voice auto-send defaults on, can be disabled, and never creates durable memory", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /useState\(true\).*draftOrigin/); assert.match(ui, /Voice auto-send/); assert.match(ui, /checked=\{voiceAutoSend\}/); assert.match(ui, /checked=\{!voiceAutoSend\}/);
+  assert.match(ui, /voiceAutoSend && assessment\.autoSend/); assert.match(ui, /send\(transcript, "voice"\)/);
+  assert.doesNotMatch(ui, /FinancialMemory|fetch\(|localStorage|sessionStorage|insert\(|upsert\(/);
 });
 
 test("rent preview is a sequential state machine and cannot render future active inputs", () => {
