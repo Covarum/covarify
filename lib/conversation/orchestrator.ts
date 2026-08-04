@@ -5,6 +5,7 @@ import { resolveConversationEntities } from "./entity-resolver.ts";
 import { buildTransactionEvidence } from "./evidence-bundle.ts";
 import { routeConversationIntent } from "./intent-router.ts";
 import { planNamedContextProposal } from "./proposal-planner.ts";
+import { resolveTransactionReference } from "./reference-resolver.ts";
 import { transactionAnswer } from "./response-planner.ts";
 import { selectNextBestStep } from "./next-best-step.ts";
 import { resolveConversationScope } from "./scope-resolver.ts";
@@ -33,8 +34,12 @@ export function orchestrateConversation(input: ConversationRequest & { transacti
     const relationshipName = `${relationship[0].toUpperCase()}${relationship.slice(1).toLowerCase()}`;
     return { kind: "structured_proposal", message: `I can remember that ${pendingPerson.value} is your ${relationship.toLowerCase()}, but only after you confirm it.`, intent, scope, evidence: null, context: { ...prior!, pendingStatement: input.text }, nextBestStep: selectNextBestStep({ transactionProposalReady: true }), proposal: { kind: "named_context", title: "Proposed person relationship", values: [{ label: "Person", value: pendingPerson.value }, { label: "Relationship", value: relationshipName }], evidence: [input.text], changes: ["Your confirmed person relationship memory"], unchanged: ["The transaction classification", "Other people and relationships"], transactionIds: prior!.transactionIds, confirmationRequired: true, memoryCandidate: { type: "person_relationship", scope: "user", subject: pendingPerson.value, relationship: relationship.toLowerCase(), sourceStatement: input.text, evidenceIds: prior!.transactionIds, effectiveDate: now.toISOString(), status: "proposed", confidence: "high", supersedesId: null, revocable: true, retrievalRule: "confirmed_only" } } };
   }
-  if (intent.type === "account_question" && prior) {
-    return { kind: "direct_answer", message: prior.accounts.length ? naturalAccountAnswer(prior.accounts) : "I couldn't determine the account from that result.", intent, scope, evidence: null, context: prior, nextBestStep: selectNextBestStep({ evidenceIds: prior.transactionIds }) };
+  if (intent.type === "account_question") {
+    const reference = resolveTransactionReference(input.text, prior, input.transactions);
+    if (reference.kind === "missing") return empty("What payments are you referring to?");
+    if (reference.kind === "ambiguous") return empty("Which payment do you mean?");
+    const accounts = [...new Set(reference.transactionIds.map((id) => input.transactions.find((row) => row.id === id)?.accountLabel).filter((label): label is string => Boolean(label)))].map((label) => ({ label, count: reference.transactionIds.filter((id) => input.transactions.find((row) => row.id === id)?.accountLabel === label).length }));
+    return { kind: "direct_answer", message: accounts.length ? naturalAccountAnswer(accounts) : "I couldn't determine the account from that result.", intent, scope, evidence: null, context: prior, nextBestStep: selectNextBestStep({ evidenceIds: reference.transactionIds }) };
   }
   if (["transaction_count", "transaction_total", "transaction_list"].includes(intent.type)) {
     const transactionIntent = intent.type as "transaction_count" | "transaction_total" | "transaction_list";

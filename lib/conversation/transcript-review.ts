@@ -50,7 +50,7 @@ const appearsConcatenated = (transcript: string) => {
   return starts.length > 1 || /(.{18,})\s+\1/i.test(clean);
 };
 
-export function assessVoiceTurn(input: { transcript: string; confidence: number | null; pendingProposal: boolean; lastSubmittedTranscript?: string | null; knownMerchants?: string[] }): VoiceTurnAssessment {
+export function assessVoiceTurn(input: { transcript: string; confidence: number | null; pendingProposal: boolean; lastSubmittedTranscript?: string | null; knownMerchants?: string[]; activeContext?: ConversationContext | null }): VoiceTurnAssessment {
   const transcript = input.transcript.trim();
   const correction = correctionFor(transcript, input.knownMerchants || []);
   if (!transcript || incomplete.test(transcript)) return { autoSend: false, reviewRequired: true, reason: "The voice turn appears incomplete.", correction };
@@ -62,8 +62,12 @@ export function assessVoiceTurn(input: { transcript: string; confidence: number 
   if (sensitive.test(transcript)) return { autoSend: false, reviewRequired: true, reason: "Financially meaningful details require review.", correction: null };
   const merchantReference = transcript.match(/\b(?:to|at)\s+([\p{L}0-9’' -]+?)(?:\?|\.|$)/iu)?.[1]?.trim();
   if (merchantReference && input.knownMerchants?.length && !input.knownMerchants.some((merchant) => normalize(merchant) === normalize(merchantReference))) return { autoSend: false, reviewRequired: true, reason: "The merchant could not be resolved against the available evidence.", correction: null };
-  if (!safeReadOnly.test(transcript)) return { autoSend: false, reviewRequired: true, reason: "The request is not a bounded read-only voice question.", correction: null };
+  const resolvedIntent = routeConversationIntent(transcript, input.activeContext);
+  const boundedContextFollowUp = resolvedIntent.factual && !resolvedIntent.mutating && !resolvedIntent.clarificationRequired && resolvedIntent.type === "account_question" && Boolean(input.activeContext?.transactionIds.length);
+  if (!safeReadOnly.test(transcript) && !boundedContextFollowUp) return { autoSend: false, reviewRequired: true, reason: "The request is not a bounded read-only voice question.", correction: null };
   return { autoSend: true, reviewRequired: false, reason: "Safe completed read-only voice turn.", correction: null };
 }
 
 export const transcriptNeedsExplicitReview = (transcript: string, confidence: number | null) => assessVoiceTurn({ transcript, confidence, pendingProposal: false }).reviewRequired;
+import { routeConversationIntent } from "./intent-router.ts";
+import type { ConversationContext } from "./types.ts";

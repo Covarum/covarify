@@ -13,6 +13,7 @@ import { selectNextBestStep } from "../lib/conversation/next-best-step.ts";
 import { readFileSync } from "node:fs";
 import { isFounderAdmin } from "../lib/waitlist-core.ts";
 import { assessVoiceTurn, resolveMerchantCorrection, transcriptNeedsExplicitReview } from "../lib/conversation/transcript-review.ts";
+import { resolveTransactionReference } from "../lib/conversation/reference-resolver.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -282,7 +283,7 @@ test("preview preserves confirmation and no-plan-activation boundaries", () => {
 
 test("strategy preview exposes rationale, alternatives, evidence, constraints, stale semantics, and one primary step pattern", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
-  for (const copy of ["Recommended", "Alternative", "Why ", "Evidence, assumptions, and uncertainty", "Protect Callie’s activities", "Missing financial evidence", "Next best step"]) assert.match(ui, new RegExp(copy));
+  for (const copy of ["Recommended", "Alternative", "Why ", "Evidence, assumptions, and uncertainty", "protect Callie’s activities", "Missing financial evidence", "Next best step"]) assert.match(ui, new RegExp(copy));
   assert.match(ui, /aria-label="Primary next best step"/); assert.match(ui, /aria-label="Whole-picture situation preview"/); assert.match(ui, /aria-label="Proposed change requiring confirmation"/);
 });
 
@@ -472,4 +473,51 @@ test("Flow B remains session-only, accessible, and cannot activate a plan", () =
   for (const copy of ["I have a date", "Show me realistic timelines", "I want steady monthly progress", "As soon as practical", "Proposed only", "not saved or activated"]) assert.match(ui, new RegExp(copy));
   assert.match(ui, /aria-label="Choose recovery timeline approach"/); assert.match(ui, /autoFocus/); assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /min-height:44px/);
   assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(|insert\(|upsert\(/);
+});
+
+test("natural account follow-up paraphrases share one bounded read-only intent", () => {
+  const context = orchestrateConversation(request("How many payments were made to OLU’KAI?")).context;
+  for (const phrase of ["Which card did I use?", "What card did I use?", "What card did I use for this?", "Which account paid for these?", "Where did those payments come from?", "Did I use more than one card?"]) {
+    const intent = routeConversationIntent(phrase, context); assert.equal(intent.type, "account_question"); assert.equal(intent.factual, true); assert.equal(intent.mutating, false); assert.equal(intent.clarificationRequired, false);
+  }
+});
+
+test("What card did I use for this reuses exact prior OLU’KAI evidence and may auto-send", () => {
+  const transactions = [transaction({ id: "capital", accountLabel: "Capital One · 4242", amount: 89 }), transaction({ id: "td", accountLabel: "TD Checking · 9214", amount: 110 })];
+  const first = orchestrateConversation({ ...request("How many payments were made to OLU’KAI?"), transactions });
+  const followUp = orchestrateConversation({ ...request("What card did I use for this?", first.context), transactions });
+  assert.equal(followUp.message, "You used Capital One ending in 4242 for one payment and TD Checking ending in 9214 for the other.");
+  assert.deepEqual(followUp.context.transactionIds, first.evidence.transactionIds);
+  assert.deepEqual(followUp.nextBestStep.evidenceIds, first.evidence.transactionIds);
+  assert.equal(assessVoiceTurn({ transcript: "What card did I use for this?", confidence: .98, pendingProposal: false, activeContext: first.context }).autoSend, true);
+});
+
+test("missing and ambiguous reference antecedents ask rather than guess", () => {
+  const missing = orchestrateConversation(request("What card did I use for this?")); assert.equal(missing.kind, "clarification_question"); assert.match(missing.message, /What payments are you referring to/);
+  const first = orchestrateConversation(request("How many payments were made to OLU’KAI?"));
+  const ambiguous = orchestrateConversation(request("What card did I use for that payment?", first.context)); assert.equal(ambiguous.kind, "clarification_question"); assert.match(ambiguous.message, /Which payment do you mean/);
+  assert.equal(assessVoiceTurn({ transcript: "What card did I use for this?", confidence: .98, pendingProposal: false }).autoSend, false);
+});
+
+test("bounded references support unique relatives and cannot leak after a topic change", () => {
+  const transactions = [transaction({ id: "small", amount: 89 }), transaction({ id: "large", amount: 110 })]; const first = orchestrateConversation({ ...request("How many payments were made to OLU’KAI?"), transactions });
+  assert.deepEqual(resolveTransactionReference("the first one", first.context, transactions).transactionIds, ["small"]);
+  assert.deepEqual(resolveTransactionReference("the other one", first.context, transactions).transactionIds, ["large"]);
+  assert.deepEqual(resolveTransactionReference("the larger charge", first.context, transactions).transactionIds, ["large"]);
+  const changed = orchestrateConversation({ ...request("How many payments were made to Target?", first.context), transactions });
+  const afterChange = orchestrateConversation({ ...request("What card did I use for this?", changed.context), transactions }); assert.equal(afterChange.kind, "clarification_question");
+});
+
+test("consequential reference requests remain review-gated", () => {
+  const context = orchestrateConversation(request("How many payments were made to OLU’KAI?")).context;
+  const assessment = assessVoiceTurn({ transcript: "Categorize that payment as a gift.", confidence: .99, pendingProposal: false, activeContext: context });
+  assert.equal(assessment.autoSend, false); assert.equal(assessment.reviewRequired, true);
+});
+
+test("Callie protection follows candidate-lever disclosure and remains temporary", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /\{options\.length \? <label className=\{styles\.constraint\}/);
+  assert.match(ui, /Do you want me to protect Callie’s activities from these options/);
+  assert.match(ui, /candidateLevers\(spend, constraints\)/); assert.match(ui, /generateTimelineOptions\(\{ gap, levers, constraints/);
+  assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|insert\(|upsert\(/);
 });
