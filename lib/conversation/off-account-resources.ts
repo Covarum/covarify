@@ -11,10 +11,12 @@ export type ReceivableReconciliation = { gross: number; received: number; remain
 export type OffAccountScenario<T> = { title: string; simulated: true; baseline: T; changedAssumptions: string[]; result: T; activated: false; memoryWriteBlocked: true };
 export type NormalizedCashAmount = { ok: true; amount: number; approximate: boolean; source: "numeric" | "words" | "fraction" | "full" | "none" } | { ok: false; error: string };
 export type CashActionKind = "received" | "remaining" | "spent" | "deposited" | "protected";
+export type CashFieldContext = "cash_received" | "cash_remaining" | "cash_spent" | "cash_deposited" | "cash_protected";
 export type ParserContext = "money_amount" | "time" | "date" | "percentage" | "account_ending" | "general_text";
 export type MoneyParseCandidate = { ok: true; rawTranscript: string; normalizedCandidate: number; approximate: boolean; confidence: "high" | "medium" | "low"; parserContext: "money_amount"; correctionProvenance: "browser_transcript" | "typed" | "user_accepted"; reviewRequired: boolean; reason: string | null } | { ok: false; rawTranscript: string; parserContext: "money_amount"; error: string; suggestedAmount?: number; reviewRequired: true };
 export type ContextualParseResult = MoneyParseCandidate | { ok: true; rawTranscript: string; parserContext: Exclude<ParserContext, "money_amount">; normalizedCandidate: string | number; confidence: "high" | "medium" | "low"; reviewRequired: boolean } | { ok: false; rawTranscript: string; parserContext: Exclude<ParserContext, "money_amount">; error: string; reviewRequired: true };
-export type ParsedCashAction = { ok: true; kind: CashActionKind; amount: number; approximate: boolean; original: string; candidate: MoneyParseCandidate & { ok: true } } | { ok: false; error: string; candidate?: MoneyParseCandidate };
+export type CashFieldConflict = { activeField: CashFieldContext; spokenField: CashFieldContext; amount: number; approximate: boolean };
+export type ParsedCashAction = { ok: true; kind: CashActionKind; field: CashFieldContext; amount: number; approximate: boolean; original: string; candidate: MoneyParseCandidate & { ok: true } } | { ok: false; error: string; candidate?: MoneyParseCandidate; fieldConflict?: CashFieldConflict };
 export type CashValues = { received: number | null; remaining: number | null; deposited: number | null; protected: number | null };
 
 const bounded = (value: number, max: number) => Math.max(0, Math.min(value, max));
@@ -51,10 +53,16 @@ export function parseContextualValue(text: string, context: ParserContext, input
   return { ok: true, rawTranscript, normalizedCandidate: normalized.amount, approximate: normalized.approximate, confidence: "high", parserContext: context, correctionProvenance: input.provenance || "typed", reviewRequired: consequential, reason: consequential ? "This instruction materially affects the plan and requires review." : null };
 }
 
-export function parseCashAction(text: string, input: { expectedKind: CashActionKind; receivedAmount?: number | null; remainingAmount?: number | null }): ParsedCashAction {
-  const detected: CashActionKind = /\b(?:made|earned|received|got)\b/i.test(text) ? "received" : /\b(?:spent|used)\b/i.test(text) ? "spent" : /\b(?:still have|remaining|left)\b/i.test(text) ? "remaining" : /\bdeposit/i.test(text) ? "deposited" : /\b(?:keep|protect|reserve)\b/i.test(text) ? "protected" : input.expectedKind;
-  const base = detected === "spent" || detected === "remaining" ? input.receivedAmount : detected === "deposited" || detected === "protected" ? input.remainingAmount : null; const candidate = parseContextualValue(text, "money_amount", { baseAmount: base });
-  if (candidate.parserContext !== "money_amount") return { ok: false, error: "The active question did not request a money amount." }; if (!candidate.ok) return { ok: false, error: candidate.error, candidate }; return { ok: true, kind: detected, amount: candidate.normalizedCandidate, approximate: candidate.approximate, original: text, candidate };
+const fieldForKind: Record<CashActionKind, CashFieldContext> = { received: "cash_received", remaining: "cash_remaining", spent: "cash_spent", deposited: "cash_deposited", protected: "cash_protected" };
+const kindForField: Record<CashFieldContext, CashActionKind> = { cash_received: "received", cash_remaining: "remaining", cash_spent: "spent", cash_deposited: "deposited", cash_protected: "protected" };
+
+export function parseCashAction(text: string, input: { expectedKind?: CashActionKind; activeField?: CashFieldContext; receivedAmount?: number | null; remainingAmount?: number | null }): ParsedCashAction {
+  const activeField = input.activeField || fieldForKind[input.expectedKind || "received"]; const activeKind = kindForField[activeField];
+  const spokenKind: CashActionKind | null = /\b(?:made|earned|received|got)\b/i.test(text) ? "received" : /\b(?:spent|used)\b/i.test(text) ? "spent" : /\b(?:still have|have all|remaining|left|none left)\b/i.test(text) ? "remaining" : /\bdeposit/i.test(text) ? "deposited" : /\b(?:keep|protect|reserve)\b/i.test(text) ? "protected" : null;
+  const base = activeKind === "spent" || activeKind === "remaining" ? input.receivedAmount : activeKind === "deposited" || activeKind === "protected" ? input.remainingAmount : null; const candidate = parseContextualValue(text, "money_amount", { baseAmount: base });
+  if (candidate.parserContext !== "money_amount") return { ok: false, error: "The active question did not request a money amount." }; if (!candidate.ok) return { ok: false, error: candidate.error, candidate };
+  if (spokenKind && spokenKind !== activeKind) return { ok: false, error: `The wording answers ${fieldForKind[spokenKind].replace("cash_", "cash ")}, not the active ${activeField.replace("cash_", "cash ")} question.`, candidate, fieldConflict: { activeField, spokenField: fieldForKind[spokenKind], amount: candidate.normalizedCandidate, approximate: candidate.approximate } };
+  return { ok: true, kind: activeKind, field: activeField, amount: candidate.normalizedCandidate, approximate: candidate.approximate, original: text, candidate };
 }
 
 export function validateCashAction(action: ParsedCashAction, current: { received: number | null; remaining: number | null; deposited: number | null; protected: number | null }): { ok: true } | { ok: false; error: string } {
@@ -64,13 +72,14 @@ export function validateCashAction(action: ParsedCashAction, current: { received
   const remaining = current.remaining ?? current.received; if (action.kind === "deposited" && action.amount > remaining) return { ok: false, error: "The deposit cannot exceed the cash still remaining." }; if (action.kind === "protected" && action.amount > remaining) return { ok: false, error: "The protected amount cannot exceed the cash still remaining." }; return { ok: true };
 }
 
-export function applyCashUpdate(current: CashValues, action: ParsedCashAction): { ok: true; values: CashValues; kind: CashActionKind; amount: number } | { ok: false; error: string } {
+export function applyCashUpdate(current: CashValues, action: ParsedCashAction): { ok: true; values: CashValues; kind: CashActionKind; amount: number; noOp: boolean } | { ok: false; error: string } {
   const validation = validateCashAction(action, current); if (!validation.ok || !action.ok) return { ok: false, error: validation.ok ? "Unable to confirm amount." : validation.error };
-  const { kind, amount } = action; if (kind === "received") return { ok: true, kind, amount, values: { received: amount, remaining: /still have\s+(?:all|the rest)|all of it/i.test(action.original) ? amount : null, deposited: null, protected: null } };
-  if (kind === "remaining") return { ok: true, kind, amount, values: { ...current, remaining: amount, deposited: null, protected: null } };
-  if (kind === "spent") return { ok: true, kind, amount, values: { ...current, remaining: Math.max(0, (current.received || 0) - amount), deposited: null, protected: null } };
-  if (kind === "deposited") return { ok: true, kind, amount, values: { ...current, deposited: amount } };
-  return { ok: true, kind, amount, values: { ...current, protected: amount } };
+  const { kind, amount } = action; const currentAmount = kind === "spent" ? (current.received != null && current.remaining != null ? current.received - current.remaining : null) : current[kind]; if (currentAmount === amount) return { ok: true, kind, amount, values: current, noOp: true };
+  if (kind === "received") return { ok: true, kind, amount, values: { received: amount, remaining: /still have\s+(?:all|the rest)|all of it/i.test(action.original) ? amount : null, deposited: null, protected: null }, noOp: false };
+  if (kind === "remaining") return { ok: true, kind, amount, values: { ...current, remaining: amount, deposited: null, protected: null }, noOp: false };
+  if (kind === "spent") return { ok: true, kind, amount, values: { ...current, remaining: Math.max(0, (current.received || 0) - amount), deposited: null, protected: null }, noOp: false };
+  if (kind === "deposited") return { ok: true, kind, amount, values: { ...current, deposited: amount }, noOp: false };
+  return { ok: true, kind, amount, values: { ...current, protected: amount }, noOp: false };
 }
 
 export function conservativeCashEstimate(input: Omit<VariableCashRange, "planningEstimate" | "confidence">): VariableCashRange { return { ...input, planningEstimate: input.userOverride == null ? input.low : bounded(input.userOverride, input.high), confidence: input.userOverride == null ? "medium" : "high" }; }

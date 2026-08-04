@@ -755,6 +755,24 @@ test("ambiguous money stays pending while clean updates share one governed state
 
 test("cash voice auto-apply is bounded, reversible, accessible, and session-only", () => {
   const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
-  for (const contract of [/useState\(true\)/, /voiceAutoSend && safeKind/, /!parsed\.candidate\.reviewRequired/, /commitCashAction\(parsed, "voice"\)/, /Voice auto-send/, /Auto-applied/, /setActiveAction\("remaining"\)/, /Change amount/, />Undo</, /aria-live="polite"/, /Awaiting review/, /No amount recorded yet/, /Keep current amount/, /correctionProvenance: "user_accepted"/]) assert.match(ui, contract);
+  for (const contract of [/useState\(true\)/, /voiceAutoSend && safeKind/, /!parsed\.candidate\.reviewRequired/, /commitCashAction\(parsed, "voice"\)/, /Voice auto-send/, /Auto-applied/, /setActiveAction\("remaining"\)/, /Change amount/, />Undo</, /aria-live="polite"/, /Awaiting review/, /No amount recorded/, /Keep current amount/, /correctionProvenance: "user_accepted"/]) assert.match(ui, contract);
   assert.doesNotMatch(ui, /localStorage|sessionStorage|FinancialMemory|fetch\(/);
+});
+
+test("active cash field owns mapping and incompatible wording requests clarification", () => {
+  const remaining = parseCashAction("I still have $150", { activeField: "cash_remaining", receivedAmount: 240 }); const all = parseCashAction("I have all of it", { activeField: "cash_remaining", receivedAmount: 240 }); const conflict = parseCashAction("I made about 2:40", { activeField: "cash_remaining", receivedAmount: 240 });
+  assert.equal(remaining.ok && remaining.kind, "remaining"); assert.equal(remaining.ok && remaining.field, "cash_remaining"); assert.equal(remaining.ok && remaining.amount, 150);
+  assert.equal(all.ok && all.amount, 240); assert.equal(conflict.ok, false); assert.equal(!conflict.ok && conflict.fieldConflict?.spokenField, "cash_received"); assert.equal(!conflict.ok && conflict.fieldConflict?.activeField, "cash_remaining"); assert.equal(!conflict.ok && conflict.fieldConflict?.amount, 240);
+});
+
+test("field clarification can apply either bounded choice without implicit routing", () => {
+  const current = { received: 240, remaining: null, deposited: null, protected: null }; const receivedChoice = parseCashAction("$240", { activeField: "cash_received" }); const remainingChoice = parseCashAction("$240", { activeField: "cash_remaining", receivedAmount: 240 });
+  const unchanged = applyCashUpdate(current, receivedChoice); const completed = applyCashUpdate(current, remainingChoice);
+  assert.equal(unchanged.ok && unchanged.noOp, true); assert.deepEqual(unchanged.ok && unchanged.values, current); assert.equal(completed.ok && completed.noOp, false); assert.equal(completed.ok && completed.values.remaining, 240);
+});
+
+test("equal replacement is a no-op and unresolved remaining cash never renders false zero", () => {
+  const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
+  for (const contract of [/if \(applied\.noOp\)/, /No change or undo history was added/, /Received \{money\(pendingReview\.suggestedAmount\)\}/, /Still have \{money\(pendingReview\.suggestedAmount\)\}/, /Awaiting clarification/, /Current valid cash state unchanged/, /remaining == null \? "No amount recorded"/, /Confirm how much cash remains before recalculating the plan/]) assert.match(ui, contract);
+  assert.match(ui, /if \(applied\.noOp\)[\s\S]*return true;[\s\S]*setPriorByAction/); assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(/);
 });

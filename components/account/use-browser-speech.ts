@@ -21,7 +21,7 @@ const recognitionConstructor = () => {
 const subscribeToBrowserCapability = () => () => undefined;
 
 export type VoiceTranscriptMeta = { confidence: number | null };
-export type VoiceTranscriptOutcome = "added" | "applied" | "replaced" | "held" | "held_merchant";
+export type VoiceTranscriptOutcome = "added" | "applied" | "no_op" | "replaced" | "held" | "held_merchant";
 
 export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalTranscript: (transcript: string, meta: VoiceTranscriptMeta) => VoiceTranscriptOutcome; stopSpeaking: () => void }) {
   const supported = useSyncExternalStore(subscribeToBrowserCapability, () => Boolean(recognitionConstructor()), () => false);
@@ -48,7 +48,7 @@ export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalT
         const confidence = Number.isFinite(result[0].confidence) ? result[0].confidence : null;
         finalTranscriptReceivedRef.current = true;
         const outcome = onFinalTranscript(transcript, { confidence });
-        setStatus(outcome === "applied" ? "Final transcript added, normalized, and recorded for this preview." : outcome === "replaced" ? "Final transcript replaced the prior unsubmitted voice attempt." : outcome === "held_merchant" ? "Final transcript added and held for review because the merchant could not be confirmed." : outcome === "held" ? "Final transcript added and held for review." : "Final transcript added to the Message draft.");
+        setStatus(outcome === "applied" ? "Final transcript added, normalized, and recorded for this preview." : outcome === "no_op" ? "Final transcript matches the current amount; no change or undo history was added." : outcome === "replaced" ? "Final transcript replaced the prior unsubmitted voice attempt." : outcome === "held_merchant" ? "Final transcript added and held for review because the merchant could not be confirmed." : outcome === "held" ? "Final transcript added and held for review." : "Final transcript added to the Message draft.");
       }
     };
     recognition.onerror = (event) => {
