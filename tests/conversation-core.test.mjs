@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import { isFounderAdmin } from "../lib/waitlist-core.ts";
 import { assessVoiceTurn, resolveMerchantCorrection, transcriptNeedsExplicitReview } from "../lib/conversation/transcript-review.ts";
 import { resolveTransactionReference } from "../lib/conversation/reference-resolver.ts";
+import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel } from "../lib/conversation/recommendation-presentation.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -283,8 +284,8 @@ test("preview preserves confirmation and no-plan-activation boundaries", () => {
 
 test("strategy preview exposes rationale, alternatives, evidence, constraints, stale semantics, and one primary step pattern", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
-  for (const copy of ["Recommended", "Alternative", "Why ", "Evidence, assumptions, and uncertainty", "protect Callie’s activities", "Missing financial evidence", "Next best step"]) assert.match(ui, new RegExp(copy));
-  assert.match(ui, /aria-label="Primary next best step"/); assert.match(ui, /aria-label="Whole-picture situation preview"/); assert.match(ui, /aria-label="Proposed change requiring confirmation"/);
+  for (const copy of ["Recommended", "Alternative", "Why ", "Evidence, assumptions, and uncertainty", "protect Callie’s activities", "Missing financial evidence", "Flow B next step"]) assert.match(ui, new RegExp(copy));
+  assert.match(ui, /aria-label="Flow B next step"/); assert.match(ui, /aria-label="Whole-picture situation preview"/); assert.match(ui, /aria-label="Proposed change requiring confirmation"/);
 });
 
 test("preview CSS stacks options at mobile width without horizontal comparison scrolling", () => {
@@ -470,7 +471,7 @@ test("Next Best Step follows goal facts, target mode, and proposal confirmation"
 
 test("Flow B remains session-only, accessible, and cannot activate a plan", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8"); const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
-  for (const copy of ["I have a date", "Show me realistic timelines", "I want steady monthly progress", "As soon as practical", "Proposed only", "not saved or activated"]) assert.match(ui, new RegExp(copy));
+  for (const copy of ["I have a date", "Show me realistic timelines", "I want steady monthly progress", "As soon as practical", "No target selected", "not saved or activated"]) assert.match(ui, new RegExp(copy));
   assert.match(ui, /aria-label="Choose recovery timeline approach"/); assert.match(ui, /autoFocus/); assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /min-height:44px/);
   assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(|insert\(|upsert\(/);
 });
@@ -520,4 +521,37 @@ test("Callie protection follows candidate-lever disclosure and remains temporary
   assert.match(ui, /Do you want me to protect Callie’s activities from these options/);
   assert.match(ui, /candidateLevers\(spend, constraints\)/); assert.match(ui, /generateTimelineOptions\(\{ gap, levers, constraints/);
   assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|insert\(|upsert\(/);
+});
+
+test("canonical recommendation identity aligns highlight, rationale, CTA, and proposed target", () => {
+  const state = buildRecommendationPresentation({ optionIds: ["Fastest", "Balanced", "Lowest disruption"], recommendedId: "Fastest", previewedId: "Balanced", proposedId: "Fastest" });
+  assert.equal(state.recommendedId, "Fastest"); assert.equal(state.highlightedId, state.recommendedId); assert.equal(state.rationaleId, state.recommendedId); assert.equal(state.primaryCtaId, state.recommendedId); assert.equal(state.proposedId, state.recommendedId);
+  assert.equal(state.previewedId, "Balanced"); assert.equal(state.confirmedId, null);
+});
+
+test("inconsistent recommendation references fail safely", () => {
+  assert.equal(buildRecommendationPresentation({ optionIds: ["Fastest", "Balanced"], recommendedId: "Fastest", proposedId: "Balanced" }), null);
+  assert.equal(buildRecommendationPresentation({ optionIds: ["Fastest"], recommendedId: "Fastest", previewedId: "Lowest disruption" }), null);
+  assert.equal(buildRecommendationPresentation({ optionIds: ["Fastest"], recommendedId: "Fastest", confirmedId: "Fastest" }), null);
+});
+
+test("target modes use consumer language and estimated dates avoid unsupported precision", () => {
+  assert.deepEqual(["fixed_date", "suggested_date", "flexible_timeline", "monthly_contribution_target", "as_soon_as_practical"].map(targetModeLabel), ["I have a date", "Show me realistic timelines", "Keep my timeline flexible", "Steady monthly progress", "As soon as practical"]);
+  const estimate = estimatedTimelineCopy(13, 612, "2027-09-04"); assert.equal(estimate.duration, "About 13 months"); assert.equal(estimate.catchUp, "Estimated catch-up: around September 2027"); assert.match(estimate.pace, /approximately \$612 per month beginning next month/); assert.doesNotMatch(Object.values(estimate).join(" "), /2027-09-04/);
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8"); assert.doesNotMatch(ui, /targetMode\.replaceAll/); assert.doesNotMatch(ui, /estimated \{timeline\.projectedCompletionDate\}/);
+});
+
+test("Flow-scoped guidance and recommendation states remain distinct", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /Flow A complete/); assert.match(ui, /aria-label="Flow B next step"/); assert.doesNotMatch(ui, />Next best step</);
+  assert.match(ui, /previewedOptionId/); assert.match(ui, /proposedTargetId/); assert.match(ui, /confirmedTargetId/);
+  assert.match(ui, /Currently previewing:[\s\S]*does not change Covarify’s/); assert.match(ui, /setPreviewedOptionId\(option\.name\); setOptionReviewed\(true\)/);
+  assert.doesNotMatch(ui, /setPreviewedOptionId\(option\.name\)[^\n]*setProposedTargetId/);
+});
+
+test("Callie rationale explains changed or retained recommendation without durable writes", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /remains recommended because it still contributes the most while preserving Callie’s activities/); assert.match(ui, /recommendation changed from/);
+  assert.match(ui, /Protected priorities/); assert.match(ui, /candidateLevers\(spend, constraints\)/);
+  assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(|insert\(|upsert\(/);
 });
