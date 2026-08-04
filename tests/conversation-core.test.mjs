@@ -5,7 +5,7 @@ import { routeConversationIntent } from "../lib/conversation/intent-router.ts";
 import { resolveConversationScope } from "../lib/conversation/scope-resolver.ts";
 import { resolveConversationEntities } from "../lib/conversation/entity-resolver.ts";
 import { validConversationContext } from "../lib/conversation/conversation-context.ts";
-import { buildHousingGap, candidateLevers, confirmRecoveryPlan, generateRecoveryOptions, monitorPlan, proposeRecoveryPlan, rankFinancialPriority } from "../lib/conversation/financial-triage.ts";
+import { assertMutuallyExclusiveEvidence, buildHousingGap, candidateLevers, confirmRecoveryPlan, expectedIncomeWithinWindow, generateRecoveryOptions, generateTimelineOptions, monitorPlan, proposeRecoveryPlan, rankFinancialPriority } from "../lib/conversation/financial-triage.ts";
 import { competingGoalClarification } from "../lib/conversation/goals.ts";
 import { assembleWholePicture } from "../lib/conversation/whole-picture.ts";
 import { applyStrategyConstraints, recommendPersonalizedStrategy } from "../lib/conversation/strategy-engine.ts";
@@ -126,13 +126,13 @@ test("business service context stays a proposal and makes no tax claim", () => {
 test("partial rent keeps payment and obligation separate and clarifies missing gap facts", () => {
   const gap = buildHousingGap({ obligation: "The Heights rent", amountPaid: 1700, paymentType: "partial", evidenceIds: ["rent-payment"] });
   assert.equal(gap.amountPaid, 1700); assert.equal(gap.normalMonthlyAmount, null); assert.equal(gap.remainingAmount, null);
-  assert.deepEqual(gap.missingInputs, ["normal monthly rent", "current amount outstanding", "target catch-up date"]);
+  assert.deepEqual(gap.missingInputs, ["normal monthly rent", "current amount outstanding"]);
   assert.equal(gap.estimatedShortfall, null);
 });
 
-test("target timing and whole-picture protection block false zero/high-confidence gaps", () => {
+test("missing user date does not block a financially complete gap but incomplete evidence returns unknown", () => {
   const missingDate = buildHousingGap({ obligation: "Rent", normalMonthlyRent: 2200, amountPaid: 1700, outstanding: 500, expectedIncome: 1800, availableCash: 1000, protectedReserve: 1000, protectedObligations: 75, upcomingObligations: 725, recurringCommitments: 200, essentialSpending: 800, evidenceIds: ["rent"] });
-  assert.equal(missingDate.estimatedShortfall, null); assert.equal(missingDate.confidence, "low"); assert.ok(missingDate.missingInputs.includes("target catch-up date"));
+  assert.equal(missingDate.estimatedShortfall, 500); assert.equal(missingDate.confidence, "high"); assert.equal(missingDate.targetCatchUpDate, null); assert.doesNotMatch(missingDate.missingInputs.join(), /date/);
   const incompletePicture = buildHousingGap({ obligation: "Rent", normalMonthlyRent: 2200, amountPaid: 1700, outstanding: 500, targetCatchUpDate: "2026-09-01", expectedIncome: 1800, availableCash: 1000, evidenceIds: ["rent"] });
   assert.equal(incompletePicture.estimatedShortfall, null); assert.equal(incompletePicture.availableForGoal, null); assert.equal(incompletePicture.confidence, "low");
 });
@@ -282,7 +282,7 @@ test("preview preserves confirmation and no-plan-activation boundaries", () => {
 
 test("strategy preview exposes rationale, alternatives, evidence, constraints, stale semantics, and one primary step pattern", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
-  for (const copy of ["Recommended", "Alternative", "Why ", "Evidence and assumptions", "Protect Callie’s activities", "Missing information", "Next best step"]) assert.match(ui, new RegExp(copy));
+  for (const copy of ["Recommended", "Alternative", "Why ", "Evidence, assumptions, and uncertainty", "Protect Callie’s activities", "Missing financial evidence", "Next best step"]) assert.match(ui, new RegExp(copy));
   assert.match(ui, /aria-label="Primary next best step"/); assert.match(ui, /aria-label="Whole-picture situation preview"/); assert.match(ui, /aria-label="Proposed change requiring confirmation"/);
 });
 
@@ -353,7 +353,7 @@ test("voice controls remain accessible and stack at the 390px breakpoint", () =>
   const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
   assert.match(ui, /aria-label=\{voice\.listening \? "Stop microphone" : "Start microphone"\}/); assert.match(ui, /aria-pressed=\{voice\.listening\}/);
   assert.match(ui, /aria-label="Voice input controls"/); assert.match(ui, /aria-live="polite"/);
-  assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.prompts,\.goal,\.voiceControls,\.reviewActions\{display:grid\}/); assert.match(css, /min-height:44px/);
+  assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.prompts,\.goal,\.voiceControls,\.reviewActions,\.modeActions\{display:grid\}/); assert.match(css, /min-height:44px/);
 });
 
 test("voice retry replaces its draft while typed text requires an explicit merge choice", () => {
@@ -403,8 +403,10 @@ test("a new unsupported merchant turn cannot inherit the accepted OLU’KAI corr
 
 test("rent preview is a sequential state machine and cannot render future active inputs", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
-  assert.match(ui, /inputStep === 0[\s\S]*inputStep === 1[\s\S]*When do you want to be caught up/);
-  assert.match(ui, /setInputStep\(\(step\) => Math\.min\(3, step \+ 1\)\)/); assert.match(ui, /User-provided confirmed facts/);
+  assert.match(ui, /inputStep === 0[\s\S]*How much is currently outstanding/);
+  assert.match(ui, /inputStep >= 2 && !targetMode[\s\S]*I have a date[\s\S]*Show me realistic timelines/);
+  assert.match(ui, /targetMode === "fixed_date" && !deadline[\s\S]*When do you want to be caught up/);
+  assert.match(ui, /setInputStep\(\(step\) => Math\.min\(2, step \+ 1\)\)/); assert.match(ui, /User-provided confirmed facts/);
   assert.doesNotMatch(ui, /className=\{styles\.inputs\}/);
 });
 
@@ -413,4 +415,61 @@ test("completed rent inputs produce levers, options, rationale, and constraint r
   const options = generateRecoveryOptions(gap, all); assert.ok(options.length >= 1);
   const protectedLevers = candidateLevers([{ key: "callie", label: "Callie’s activities", category: "Family", amount: 180, transactionIds: ["c1", "c2"], flexibility: "discretionary", recurring: true }, { key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }], [{ kind: "protect", key: "callie", value: "Callie’s activities" }]);
   assert.equal(protectedLevers.some((lever) => lever.label.includes("Callie")), false); assert.notEqual(protectedLevers.length, all.length);
+});
+
+test("target modes stay distinct and a suggested or flexible timeline never becomes a fixed date", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  const triage = readFileSync(new URL("../lib/conversation/financial-triage.ts", import.meta.url), "utf8");
+  for (const mode of ["fixed_date", "suggested_date", "flexible_timeline", "monthly_contribution_target", "as_soon_as_practical"]) assert.match(ui, new RegExp(mode));
+  assert.match(ui, /targetDate: targetMode === "fixed_date" \? deadline \|\| null : null/);
+  assert.match(triage, /suggested: true, confirmed: false/);
+});
+
+test("missing fixed date still permits quantified suggested timeline options", () => {
+  const gap = completeGap({ targetCatchUpDate: null, analysisWindow: { start: "2026-08-04", end: "2026-09-03" } });
+  const levers = candidateLevers([{ key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }]);
+  const options = generateTimelineOptions({ gap, levers, mode: "suggested_date", asOf: "2026-08-04" });
+  assert.ok(options.length); assert.equal(gap.targetCatchUpDate, null);
+  for (const option of options) { assert.ok(option.durationMonths > 0); assert.ok(option.contributionPerMonth > 0); assert.ok(option.projectedCompletionDate); assert.equal(option.confirmed, false); }
+});
+
+test("monthly contribution and as-soon-as-practical modes retain different contracts", () => {
+  const gap = completeGap({ targetCatchUpDate: null }); const levers = candidateLevers([{ key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }]);
+  const monthly = generateTimelineOptions({ gap, levers, mode: "monthly_contribution_target", monthlyContribution: 125, asOf: "2026-08-04" });
+  const fastest = generateTimelineOptions({ gap, levers, mode: "as_soon_as_practical", asOf: "2026-08-04" });
+  assert.equal(monthly[0].targetMode, "monthly_contribution_target"); assert.equal(monthly[0].contributionPerMonth, 125);
+  assert.equal(fastest[0].targetMode, "as_soon_as_practical"); assert.equal(fastest.length, 1); assert.notEqual(fastest[0].contributionPerMonth, monthly[0].contributionPerMonth);
+});
+
+test("analysis-window income, exclusive obligations, and reconciliation are auditable", () => {
+  const income = expectedIncomeWithinWindow([{ amount: 900, expectedDate: "2026-08-15", evidenceId: "pay-1" }, { amount: 900, expectedDate: "2026-09-15", evidenceId: "pay-2" }], { start: "2026-08-04", end: "2026-09-03" });
+  assert.equal(income.amount, 900); assert.deepEqual(income.evidenceIds, ["pay-1"]);
+  assert.throws(() => assertMutuallyExclusiveEvidence({ upcoming_obligations: ["same"], recurring_commitments: ["same"] }), /OVERLAPPING_OBLIGATION_EVIDENCE/);
+  const gap = completeGap({ expectedIncome: income.amount, analysisWindow: income.window });
+  assert.equal(gap.availableForGoal, 0); assert.equal(gap.estimatedShortfall, gap.remainingAmount);
+  assert.deepEqual(gap.reconciliation.map((line) => line.label), ["Known cash", "Less protected reserve", "Plus expected income", "Less protected obligations", "Less upcoming obligations", "Less recurring commitments", "Less essential spending", "Equals available for goal", "Outstanding amount", "Equals remaining gap"]);
+});
+
+test("Callie protection materially recalculates timeline amounts and dates", () => {
+  const gap = completeGap({ outstanding: 800, targetCatchUpDate: null }); const candidates = [{ key: "callie", label: "Callie’s activities", category: "Family", amount: 180, transactionIds: ["c1", "c2"], flexibility: "discretionary", recurring: true }, { key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }];
+  const open = generateTimelineOptions({ gap, levers: candidateLevers(candidates), mode: "suggested_date", asOf: "2026-08-04" });
+  const constraints = [{ kind: "protect", key: "callie", value: "Callie’s activities" }]; const protectedOptions = generateTimelineOptions({ gap, levers: candidateLevers(candidates, constraints), constraints, mode: "suggested_date", asOf: "2026-08-04" });
+  assert.notEqual(open[0].contributionPerMonth, protectedOptions[0].contributionPerMonth); assert.notEqual(open[0].projectedCompletionDate, protectedOptions[0].projectedCompletionDate); assert.deepEqual(protectedOptions[0].protectedExpenses, ["Callie’s activities"]);
+});
+
+test("Next Best Step follows goal facts, target mode, and proposal confirmation", () => {
+  const base = { evidenceIds: ["rent"], priority: "urgent" };
+  assert.match(selectNextBestStep({ ...base, goalConfirmationRequired: true }).label, /Confirm the housing/);
+  assert.equal(selectNextBestStep({ ...base, missingInputs: ["normal monthly rent"] }).label, "Provide normal monthly rent");
+  assert.equal(selectNextBestStep({ ...base, timelineChoiceRequired: true }).label, "Choose how to set the recovery timeline");
+  assert.equal(selectNextBestStep({ ...base, targetMode: "fixed_date", optionsReady: false }).label, "Provide target date");
+  assert.equal(selectNextBestStep({ ...base, targetMode: "fixed_date", fixedDateProvided: true, optionsReady: false }).label, "Review fixed-date feasibility");
+  assert.equal(selectNextBestStep({ ...base, targetMode: "suggested_date", optionsReady: true, proposedTargetReady: true }).label, "Review and confirm the proposed target");
+});
+
+test("Flow B remains session-only, accessible, and cannot activate a plan", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8"); const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
+  for (const copy of ["I have a date", "Show me realistic timelines", "I want steady monthly progress", "As soon as practical", "Proposed only", "not saved or activated"]) assert.match(ui, new RegExp(copy));
+  assert.match(ui, /aria-label="Choose recovery timeline approach"/); assert.match(ui, /autoFocus/); assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /min-height:44px/);
+  assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(|insert\(|upsert\(/);
 });
