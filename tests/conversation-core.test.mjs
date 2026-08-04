@@ -16,7 +16,7 @@ import { assessVoiceTurn, resolveMerchantCorrection, transcriptNeedsExplicitRevi
 import { resolveTransactionReference } from "../lib/conversation/reference-resolver.ts";
 import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel } from "../lib/conversation/recommendation-presentation.ts";
 import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
-import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, cashIncomeFixture, conservativeCashEstimate, normalizeCashAmount, offAccountMemoryMapping, ownerAvailable, parseCashAction, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, simulateReceivable, validateCashAction } from "../lib/conversation/off-account-resources.ts";
+import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, applyCashUpdate, cashIncomeFixture, conservativeCashEstimate, normalizeCashAmount, offAccountMemoryMapping, ownerAvailable, parseCashAction, parseContextualValue, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, simulateReceivable, validateCashAction } from "../lib/conversation/off-account-resources.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -735,5 +735,26 @@ test("cash validation blocks impossible amounts before reconciliation", () => {
 test("cash applied state visibly confirms values and provides Change and Undo without persistence", () => {
   const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
   for (const contract of [/Recorded for this preview:/, /Allocation recalculated/, /Resulting available cash:/, /aria-live="polite"/, /aria-pressed="true"/, /Change amount/, />Undo</, /setCashValues/, /setPriorByAction/, /restored the prior cash state/]) assert.match(ui, contract);
-  assert.match(ui, /Reviewed voice transcript added/); assert.match(ui, /Add reviewed voice transcript/); assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(/);
+  assert.match(ui, /Final transcript added/); assert.match(ui, /Add voice amount/); assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(/);
+});
+
+test("typed parser context distinguishes money from time and preserves transcript metadata", () => {
+  const moneyValue = parseContextualValue("2:40", "money_amount", { provenance: "browser_transcript" }); const timeValue = parseContextualValue("2:40", "time"); const compact = parseContextualValue("I made about two forty", "money_amount");
+  assert.equal(moneyValue.ok && moneyValue.normalizedCandidate, 240); assert.equal(moneyValue.parserContext, "money_amount"); assert.equal(moneyValue.rawTranscript, "2:40");
+  assert.equal(timeValue.ok && timeValue.normalizedCandidate, "2:40"); assert.equal(timeValue.parserContext, "time");
+  assert.equal(compact.ok && compact.normalizedCandidate, 240); assert.equal(compact.ok && compact.approximate, true);
+  assert.deepEqual(normalizeCashAmount("two forty and fifty cents"), { ok: true, amount: 240.5, approximate: false, source: "words" });
+});
+
+test("ambiguous money stays pending while clean updates share one governed state transition", () => {
+  const ambiguous = parseContextualValue("two forty five", "money_amount"); const multiple = parseContextualValue("I made $240 and spent $90", "money_amount"); const missing = parseContextualValue("around two hundred something", "money_amount");
+  assert.equal(ambiguous.ok, false); assert.equal(multiple.ok, false); assert.equal(missing.ok, false); assert.notEqual(ambiguous.ok ? ambiguous.normalizedCandidate : undefined, 0);
+  const parsed = parseCashAction("I made about two forty", { expectedKind: "received" }); const applied = applyCashUpdate({ received: null, remaining: null, deposited: null, protected: null }, parsed);
+  assert.equal(applied.ok && applied.values.received, 240); assert.equal(parsed.ok && parsed.candidate.parserContext, "money_amount");
+});
+
+test("cash voice auto-apply is bounded, reversible, accessible, and session-only", () => {
+  const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
+  for (const contract of [/useState\(true\)/, /voiceAutoSend && safeKind/, /!parsed\.candidate\.reviewRequired/, /commitCashAction\(parsed, "voice"\)/, /Voice auto-send/, /Auto-applied/, /setActiveAction\("remaining"\)/, /Change amount/, />Undo</, /aria-live="polite"/, /Awaiting review/, /No amount recorded yet/, /Keep current amount/, /correctionProvenance: "user_accepted"/]) assert.match(ui, contract);
+  assert.doesNotMatch(ui, /localStorage|sessionStorage|FinancialMemory|fetch\(/);
 });
