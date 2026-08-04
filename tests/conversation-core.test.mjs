@@ -16,7 +16,7 @@ import { assessVoiceTurn, resolveMerchantCorrection, transcriptNeedsExplicitRevi
 import { resolveTransactionReference } from "../lib/conversation/reference-resolver.ts";
 import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel } from "../lib/conversation/recommendation-presentation.ts";
 import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
-import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, cashIncomeFixture, conservativeCashEstimate, offAccountMemoryMapping, ownerAvailable, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, simulateReceivable } from "../lib/conversation/off-account-resources.ts";
+import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, cashIncomeFixture, conservativeCashEstimate, normalizeCashAmount, offAccountMemoryMapping, ownerAvailable, parseCashAction, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, simulateReceivable, validateCashAction } from "../lib/conversation/off-account-resources.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -704,7 +704,36 @@ test("off-account facts remain governed candidates and never persist automatical
 
 test("cash and receivable fixture UX is minimal, responsive, and read-only", () => {
   const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8"); const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
-  for (const copy of ["How much of those tips do you expect to still have available?", "I made $240 and still have all of it", "I spent $90", "I deposited the rest", "Provisional owner-available", "What if only half is paid?", "Simulated · baseline preserved · not active"]) assert.ok(ui.includes(copy));
-  assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-label="Cash reconciliation"/); assert.match(css, /\.resourceSummary/); assert.match(css, /@media\(max-width:700px\)/);
+  for (const copy of ["How much cash did you receive?", "How much of it do you still have available?", "Amount or natural-language update", "Change amount", "Undo", "Provisional owner-available", "What if only half is paid?", "Simulated · baseline preserved · not active"]) assert.ok(ui.includes(copy));
+  assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-label="Cash summary"/); assert.match(ui, /aria-pressed/); assert.match(css, /\.resourceSummary/); assert.match(css, /\.cashHeadline/); assert.match(css, /@media\(max-width:700px\)/);
   assert.doesNotMatch(ui, /fetch\(|localStorage|sessionStorage|insert\(|upsert\(|FinancialMemory/);
+});
+
+test("cash amount normalization accepts arbitrary numeric, word, approximate, and contextual values", () => {
+  assert.deepEqual(normalizeCashAmount("$237.45"), { ok: true, amount: 237.45, approximate: false, source: "numeric" });
+  assert.deepEqual(normalizeCashAmount("ninety dollars"), { ok: true, amount: 90, approximate: false, source: "words" });
+  assert.deepEqual(normalizeCashAmount("about ninety"), { ok: true, amount: 90, approximate: true, source: "words" });
+  assert.deepEqual(normalizeCashAmount("half", 240), { ok: true, amount: 120, approximate: false, source: "fraction" });
+  assert.deepEqual(normalizeCashAmount("all of it", 240), { ok: true, amount: 240, approximate: false, source: "full" });
+  assert.deepEqual(normalizeCashAmount("none remaining", 240), { ok: true, amount: 0, approximate: false, source: "none" });
+  assert.deepEqual(normalizeCashAmount("I made $240 and still have all of it"), { ok: true, amount: 240, approximate: false, source: "numeric" });
+  assert.equal(normalizeCashAmount("half").ok, false);
+});
+
+test("natural cash statements resolve action and remaining cash derives spent cash", () => {
+  const received = parseCashAction("I made $240", { expectedKind: "received" }); const remaining = parseCashAction("I still have $150", { expectedKind: "remaining", receivedAmount: 240 }); const spentAction = parseCashAction("I spent about half", { expectedKind: "spent", receivedAmount: 240 }); const deposit = parseCashAction("I deposited $100", { expectedKind: "deposited", receivedAmount: 240, remainingAmount: 150 }); const protectedAction = parseCashAction("Keep $75 for groceries", { expectedKind: "protected", receivedAmount: 240, remainingAmount: 150 });
+  assert.equal(received.ok && received.kind, "received"); assert.equal(remaining.ok && remaining.kind, "remaining"); assert.equal(spentAction.ok && spentAction.kind, "spent"); assert.equal(deposit.ok && deposit.kind, "deposited"); assert.equal(protectedAction.ok && protectedAction.kind, "protected"); assert.equal(remaining.ok && 240 - remaining.amount, 90); assert.equal(spentAction.ok && spentAction.amount, 120); assert.equal(protectedAction.ok && protectedAction.amount, 75);
+});
+
+test("cash validation blocks impossible amounts before reconciliation", () => {
+  const current = { received: 240, remaining: 150, deposited: null, protected: null };
+  assert.equal(validateCashAction(parseCashAction("I spent $300", { expectedKind: "spent", receivedAmount: 240 }), current).ok, false);
+  assert.equal(validateCashAction(parseCashAction("I deposited $151", { expectedKind: "deposited", receivedAmount: 240, remainingAmount: 150 }), current).ok, false);
+  assert.equal(validateCashAction(parseCashAction("Keep $200", { expectedKind: "protected", receivedAmount: 240, remainingAmount: 150 }), current).ok, false);
+});
+
+test("cash applied state visibly confirms values and provides Change and Undo without persistence", () => {
+  const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
+  for (const contract of [/Recorded for this preview:/, /Allocation recalculated/, /Resulting available cash:/, /aria-live="polite"/, /aria-pressed="true"/, /Change amount/, />Undo</, /setCashValues/, /setPriorByAction/, /restored the prior cash state/]) assert.match(ui, contract);
+  assert.match(ui, /Reviewed voice transcript added/); assert.match(ui, /Add reviewed voice transcript/); assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(/);
 });

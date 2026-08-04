@@ -9,9 +9,39 @@ export type ReceivableState = "received_available" | "partially_received" | "sch
 export type Receivable = { invoiceId: string; client: string; description: string; grossAmount: number; amountPaid: number; remainingAmount: number; issueDate: string; dueDate: string; expectedPaymentDate: string | null; paymentTerms: string; state: ReceivableState; disputed: boolean; clientHistory: "reliable" | "mixed" | "unknown"; collectionConfidence: Confidence; paymentSchedule: Array<{ date: string; amount: number }>; businessCosts: number; taxReserveRate: number; vendorObligations: number; businessProtected: number; ownerAvailableEstimate: number; scope: "business"; source: "fixture" | "user" | "document"; evidenceIds: string[]; freshness: string; confirmed: boolean; correction: string | null; supersedesId: string | null; reconciliationKey: string };
 export type ReceivableReconciliation = { gross: number; received: number; remaining: number; businessCostsApplied: number; taxReserveApplied: number; vendorObligationsApplied: number; businessProtectedApplied: number; receivedOwnerAvailable: number; expectedOwnerAvailable: number; currentPersonalCash: number; futurePlanningAmount: number; includedInFutureWindow: boolean; confidence: Confidence; explanation: string; countedKeys: string[]; durableWriteBlocked: true };
 export type OffAccountScenario<T> = { title: string; simulated: true; baseline: T; changedAssumptions: string[]; result: T; activated: false; memoryWriteBlocked: true };
+export type NormalizedCashAmount = { ok: true; amount: number; approximate: boolean; source: "numeric" | "words" | "fraction" | "full" | "none" } | { ok: false; error: string };
+export type CashActionKind = "received" | "remaining" | "spent" | "deposited" | "protected";
+export type ParsedCashAction = { ok: true; kind: CashActionKind; amount: number; approximate: boolean; original: string } | { ok: false; error: string };
 
 const bounded = (value: number, max: number) => Math.max(0, Math.min(value, max));
 const rounded = (value: number) => Math.round(value * 100) / 100;
+const wordValues: Record<string, number> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+
+function wordsToNumber(text: string): number | null { let total = 0; let current = 0; let found = false; for (const token of text.toLowerCase().replace(/-/g, " ").split(/\s+/)) { if (token in wordValues) { current += wordValues[token]; found = true; } else if (token === "hundred" && current > 0) { current *= 100; found = true; } else if (token === "thousand" && current > 0) { total += current * 1000; current = 0; found = true; } } return found ? total + current : null; }
+
+export function normalizeCashAmount(text: string, baseAmount?: number | null): NormalizedCashAmount {
+  const normalized = text.trim().toLowerCase(); if (!normalized) return { ok: false, error: "Enter an amount before applying this update." }; const approximate = /\b(?:about|around|approximately|roughly)\b/.test(normalized);
+  if (/(?:-|−)\s*\$?\s*\d/.test(normalized)) return { ok: false, error: "Cash amounts cannot be negative." };
+  if (/\b(?:none|nothing|zero)\b/.test(normalized)) return { ok: true, amount: 0, approximate, source: "none" };
+  const percentage = normalized.match(/(\d+(?:\.\d+)?)\s*%/); if (percentage) return baseAmount == null ? { ok: false, error: "I need the base amount before I can calculate a percentage." } : Number(percentage[1]) > 100 ? { ok: false, error: "The percentage cannot exceed 100%." } : { ok: true, amount: rounded(baseAmount * Number(percentage[1]) / 100), approximate, source: "fraction" };
+  const numeric = normalized.replace(/,/g, "").match(/(?:\$\s*)?(\d+(?:\.\d{1,2})?)/); if (numeric) return { ok: true, amount: Number(numeric[1]), approximate, source: "numeric" };
+  if (/\b(?:all|all of it|the rest)\b/.test(normalized)) return baseAmount == null ? { ok: false, error: "I need the referenced amount before I can use ‘all.’" } : { ok: true, amount: baseAmount, approximate, source: "full" };
+  const fraction = normalized.match(/\b(?:half|one half)\b/); if (fraction) return baseAmount == null ? { ok: false, error: "I need the base amount before I can calculate half." } : { ok: true, amount: rounded(baseAmount * .5), approximate, source: "fraction" };
+  const words = wordsToNumber(normalized); return words == null ? { ok: false, error: "I couldn’t confirm a dollar amount. Enter a number or a phrase such as ‘about ninety.’" } : { ok: true, amount: words, approximate, source: "words" };
+}
+
+export function parseCashAction(text: string, input: { expectedKind: CashActionKind; receivedAmount?: number | null; remainingAmount?: number | null }): ParsedCashAction {
+  const detected: CashActionKind = /\b(?:made|earned|received|got)\b/i.test(text) ? "received" : /\b(?:spent|used)\b/i.test(text) ? "spent" : /\b(?:still have|remaining|left)\b/i.test(text) ? "remaining" : /\bdeposit/i.test(text) ? "deposited" : /\b(?:keep|protect|reserve)\b/i.test(text) ? "protected" : input.expectedKind;
+  const base = detected === "spent" || detected === "remaining" ? input.receivedAmount : detected === "deposited" || detected === "protected" ? input.remainingAmount : null; const amount = normalizeCashAmount(text, base);
+  if (!amount.ok) return amount; return { ok: true, kind: detected, amount: amount.amount, approximate: amount.approximate, original: text };
+}
+
+export function validateCashAction(action: ParsedCashAction, current: { received: number | null; remaining: number | null; deposited: number | null; protected: number | null }): { ok: true } | { ok: false; error: string } {
+  if (!action.ok) return action; if (action.amount < 0) return { ok: false, error: "Cash amounts cannot be negative." };
+  if (action.kind === "received") return { ok: true }; if (current.received == null) return { ok: false, error: "Record the amount received first." };
+  if ((action.kind === "spent" || action.kind === "remaining") && action.amount > current.received) return { ok: false, error: `${action.kind === "spent" ? "Spent" : "Remaining"} cash cannot exceed the amount received.` };
+  const remaining = current.remaining ?? current.received; if (action.kind === "deposited" && action.amount > remaining) return { ok: false, error: "The deposit cannot exceed the cash still remaining." }; if (action.kind === "protected" && action.amount > remaining) return { ok: false, error: "The protected amount cannot exceed the cash still remaining." }; return { ok: true };
+}
 
 export function conservativeCashEstimate(input: Omit<VariableCashRange, "planningEstimate" | "confidence">): VariableCashRange { return { ...input, planningEstimate: input.userOverride == null ? input.low : bounded(input.userOverride, input.high), confidence: input.userOverride == null ? "medium" : "high" }; }
 
