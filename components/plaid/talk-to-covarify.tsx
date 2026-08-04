@@ -9,7 +9,10 @@ type SpeechResultEvent = { results: ArrayLike<{ isFinal: boolean; 0: { transcrip
 type SpeechRecognizer = { continuous: boolean; interimResults: boolean; lang: string; onresult: ((event: SpeechResultEvent) => void) | null; onerror: ((event: { error: string }) => void) | null; onend: (() => void) | null; start: () => void; stop: () => void };
 type SpeechRecognizerConstructor = new () => SpeechRecognizer;
 
-declare global { interface Window { SpeechRecognition?: SpeechRecognizerConstructor; webkitSpeechRecognition?: SpeechRecognizerConstructor } }
+const browserSpeechRecognition = () => {
+  const speechWindow = window as unknown as { SpeechRecognition?: SpeechRecognizerConstructor; webkitSpeechRecognition?: SpeechRecognizerConstructor };
+  return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+};
 
 export type TalkCategory = {
   name: string;
@@ -61,7 +64,7 @@ export function TalkToCovarify({ categories, merchants, cashGap, cashFreed, deci
   const [command, setCommand] = useState("");
   const [response, setResponse] = useState<ResponseState | null>(null);
   const [suggestion, setSuggestion] = useState<Suggestion[] | null>(null);
-  const [voiceSupported] = useState(() => typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
+  const [voiceSupported] = useState(() => typeof window !== "undefined" && Boolean(browserSpeechRecognition()));
   const [voiceActive, setVoiceActive] = useState(false);
   const [latestHeard, setLatestHeard] = useState("");
   const [voiceFeedback, setVoiceFeedback] = useState("Voice Mode is off.");
@@ -161,7 +164,7 @@ export function TalkToCovarify({ categories, merchants, cashGap, cashFreed, deci
   useEffect(() => { applyRef.current = apply; willApplyRef.current = willApplyPlanChange; });
 
   useEffect(() => {
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const Recognition = browserSpeechRecognition();
     if (!Recognition) return;
     const recognition = new Recognition();
     recognition.continuous = true;

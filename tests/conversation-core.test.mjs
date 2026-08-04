@@ -12,6 +12,7 @@ import { applyStrategyConstraints, recommendPersonalizedStrategy } from "../lib/
 import { selectNextBestStep } from "../lib/conversation/next-best-step.ts";
 import { readFileSync } from "node:fs";
 import { isFounderAdmin } from "../lib/waitlist-core.ts";
+import { transcriptNeedsExplicitReview } from "../lib/conversation/transcript-review.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -33,6 +34,19 @@ test("noisy OLU'KAI descriptors count posted outflows and separate refunds", () 
   assert.equal(result.evidence.transactionIds.length, 2);
   assert.match(result.message, /2 payments/);
   assert.match(result.message, /refund was kept separate/);
+});
+
+test("fixture mode identifies simulated data without changing connected answer semantics", () => {
+  const fixture = orchestrateConversation({ ...request("How many payments were made to OLU’KAI?"), dataMode: "fixture" });
+  const connected = orchestrateConversation(request("How many payments were made to OLU’KAI?"));
+  assert.match(fixture.message, /^In this test scenario, I found 2 OLU’KAI payments totaling \$199\.00\./);
+  assert.doesNotMatch(fixture.message, /connected history/i);
+  assert.match(connected.message, /currently available|available history/i);
+});
+
+test("sensitive or uncertain voice transcripts always require explicit review", () => {
+  for (const transcript of ["The eighty-nine dollar one was a birthday gift for Caleb.", "My son.", "Use the card ending in 4242", "Confirm that change", "Catch up by September 1"]) assert.equal(transcriptNeedsExplicitReview(transcript, 0.99), true);
+  assert.equal(transcriptNeedsExplicitReview("Which card did I use?", 0.5), true);
 });
 
 test("account follow-up reuses the exact prior result", () => {
@@ -254,6 +268,60 @@ test("preview CSS stacks options at mobile width without horizontal comparison s
 test("preview supports keyboard submission and screen-reader state labels", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /event\.ctrlKey \|\| event\.metaKey/); assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-pressed=/); assert.match(ui, /aria-label="Strategy options"/);
+});
+
+test("typed, reviewed voice, and guided taps converge on one shared send path", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /function send\(raw = text\)/);
+  assert.match(ui, /onClick=\{\(\) => send\(prompt\)\}/);
+  assert.match(ui, /appendTranscript[\s\S]*setText/);
+  assert.match(ui, /onClick=\{\(\) => send\(\)\}/);
+  assert.equal((ui.match(/orchestrateConversation\(/g) || []).length, 1);
+});
+
+test("voice adapter is review-first and preserves drafts on unsupported, denied, and partial recognition", () => {
+  const adapter = readFileSync(new URL("../components/account/use-browser-speech.ts", import.meta.url), "utf8");
+  assert.match(adapter, /speechWindow\.SpeechRecognition \|\| speechWindow\.webkitSpeechRecognition/);
+  assert.match(adapter, /if \(!result\.isFinal\) continue/);
+  assert.match(adapter, /appendTranscript\(transcript/);
+  assert.doesNotMatch(adapter, /orchestrateConversation|FinancialMemory|fetch\(|localStorage|sessionStorage|MediaRecorder|getUserMedia/);
+  assert.match(adapter, /access was denied\. Your draft is unchanged/);
+  assert.match(adapter, /Voice recognition is unavailable in this browser\. Keep typing/);
+});
+
+test("speech output reads rendered response exactly and can always be interrupted", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /new SpeechSynthesisUtterance\(response\.message\)/);
+  assert.match(ui, /speechSynthesis\.cancel\(\)/);
+  assert.match(ui, /useBrowserSpeech\(\{ appendTranscript, stopSpeaking \}\)/);
+  assert.match(ui, /Speak Covarify responses/); assert.match(ui, /Stop speaking/);
+});
+
+test("founder simulation and browser speech privacy disclosures remain visible", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /Founder simulation/); assert.match(ui, /controlled test data, not your connected financial accounts/);
+  assert.match(ui, /remote speech service/); assert.match(ui, /Audio is not stored by this Covarify preview/);
+  assert.match(ui, /View simulated supporting evidence/); assert.doesNotMatch(ui, /on-device processing/i);
+});
+
+test("modality changes preserve exact conversation evidence and pending proposals", () => {
+  const spokenCount = orchestrateConversation({ ...request("How many payments were made to OLU’KAI?"), dataMode: "fixture" });
+  const typedCard = orchestrateConversation({ ...request("Which card did I use?", spokenCount.context), dataMode: "fixture" });
+  const spokenGift = orchestrateConversation({ ...request("The $89 one was a birthday gift for Caleb.", typedCard.context), dataMode: "fixture" });
+  const tappedRelationship = orchestrateConversation({ ...request("My son.", spokenGift.context), dataMode: "fixture" });
+  assert.deepEqual(typedCard.context.transactionIds, spokenCount.evidence.transactionIds);
+  assert.deepEqual(spokenGift.proposal.transactionIds, spokenCount.evidence.transactionIds.slice(0, 1));
+  assert.equal(spokenGift.context.pendingEntities[0].value, "Caleb");
+  assert.equal(tappedRelationship.proposal.memoryCandidate.subject, "Caleb");
+  assert.equal(tappedRelationship.proposal.memoryCandidate.status, "proposed");
+});
+
+test("voice controls remain accessible and stack at the 390px breakpoint", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
+  assert.match(ui, /aria-label=\{voice\.listening \? "Stop microphone" : "Start microphone"\}/); assert.match(ui, /aria-pressed=\{voice\.listening\}/);
+  assert.match(ui, /aria-label="Voice input controls"/); assert.match(ui, /aria-live="polite"/);
+  assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.prompts,\.goal,\.voiceControls\{display:grid\}/); assert.match(css, /min-height:44px/);
 });
 
 test("rent preview is a sequential state machine and cannot render future active inputs", () => {

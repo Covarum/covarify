@@ -46,7 +46,7 @@ export function orchestrateConversation(input: ConversationRequest & { transacti
     const context = createConversationContext({ userId: input.userId, sessionId: input.sessionId, merchant, scope, transactionIds: ids, count: answer.purchases.length, total: answer.total, accounts: answer.accounts, now });
     const evidence: ConversationEvidence = buildTransactionEvidence(answer.purchases, merchant, scope, now);
     const count = answer.purchases.length; const total = currency(answer.total, answer.purchases[0]?.currency || "USD");
-    const message = transactionAnswer({ intent: transactionIntent, merchant, count, total, coverage: scope.coverageLabel });
+    const message = transactionAnswer({ intent: transactionIntent, merchant, count, total, coverage: scope.coverageLabel, dataMode: input.dataMode });
     return { kind: transactionIntent === "transaction_list" ? "transaction_list" : "direct_answer", message: message + (answer.refunds.length ? ` ${answer.refunds.length} ${answer.refunds.length === 1 ? "refund was" : "refunds were"} kept separate.` : ""), intent, scope, evidence, context, nextBestStep: selectNextBestStep({ evidenceIds: ids }), actions: ids.length ? [{ type: "view_transactions", label: "View payments", transactionIds: ids, search: merchant, start: scope.start, end: scope.end }] : [] };
   }
   if (intent.type === "named_context_statement") {
