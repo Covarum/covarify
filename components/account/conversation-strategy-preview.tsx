@@ -12,6 +12,7 @@ import type { ConversationContext, ConversationResponse } from "@/lib/conversati
 import { assessVoiceTurn, type VoiceTurnAssessment } from "@/lib/conversation/transcript-review";
 import type { MoneyTransaction } from "@/lib/money-picture";
 import { useBrowserSpeech, type VoiceTranscriptMeta } from "./use-browser-speech";
+import { WholePictureAllocationPreview } from "./whole-picture-allocation-preview";
 import styles from "./conversation-strategy-preview.module.css";
 
 const transactions: MoneyTransaction[] = [
@@ -83,5 +84,6 @@ export function ConversationStrategyPreview() {
       <aside className={styles.next} aria-label="Flow B next step"><small>Flow B next step</small><strong>{next.label}</strong><p>{next.reason}</p></aside>
       <footer><strong>Read-only strategy preview</strong><p>Plan activation and durable saving are not available in this controlled phase.</p><button className={styles.primary} type="button" disabled>Activate plan — not available</button></footer>
     </section>
+    <WholePictureAllocationPreview />
   </main>;
 }

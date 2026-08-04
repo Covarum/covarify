@@ -15,6 +15,7 @@ import { isFounderAdmin } from "../lib/waitlist-core.ts";
 import { assessVoiceTurn, resolveMerchantCorrection, transcriptNeedsExplicitReview } from "../lib/conversation/transcript-review.ts";
 import { resolveTransactionReference } from "../lib/conversation/reference-resolver.ts";
 import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel } from "../lib/conversation/recommendation-presentation.ts";
+import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -554,4 +555,89 @@ test("Callie rationale explains changed or retained recommendation without durab
   assert.match(ui, /remains recommended because it still contributes the most while preserving Callie’s activities/); assert.match(ui, /recommendation changed from/);
   assert.match(ui, /Protected priorities/); assert.match(ui, /candidateLevers\(spend, constraints\)/);
   assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(|insert\(|upsert\(/);
+});
+
+test("whole-picture allocation detects competing needs and preserves obligation identity", () => {
+  const fixture = founderAllocationFixture();
+  assert.ok(fixture.needs.length >= 6);
+  assert.notEqual(fixture.needs.find((need) => need.type === "current_housing").id, fixture.needs.find((need) => need.type === "housing_arrears").id);
+  const minimum = fixture.needs.find((need) => need.type === "debt_minimum");
+  assert.equal(minimum.amountRequired, 75); assert.equal(minimum.fullAmount, 2400); assert.equal(minimum.partialPaymentUsefulness, "verified_not_useful");
+});
+
+test("one recognized blocking question gates final strategy but not orientation", () => {
+  const result = allocateNextDollar({ repairRequiredForWork: null });
+  assert.equal(result.blockingQuestion.prompt, "Is the $500 repair required for you to keep working?");
+  assert.equal(result.guidance, "enough_to_orient"); assert.match(result.simpleExplanation, /I found the repair, card minimum/);
+  assert.equal(result.options.length, 0); assert.equal(result.durableWriteBlocked, true);
+});
+
+test("income-protecting repair outranks arrears and allocation stays within cash", () => {
+  const result = allocateNextDollar({ repairRequiredForWork: true }); const option = result.options[0];
+  assert.equal(option.allocations.find((line) => line.needId === "repair").allocated, 500);
+  assert.equal(option.allocations.find((line) => line.needId === "rent-arrears").allocated, 0);
+  assert.equal(option.allocations.reduce((sum, line) => sum + line.allocated, 0), 900);
+  assert.match(result.simpleExplanation, /ability to work/); assert.equal(result.guidance, "preliminary_recommendation"); assert.ok(result.limitation);
+});
+
+test("timing and resource classification exclude uncertain or non-cash resources", () => {
+  const fixture = founderAllocationFixture(); const excluded = Object.fromEntries(fixture.resources.filter((item) => !item.included).map((item) => [item.kind, item]));
+  for (const kind of ["uncertain_income", "credit", "investment"]) assert.ok(excluded[kind].exclusionReason);
+  assert.equal(allocateNextDollar({ fixture, repairRequiredForWork: true }).availableBeforeNextIncome, 900);
+  assert.equal(fixture.income.find((item) => item.kind === "uncertain_commission").available, false);
+  const timeline = allocateNextDollar({ fixture, repairRequiredForWork: true }).timeline; assert.ok(timeline.find((event) => event.id === "need:repair")); assert.ok(timeline.find((event) => event.id === "paycheck")); assert.ok(timeline.findIndex((event) => event.id === "need:card-minimum") < timeline.findIndex((event) => event.id === "paycheck"));
+});
+
+test("transfers and business funds are contractually unavailable unless explicitly included", () => {
+  const fixture = founderAllocationFixture();
+  fixture.resources.push({ id: "transfer", title: "Savings transfer", amount: 500, kind: "transfer", availableDate: fixture.asOf, confidence: "high", evidenceIds: ["transfer-1"], included: false, exclusionReason: "A transfer is not new income.", deduplicationKey: "transfer:1" });
+  fixture.resources.push({ id: "business", title: "Business account", amount: 700, kind: "business", availableDate: fixture.asOf, confidence: "high", evidenceIds: ["business-1"], included: false, exclusionReason: "Business funds are not automatically personal funds.", deduplicationKey: "business:1" });
+  assert.equal(allocateNextDollar({ fixture, repairRequiredForWork: true }).availableBeforeNextIncome, 900);
+});
+
+test("utility protection recalculates the allocation without double counting", () => {
+  const baseline = allocateNextDollar({ repairRequiredForWork: true }); const protectedResult = allocateNextDollar({ repairRequiredForWork: true, protectUtility: true });
+  assert.equal(baseline.options[0].allocations.find((line) => line.needId === "utility").allocated, 0);
+  assert.equal(protectedResult.options[0].allocations.find((line) => line.needId === "utility").allocated, 180);
+  assert.equal(protectedResult.options[0].allocations.reduce((sum, line) => sum + line.allocated, 0), 900);
+  assert.equal(new Set(protectedResult.options[0].allocations.map((line) => line.needId)).size, protectedResult.options[0].allocations.length);
+});
+
+test("consequence uncertainty and partial-payment limitations remain explicit", () => {
+  const result = allocateNextDollar({ repairRequiredForWork: true });
+  const utility = result.consequences.find((item) => item.needId === "utility"); const arrears = result.consequences.find((item) => item.needId === "rent-arrears");
+  assert.equal(utility.basis, "uncertain_requires_verification"); assert.match(utility.verificationStep, /official utility bill/);
+  assert.match(arrears.verificationStep, /partial payment/); assert.doesNotMatch(utility.description, /will|guaranteed/i);
+});
+
+test("what-if changes one assumption and preserves an inactive baseline", () => {
+  const baseline = allocateNextDollar({ repairRequiredForWork: true, protectUtility: true }); const scenario = simulateAllocation(baseline, 240);
+  assert.equal(scenario.baselineId, baseline.recommendedId); assert.equal(scenario.activated, false); assert.equal(scenario.memoryWriteBlocked, true);
+  assert.equal(scenario.result.options[0].expectedAfterNextIncome - baseline.options[0].expectedAfterNextIncome, 240);
+  assert.equal(baseline.options[0].simulated, false);
+});
+
+test("user challenge preserves baseline and recalculates income confidence safely", () => {
+  const baseline = allocateNextDollar({ repairRequiredForWork: true }); const corrected = correctIncomeReliability(baseline, "That commission is not guaranteed.");
+  assert.equal(corrected.baselinePreserved, true); assert.match(corrected.acceptedCorrection, /remains excluded/); assert.equal(corrected.result, baseline); assert.equal(corrected.durableWriteBlocked, true);
+});
+
+test("plan conflicts, wait states, and crisis narrowing are first-class", () => {
+  const conflict = detectPlanConflict([{ id: "rent", monthlyResourceIds: ["surplus"], amount: 400 }, { id: "debt", monthlyResourceIds: ["surplus"], amount: 400 }]);
+  assert.equal(conflict.conflict, true); assert.match(conflict.message, /cannot both remain on schedule/);
+  assert.equal(waitOrNoAction({ pendingDeposit: true }).type, "wait"); assert.equal(waitOrNoAction({ noNeed: true }).type, "no_action");
+  const crisis = crisisNextStep("utility_shutoff"); assert.equal(crisis.longRangeOptimizationHidden, true); assert.equal(crisis.legalConclusion, false); assert.match(crisis.oneAction, /verify/);
+});
+
+test("memory and real-data contracts retain confirmation and provenance boundaries", () => {
+  const mapping = governedMemoryMapping(); assert.ok(mapping.find((item) => item.disposition === "temporary")); assert.ok(mapping.find((item) => item.disposition === "never_canonical"));
+  const durable = mapping.find((item) => item.disposition === "durable_after_confirmation"); assert.equal(durable.confirmationRequired, true); assert.ok(durable.requiredFields.includes("revocation"));
+  const readiness = realDataReadinessContract(); assert.ok(readiness.inputs.includes("missing institutions")); assert.deepEqual(Object.keys(readiness.evidence), ["sourceRecordIds", "calculationPeriod", "freshness", "status", "inclusionReason", "exclusionReason", "deduplicationKey"]);
+});
+
+test("Flow C remains session-only, progressively disclosed, and accessible at 390px", () => {
+  const ui = readFileSync(new URL("../components/account/whole-picture-allocation-preview.tsx", import.meta.url), "utf8"); const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
+  for (const copy of ["One blocking question", "What would be most helpful right now?", "Preliminary recommendation", "Simulated · baseline unchanged · not active", "Temporary progress paused", "Full explanation and evidence"]) assert.match(ui, new RegExp(copy));
+  assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-label="Preliminary allocation"/); assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.allocationGrid/); assert.match(css, /min-height:44px/);
+  assert.doesNotMatch(ui, /fetch\(|localStorage|sessionStorage|insert\(|upsert\(|FinancialMemory/);
 });
