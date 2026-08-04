@@ -379,6 +379,28 @@ test("unresolved merchant correction remains visible and uses shared send only a
   assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|insert\(|upsert\(/);
 });
 
+test("accepted correction closes the only active turn while preserving history and evidence context", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  const adapter = readFileSync(new URL("../components/account/use-browser-speech.ts", import.meta.url), "utf8");
+  assert.match(ui, /setTurns\(\(current\) => \[\.\.\.current, \{ role: "user", text: statement \}, \{ role: "covarify", text: result\.message \}\]\)/);
+  assert.match(ui, /setContext\(result\.context\)/);
+  for (const reset of [/setText\(""\)/, /setTranscriptMeta\(null\)/, /setIncomingVoiceDraft\(null\)/, /setDraftOrigin\(null\)/]) assert.match(ui, reset);
+  assert.match(ui, /resetVoiceTurn\.current\(\)/);
+  assert.match(ui, /useEffect\(\(\) => \{ resetVoiceTurn\.current = voice\.resetActiveTurn/);
+  assert.match(adapter, /recognitionRef\.current\?\.abort\?\.\(\)/);
+  assert.match(adapter, /Microphone ready for a new turn\. You can type at any time/);
+  assert.equal((ui.match(/transcriptMeta \? <section/g) || []).length, 1);
+});
+
+test("a new unsupported merchant turn cannot inherit the accepted OLU’KAI correction", () => {
+  const first = orchestrateConversation({ ...request("How many payments were made to OLU’KAI?"), dataMode: "fixture" });
+  const target = orchestrateConversation({ ...request("How many payments were made to Target?", first.context), dataMode: "fixture" });
+  assert.deepEqual(first.context.transactionIds, first.evidence.transactionIds);
+  assert.match(target.message, /Target/i);
+  assert.doesNotMatch(target.message, /Did you mean OLU’KAI/i);
+  assert.equal(target.context.sessionId, first.context.sessionId);
+});
+
 test("rent preview is a sequential state machine and cannot render future active inputs", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /inputStep === 0[\s\S]*inputStep === 1[\s\S]*When do you want to be caught up/);

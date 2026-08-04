@@ -30,6 +30,7 @@ export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalT
   const recognitionRef = useRef<SpeechRecognizer | null>(null);
   const finalTranscriptReceivedRef = useRef(false);
   const recognitionFailedRef = useRef(false);
+  const suppressEndStatusRef = useRef(false);
 
   useEffect(() => {
     const Recognition = recognitionConstructor();
@@ -56,10 +57,19 @@ export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalT
       if (finalTranscriptReceivedRef.current) return;
       setStatus(event.error === "not-allowed" || event.error === "service-not-allowed" ? "Microphone access was denied. No final transcript was added; your draft is unchanged." : "Voice recognition failed before a usable final transcript was added. Your draft is unchanged.");
     };
-    recognition.onend = () => { setListening(false); if (!finalTranscriptReceivedRef.current && !recognitionFailedRef.current) setStatus("Recognition ended without a final transcript. Your draft is unchanged."); };
+    recognition.onend = () => { setListening(false); if (suppressEndStatusRef.current) { suppressEndStatusRef.current = false; return; } if (!finalTranscriptReceivedRef.current && !recognitionFailedRef.current) setStatus("Recognition ended without a final transcript. Your draft is unchanged."); };
     recognitionRef.current = recognition;
     return () => { recognition.abort?.(); recognitionRef.current = null; };
   }, [onFinalTranscript]);
+
+  const resetActiveTurn = useCallback(() => {
+    suppressEndStatusRef.current = true;
+    recognitionRef.current?.abort?.();
+    finalTranscriptReceivedRef.current = false;
+    recognitionFailedRef.current = false;
+    setListening(false);
+    setStatus("Microphone ready for a new turn. You can type at any time.");
+  }, []);
 
   const start = useCallback(() => {
     stopSpeaking();
@@ -70,5 +80,5 @@ export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalT
   }, [stopSpeaking]);
   const stop = useCallback(() => { recognitionRef.current?.stop(); setListening(false); setStatus("Microphone stopped. Review the transcript before sending."); }, []);
 
-  return { supported, listening, status, start, stop };
+  return { supported, listening, status, start, stop, resetActiveTurn };
 }
