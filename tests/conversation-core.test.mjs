@@ -12,7 +12,7 @@ import { applyStrategyConstraints, recommendPersonalizedStrategy } from "../lib/
 import { selectNextBestStep } from "../lib/conversation/next-best-step.ts";
 import { readFileSync } from "node:fs";
 import { isFounderAdmin } from "../lib/waitlist-core.ts";
-import { assessVoiceTurn, transcriptNeedsExplicitReview } from "../lib/conversation/transcript-review.ts";
+import { assessVoiceTurn, resolveMerchantCorrection, transcriptNeedsExplicitReview } from "../lib/conversation/transcript-review.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -63,6 +63,16 @@ test("uncertain merchants, retries, concatenation, and consequential confirmatio
   assert.equal(assessVoiceTurn({ transcript: "How many payments were made to OLU’KAI? How many payments were made to OLU’KAI?", confidence: 0.98, pendingProposal: false }).autoSend, false);
   assert.equal(assessVoiceTurn({ transcript: "Which card did I use?", confidence: 0.98, pendingProposal: false, lastSubmittedTranscript: "Which card did I use?" }).autoSend, false);
   for (const transcript of ["Yes", "Yes, classify it.", "Use that plan.", "Remember Caleb is my son.", "Move the money."]) assert.equal(assessVoiceTurn({ transcript, confidence: 0.99, pendingProposal: true }).autoSend, false);
+});
+
+test("merchant correction is bounded, phonetic, generalized, and ambiguity-safe", () => {
+  const known = ["OLU’KAI"];
+  for (const heard of ["elujay", "ukulele", "eulogy", "olukai", "olu kai", "ooh-luh-kai", "oolooguy"]) {
+    const correction = resolveMerchantCorrection(`How many payments were made to ${heard}?`, known);
+    assert.equal(correction?.heard, heard); assert.equal(correction?.canonical, "OLU’KAI"); assert.match(correction?.correctedTranscript || "", /OLU’KAI/);
+  }
+  assert.equal(resolveMerchantCorrection("How many payments were made to eulogy?", ["OLU’KAI", "Eulogy"]), null);
+  assert.equal(resolveMerchantCorrection("How many payments were made to something unrelated?", known), null);
 });
 
 test("account follow-up reuses the exact prior result", () => {
@@ -305,10 +315,10 @@ test("voice adapter is review-first and preserves drafts on unsupported, denied,
   assert.match(adapter, /Voice recognition is unavailable in this browser\. Keep typing/);
 });
 
-test("voice recognition lifecycle copy distinguishes added, replaced, held, absent, denied, and failed transcripts", () => {
+test("voice recognition lifecycle copy distinguishes added, replaced, merchant-held, absent, denied, and failed transcripts", () => {
   const adapter = readFileSync(new URL("../components/account/use-browser-speech.ts", import.meta.url), "utf8");
-  for (const copy of ["Final transcript added to the Message draft", "Final transcript replaced the prior unsubmitted voice attempt", "Final transcript added and held for review", "Recognition ended without a final transcript", "Microphone access was denied", "Voice recognition failed before a final transcript was added"]) assert.match(adapter, new RegExp(copy));
-  assert.doesNotMatch(adapter, /stopped without changing your conversation/);
+  for (const copy of ["Final transcript added to the Message draft", "Final transcript replaced the prior unsubmitted voice attempt", "Final transcript added and held for review because the merchant could not be confirmed", "Recognition ended without a final transcript", "Microphone access was denied", "Voice recognition failed before a usable final transcript was added"]) assert.match(adapter, new RegExp(copy));
+  assert.doesNotMatch(adapter, /stopped without changing your conversation|Recognition failed after a final transcript was added/);
 });
 
 test("speech output reads rendered response exactly and can always be interrupted", () => {

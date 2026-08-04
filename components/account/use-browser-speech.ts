@@ -21,7 +21,7 @@ const recognitionConstructor = () => {
 const subscribeToBrowserCapability = () => () => undefined;
 
 export type VoiceTranscriptMeta = { confidence: number | null };
-export type VoiceTranscriptOutcome = "added" | "replaced" | "held";
+export type VoiceTranscriptOutcome = "added" | "replaced" | "held" | "held_merchant";
 
 export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalTranscript: (transcript: string, meta: VoiceTranscriptMeta) => VoiceTranscriptOutcome; stopSpeaking: () => void }) {
   const supported = useSyncExternalStore(subscribeToBrowserCapability, () => Boolean(recognitionConstructor()), () => false);
@@ -47,13 +47,14 @@ export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalT
         const confidence = Number.isFinite(result[0].confidence) ? result[0].confidence : null;
         finalTranscriptReceivedRef.current = true;
         const outcome = onFinalTranscript(transcript, { confidence });
-        setStatus(outcome === "replaced" ? "Final transcript replaced the prior unsubmitted voice attempt." : outcome === "held" ? "Final transcript added and held for review." : "Final transcript added to the Message draft.");
+        setStatus(outcome === "replaced" ? "Final transcript replaced the prior unsubmitted voice attempt." : outcome === "held_merchant" ? "Final transcript added and held for review because the merchant could not be confirmed." : outcome === "held" ? "Final transcript added and held for review." : "Final transcript added to the Message draft.");
       }
     };
     recognition.onerror = (event) => {
       recognitionFailedRef.current = true;
       setListening(false);
-      setStatus(event.error === "not-allowed" || event.error === "service-not-allowed" ? "Microphone access was denied. No final transcript was added; your draft is unchanged." : finalTranscriptReceivedRef.current ? "Recognition failed after a final transcript was added. Review the Message draft before sending." : "Voice recognition failed before a final transcript was added. Your draft is unchanged.");
+      if (finalTranscriptReceivedRef.current) return;
+      setStatus(event.error === "not-allowed" || event.error === "service-not-allowed" ? "Microphone access was denied. No final transcript was added; your draft is unchanged." : "Voice recognition failed before a usable final transcript was added. Your draft is unchanged.");
     };
     recognition.onend = () => { setListening(false); if (!finalTranscriptReceivedRef.current && !recognitionFailedRef.current) setStatus("Recognition ended without a final transcript. Your draft is unchanged."); };
     recognitionRef.current = recognition;
