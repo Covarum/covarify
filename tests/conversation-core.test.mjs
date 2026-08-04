@@ -16,6 +16,7 @@ import { assessVoiceTurn, resolveMerchantCorrection, transcriptNeedsExplicitRevi
 import { resolveTransactionReference } from "../lib/conversation/reference-resolver.ts";
 import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel } from "../lib/conversation/recommendation-presentation.ts";
 import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
+import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, cashIncomeFixture, conservativeCashEstimate, offAccountMemoryMapping, ownerAvailable, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, simulateReceivable } from "../lib/conversation/off-account-resources.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -639,5 +640,71 @@ test("Flow C remains session-only, progressively disclosed, and accessible at 39
   const ui = readFileSync(new URL("../components/account/whole-picture-allocation-preview.tsx", import.meta.url), "utf8"); const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
   for (const copy of ["One blocking question", "What would be most helpful right now?", "Preliminary recommendation", "Simulated · baseline unchanged · not active", "Temporary progress paused", "Full explanation and evidence"]) assert.match(ui, new RegExp(copy));
   assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-label="Preliminary allocation"/); assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.allocationGrid/); assert.match(css, /min-height:44px/);
+  assert.doesNotMatch(ui, /fetch\(|localStorage|sessionStorage|insert\(|upsert\(|FinancialMemory/);
+});
+
+test("expected cash is future-only while confirmed cash increases current resources", () => {
+  const expected = cashIncomeFixture(); assert.equal(reconcileCashIncome(expected).totalAvailableContribution, 0); assert.equal(allocationWithOffAccountCash(expected).availableBeforeNextIncome, 900);
+  const received = cashIncomeFixture({ expected: false, grossAmount: 240, cashOnHand: 240, confirmed: true, state: "confirmed_cash_on_hand", confidence: "high" });
+  assert.equal(reconcileCashIncome(received).totalAvailableContribution, 240); assert.equal(allocationWithOffAccountCash(received).availableBeforeNextIncome, 1140);
+});
+
+test("spent and protected cash reduce allocation without collapsing earned, received, and available", () => {
+  const cash = cashIncomeFixture({ expected: false, grossAmount: 240, cashOnHand: 50, alreadySpent: 90, protectedAmount: 100, confirmed: true, state: "protected", confidence: "high" }); const result = reconcileCashIncome(cash);
+  assert.deepEqual({ earned: result.earned, received: result.received, spent: result.spent, protected: result.protected, available: result.totalAvailableContribution }, { earned: 240, received: 240, spent: 90, protected: 100, available: 50 });
+  assert.equal(allocationWithOffAccountCash(cash).availableBeforeNextIncome, 950);
+});
+
+test("cash deposit is a movement, not a second income event", () => {
+  const deposited = cashIncomeFixture({ expected: false, grossAmount: 240, cashOnHand: 0, deposited: 150, alreadySpent: 90, confirmed: true, state: "deposited", confidence: "high" }); const result = reconcileCashIncome(deposited);
+  assert.equal(result.availableOffAccount, 0); assert.equal(result.availableDeposited, 150); assert.equal(result.totalAvailableContribution, 150); assert.equal(result.countedKeys.length, 1);
+  const trace = reconcileDeposit({ sourceKey: deposited.reconciliationKey, receiptAmount: 150, depositAmount: 150 }); assert.equal(trace.countedIncome, 150); assert.deepEqual(trace.duplicatesPrevented, ["deposit"]);
+});
+
+test("variable cash planning uses the conservative range unless the user overrides it", () => {
+  assert.equal(conservativeCashEstimate({ low: 140, typical: 200, high: 260, userOverride: null }).planningEstimate, 140);
+  assert.equal(conservativeCashEstimate({ low: 140, typical: 200, high: 260, userOverride: 190 }).planningEstimate, 190);
+});
+
+test("owner-available calculation deducts business costs and reserve exactly once", () => {
+  const result = ownerAvailable({ gross: 2500, businessCosts: 300, taxReserveRate: .25 });
+  assert.deepEqual(result, { gross: 2500, businessCosts: 300, taxReserve: 625, vendorObligations: 0, businessProtected: 0, ownerAvailable: 1575 });
+});
+
+test("scheduled receivable affects future planning but is never current personal cash", () => {
+  const result = reconcileReceivable(receivableFixture(), { start: "2026-08-04", end: "2026-08-20" });
+  assert.equal(result.gross, 2500); assert.equal(result.expectedOwnerAvailable, 1575); assert.equal(result.currentPersonalCash, 0); assert.equal(result.futurePlanningAmount, 1575); assert.equal(result.includedInFutureWindow, true);
+});
+
+test("partial receipt updates remaining receivable and exposes only received owner-available funds", () => {
+  const partial = receivableFixture({ amountPaid: 1250, remainingAmount: 1250, state: "partially_received" }); const result = reconcileReceivable(partial, { start: "2026-08-04", end: "2026-08-20" });
+  assert.equal(result.received, 1250); assert.equal(result.remaining, 1250); assert.equal(result.businessCostsApplied, 300); assert.equal(result.taxReserveApplied, 312.5); assert.equal(result.currentPersonalCash, 637.5); assert.equal(result.countedKeys.length, 1);
+  const allocation = allocationWithReceivedOwnerFunds(result); assert.equal(allocation.availableBeforeNextIncome, 1537.5); assert.equal(allocation.options[0].allocations.reduce((sum, line) => sum + line.allocated, 0), 1537.5);
+});
+
+test("late and disputed receivables leave active expected cash and lower confidence", () => {
+  const late = simulateReceivable(receivableFixture(), "two_weeks_late"); const disputed = simulateReceivable(receivableFixture(), "disputed");
+  for (const scenario of [late, disputed]) { assert.equal(scenario.result.futurePlanningAmount, 0); assert.equal(scenario.result.currentPersonalCash, 0); assert.equal(scenario.result.confidence, "low"); assert.equal(scenario.activated, false); assert.equal(scenario.memoryWriteBlocked, true); }
+});
+
+test("invoice payment and deposit reconcile to one economic inflow", () => {
+  const paid = simulateReceivable(receivableFixture(), "pays_friday").result; assert.equal(paid.received, 2500); assert.equal(paid.remaining, 0); assert.equal(paid.currentPersonalCash, 1575);
+  const deposit = reconcileDeposit({ sourceKey: "receivable:invoice-1042", receiptAmount: 2500, depositAmount: 2500, transferAmount: 1575 });
+  assert.equal(deposit.countedIncome, 2500); assert.equal(deposit.countedKeys.length, 1); assert.deepEqual(deposit.duplicatesPrevented, ["deposit", "transfer"]);
+});
+
+test("cash and receivable reconciliation keys remain distinct", () => {
+  const cash = cashIncomeFixture({ expected: false, grossAmount: 150, deposited: 150, confirmed: true, state: "deposited" }); const invoice = receivableFixture({ amountPaid: 1250, state: "partially_received" });
+  assert.notEqual(reconcileCashIncome(cash).countedKeys[0], reconcileReceivable(invoice, { start: "2026-08-04", end: "2026-08-20" }).countedKeys[0]);
+});
+
+test("off-account facts remain governed candidates and never persist automatically", () => {
+  const memory = offAccountMemoryMapping(); assert.equal(memory.persistenceImplemented, false); assert.ok(memory.temporary.includes("expected tips")); assert.ok(memory.durableCandidatesAfterConfirmation.includes("received payment")); assert.ok(memory.neverCanonical.includes("raw voice transcript")); assert.ok(memory.requiredFields.includes("supersession"));
+});
+
+test("cash and receivable fixture UX is minimal, responsive, and read-only", () => {
+  const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8"); const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
+  for (const copy of ["How much of those tips do you expect to still have available?", "I made $240 and still have all of it", "I spent $90", "I deposited the rest", "Provisional owner-available", "What if only half is paid?", "Simulated · baseline preserved · not active"]) assert.ok(ui.includes(copy));
+  assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-label="Cash reconciliation"/); assert.match(css, /\.resourceSummary/); assert.match(css, /@media\(max-width:700px\)/);
   assert.doesNotMatch(ui, /fetch\(|localStorage|sessionStorage|insert\(|upsert\(|FinancialMemory/);
 });

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { CircleDollarSign, PauseCircle, RotateCcw } from "lucide-react";
 import { allocateNextDollar, correctIncomeReliability, founderAllocationFixture, simulateAllocation } from "@/lib/conversation/allocation-intelligence";
 import styles from "./conversation-strategy-preview.module.css";
+import { OffAccountResourcePreview } from "./off-account-resource-preview";
 
 const money = (value: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
 const goals = [
@@ -44,6 +45,7 @@ export function WholePictureAllocationPreview() {
       <details className={styles.audit}><summary>Full explanation and evidence</summary><h3>Cash timeline</h3>{result.timeline.map((event) => <p key={event.id}>{event.date}: {event.title} · {money(event.amount)} · projected {money(event.projectedBalance)} · {event.confidence} confidence</p>)}<h3>Consequences and verification</h3>{result.consequences.map((item) => <p key={item.needId}><strong>{fixture.needs.find((need) => need.id === item.needId)?.title}:</strong> {item.description} <small>{item.basis.replaceAll("_", " ")}{item.verificationStep ? ` · ${item.verificationStep}` : ""}</small></p>)}<h3>Evidence and exclusions</h3>{fixture.resources.map((resource) => <p key={resource.id}>{resource.title}: {money(resource.amount)} · {resource.included ? "included" : `excluded — ${resource.exclusionReason}`} · {resource.evidenceIds.join(", ")}</p>)}</details>
       <aside className={styles.next} aria-label="Flow C next step"><small>Flow C next step</small><strong>{result.nextBestStep}</strong><p>Nothing is moved, saved, activated, or written to Financial Memory.</p></aside>
     </> : <aside className={styles.next} aria-label="Flow C next step"><small>Flow C next step</small><strong>{result.nextBestStep}</strong><p>{result.simpleExplanation}</p></aside>}
-    <footer><strong>Fixture-only allocation preview</strong><p>Needs, consequences, allocations, corrections, goals, and simulations remain temporary conversation context.</p><button className={styles.primary} type="button" disabled>Confirm allocation — not available</button></footer>
+    <OffAccountResourcePreview />
+    <footer><strong>Fixture-only allocation preview</strong><p>Needs, consequences, resources, allocations, corrections, goals, and simulations remain temporary conversation context.</p><button className={styles.primary} type="button" disabled>Confirm allocation — not available</button></footer>
   </section>;
 }
