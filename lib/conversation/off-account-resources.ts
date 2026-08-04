@@ -18,6 +18,7 @@ export type ContextualParseResult = MoneyParseCandidate | { ok: true; rawTranscr
 export type CashFieldConflict = { activeField: CashFieldContext; spokenField: CashFieldContext; amount: number; approximate: boolean };
 export type ParsedCashAction = { ok: true; kind: CashActionKind; field: CashFieldContext; amount: number; approximate: boolean; original: string; candidate: MoneyParseCandidate & { ok: true } } | { ok: false; error: string; candidate?: MoneyParseCandidate; fieldConflict?: CashFieldConflict };
 export type CashValues = { received: number | null; remaining: number | null; deposited: number | null; protected: number | null };
+export type CashDependencyStrategy = "preserve_remaining" | "preserve_spent" | "clear_dependents";
 
 const bounded = (value: number, max: number) => Math.max(0, Math.min(value, max));
 const rounded = (value: number) => Math.round(value * 100) / 100;
@@ -80,6 +81,14 @@ export function applyCashUpdate(current: CashValues, action: ParsedCashAction): 
   if (kind === "spent") return { ok: true, kind, amount, values: { ...current, remaining: Math.max(0, (current.received || 0) - amount), deposited: null, protected: null }, noOp: false };
   if (kind === "deposited") return { ok: true, kind, amount, values: { ...current, deposited: amount }, noOp: false };
   return { ok: true, kind, amount, values: { ...current, protected: amount }, noOp: false };
+}
+
+export function reconcileReceivedChange(current: CashValues, nextReceived: number, strategy: CashDependencyStrategy): { ok: true; values: CashValues } | { ok: false; error: string } {
+  if (nextReceived < 0) return { ok: false, error: "Cash received cannot be negative." };
+  if (strategy === "clear_dependents") return { ok: true, values: { received: nextReceived, remaining: null, deposited: null, protected: null } };
+  if (current.received == null || current.remaining == null) return { ok: false, error: "Confirm the existing received and remaining amounts before reconciling them." };
+  if (strategy === "preserve_remaining") { if (current.remaining > nextReceived) return { ok: false, error: "The remaining amount would exceed the new cash received amount." }; return { ok: true, values: { received: nextReceived, remaining: current.remaining, deposited: null, protected: null } }; }
+  const alreadyUsed = current.received - current.remaining; if (alreadyUsed > nextReceived) return { ok: false, error: "The amount already used would exceed the new cash received amount." }; return { ok: true, values: { received: nextReceived, remaining: nextReceived - alreadyUsed, deposited: null, protected: null } };
 }
 
 export function conservativeCashEstimate(input: Omit<VariableCashRange, "planningEstimate" | "confidence">): VariableCashRange { return { ...input, planningEstimate: input.userOverride == null ? input.low : bounded(input.userOverride, input.high), confidence: input.userOverride == null ? "medium" : "high" }; }

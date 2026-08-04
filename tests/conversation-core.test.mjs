@@ -16,7 +16,7 @@ import { assessVoiceTurn, resolveMerchantCorrection, transcriptNeedsExplicitRevi
 import { resolveTransactionReference } from "../lib/conversation/reference-resolver.ts";
 import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel } from "../lib/conversation/recommendation-presentation.ts";
 import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
-import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, applyCashUpdate, cashIncomeFixture, conservativeCashEstimate, normalizeCashAmount, offAccountMemoryMapping, ownerAvailable, parseCashAction, parseContextualValue, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, simulateReceivable, validateCashAction } from "../lib/conversation/off-account-resources.ts";
+import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, applyCashUpdate, cashIncomeFixture, conservativeCashEstimate, normalizeCashAmount, offAccountMemoryMapping, ownerAvailable, parseCashAction, parseContextualValue, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, reconcileReceivedChange, simulateReceivable, validateCashAction } from "../lib/conversation/off-account-resources.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -286,7 +286,7 @@ test("preview preserves confirmation and no-plan-activation boundaries", () => {
 
 test("strategy preview exposes rationale, alternatives, evidence, constraints, stale semantics, and one primary step pattern", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
-  for (const copy of ["Recommended", "Alternative", "Why ", "Evidence, assumptions, and uncertainty", "protect Callie’s activities", "Missing financial evidence", "Flow B next step"]) assert.match(ui, new RegExp(copy));
+  for (const copy of ["Recommended", "Alternative", "Why ", "Show details", "protect Callie’s activities", "Missing financial evidence", "Flow B next step"]) assert.match(ui, new RegExp(copy));
   assert.match(ui, /aria-label="Flow B next step"/); assert.match(ui, /aria-label="Whole-picture situation preview"/); assert.match(ui, /aria-label="Proposed change requiring confirmation"/);
 });
 
@@ -554,7 +554,7 @@ test("Flow-scoped guidance and recommendation states remain distinct", () => {
 test("Callie rationale explains changed or retained recommendation without durable writes", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /remains recommended because it still contributes the most while preserving Callie’s activities/); assert.match(ui, /recommendation changed from/);
-  assert.match(ui, /Protected priorities/); assert.match(ui, /candidateLevers\(spend, constraints\)/);
+  assert.match(ui, /Protected:/); assert.match(ui, /candidateLevers\(spend, constraints\)/);
   assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(|insert\(|upsert\(/);
 });
 
@@ -638,8 +638,8 @@ test("memory and real-data contracts retain confirmation and provenance boundari
 
 test("Flow C remains session-only, progressively disclosed, and accessible at 390px", () => {
   const ui = readFileSync(new URL("../components/account/whole-picture-allocation-preview.tsx", import.meta.url), "utf8"); const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
-  for (const copy of ["One blocking question", "What would be most helpful right now?", "Preliminary recommendation", "Simulated · baseline unchanged · not active", "Temporary progress paused", "Full explanation and evidence"]) assert.match(ui, new RegExp(copy));
-  assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-label="Preliminary allocation"/); assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.allocationGrid/); assert.match(css, /min-height:44px/);
+  for (const copy of ["One blocking question", "Help me decide quickly", "Review the details", "Simulated · baseline unchanged · not active", "Your place is saved for this session", "Show full calculation", "Founder diagnostics"]) assert.match(ui, new RegExp(copy));
+  assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-label="Preliminary allocation"/); assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.allocationList/); assert.match(css, /min-height:44px/);
   assert.doesNotMatch(ui, /fetch\(|localStorage|sessionStorage|insert\(|upsert\(|FinancialMemory/);
 });
 
@@ -704,7 +704,7 @@ test("off-account facts remain governed candidates and never persist automatical
 
 test("cash and receivable fixture UX is minimal, responsive, and read-only", () => {
   const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8"); const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
-  for (const copy of ["How much cash did you receive?", "How much of it do you still have available?", "Amount or natural-language update", "Change amount", "Undo", "Provisional owner-available", "What if only half is paid?", "Simulated · baseline preserved · not active"]) assert.ok(ui.includes(copy));
+  for (const copy of ["How much cash did you receive?", "How much of it do you still have available?", "Your answer", "Change amount", "Undo", "approximately", "What if only half is paid?", "Simulated · baseline preserved · not active", "Founder diagnostics"]) assert.ok(ui.includes(copy));
   assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-label="Cash summary"/); assert.match(ui, /aria-pressed/); assert.match(css, /\.resourceSummary/); assert.match(css, /\.cashHeadline/); assert.match(css, /@media\(max-width:700px\)/);
   assert.doesNotMatch(ui, /fetch\(|localStorage|sessionStorage|insert\(|upsert\(|FinancialMemory/);
 });
@@ -735,7 +735,33 @@ test("cash validation blocks impossible amounts before reconciliation", () => {
 test("cash applied state visibly confirms values and provides Change and Undo without persistence", () => {
   const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
   for (const contract of [/Recorded for this preview:/, /Allocation recalculated/, /Resulting available cash:/, /aria-live="polite"/, /aria-pressed="true"/, /Change amount/, />Undo</, /setCashValues/, /setPriorByAction/, /restored the prior cash state/]) assert.match(ui, contract);
-  assert.match(ui, /Final transcript added/); assert.match(ui, /Add voice amount/); assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(/);
+  assert.match(ui, /Final transcript added/); assert.match(ui, /Answer by voice/); assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(/);
+});
+
+test("conversational cash flow closes completed questions and reconciles upstream changes explicitly", () => {
+  const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /cashComplete/); assert.match(ui, /!cashComplete \|\| editingAction \|\| pendingReview \|\| pendingUpstream/);
+  assert.match(ui, /setActiveAction\("remaining"\)/); assert.match(ui, /Recalculate from remaining amount/); assert.match(ui, /Recalculate from amount used/); assert.match(ui, /Clear dependent amounts and ask again/); assert.match(ui, />Cancel</);
+  assert.match(ui, /Received/); assert.match(ui, /Already used/); assert.match(ui, /Available for this plan/); assert.match(ui, /Show how this was calculated/);
+});
+
+test("received-cash reconciliation preserves one coherent state and rejects impossible choices", () => {
+  const current = { received: 240, remaining: 150, deposited: 100, protected: 75 };
+  assert.deepEqual(reconcileReceivedChange(current, 300, "preserve_remaining"), { ok: true, values: { received: 300, remaining: 150, deposited: null, protected: null } });
+  assert.deepEqual(reconcileReceivedChange(current, 300, "preserve_spent"), { ok: true, values: { received: 300, remaining: 210, deposited: null, protected: null } });
+  assert.deepEqual(reconcileReceivedChange(current, 300, "clear_dependents"), { ok: true, values: { received: 300, remaining: null, deposited: null, protected: null } });
+  assert.equal(reconcileReceivedChange(current, 100, "preserve_remaining").ok, false);
+  assert.equal(reconcileReceivedChange(current, 80, "preserve_spent").ok, false);
+});
+
+test("mobile consolidation exposes one primary path, exact goal copy, and collapsed diagnostics", () => {
+  const strategy = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  const allocation = readFileSync(new URL("../components/account/whole-picture-allocation-preview.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
+  assert.match(allocation, /Help me decide quickly/); assert.match(allocation, /Review the details/); assert.match(allocation, /Pause for now/);
+  assert.match(allocation, /Use this exact goal: keep upcoming rent current while making steady progress on the past-due balance/);
+  assert.match(strategy, /Use this exact goal: keep upcoming rent current while making steady progress on the past-due balance/);
+  assert.match(strategy, /Show details/); assert.match(allocation, /Founder diagnostics/); assert.match(css, /overflow-x:hidden/); assert.match(css, /min-height:44px/);
 });
 
 test("typed parser context distinguishes money from time and preserves transcript metadata", () => {
