@@ -21,12 +21,15 @@ const recognitionConstructor = () => {
 const subscribeToBrowserCapability = () => () => undefined;
 
 export type VoiceTranscriptMeta = { confidence: number | null };
+export type VoiceTranscriptOutcome = "added" | "replaced" | "held";
 
-export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalTranscript: (transcript: string, meta: VoiceTranscriptMeta) => void; stopSpeaking: () => void }) {
+export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalTranscript: (transcript: string, meta: VoiceTranscriptMeta) => VoiceTranscriptOutcome; stopSpeaking: () => void }) {
   const supported = useSyncExternalStore(subscribeToBrowserCapability, () => Boolean(recognitionConstructor()), () => false);
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState("Microphone off. You can type at any time.");
   const recognitionRef = useRef<SpeechRecognizer | null>(null);
+  const finalTranscriptReceivedRef = useRef(false);
+  const recognitionFailedRef = useRef(false);
 
   useEffect(() => {
     const Recognition = recognitionConstructor();
@@ -42,15 +45,17 @@ export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalT
         const transcript = result[0].transcript.trim();
         if (!transcript) continue;
         const confidence = Number.isFinite(result[0].confidence) ? result[0].confidence : null;
-        onFinalTranscript(transcript, { confidence });
-        setStatus("Final transcript received.");
+        finalTranscriptReceivedRef.current = true;
+        const outcome = onFinalTranscript(transcript, { confidence });
+        setStatus(outcome === "replaced" ? "Final transcript replaced the prior unsubmitted voice attempt." : outcome === "held" ? "Final transcript added and held for review." : "Final transcript added to the Message draft.");
       }
     };
     recognition.onerror = (event) => {
+      recognitionFailedRef.current = true;
       setListening(false);
-      setStatus(event.error === "not-allowed" || event.error === "service-not-allowed" ? "Microphone access was denied. Your draft is unchanged; keep typing." : "Voice recognition stopped without changing your conversation. Keep typing or try again.");
+      setStatus(event.error === "not-allowed" || event.error === "service-not-allowed" ? "Microphone access was denied. No final transcript was added; your draft is unchanged." : finalTranscriptReceivedRef.current ? "Recognition failed after a final transcript was added. Review the Message draft before sending." : "Voice recognition failed before a final transcript was added. Your draft is unchanged.");
     };
-    recognition.onend = () => setListening(false);
+    recognition.onend = () => { setListening(false); if (!finalTranscriptReceivedRef.current && !recognitionFailedRef.current) setStatus("Recognition ended without a final transcript. Your draft is unchanged."); };
     recognitionRef.current = recognition;
     return () => { recognition.abort?.(); recognitionRef.current = null; };
   }, [onFinalTranscript]);
@@ -59,7 +64,7 @@ export function useBrowserSpeech({ onFinalTranscript, stopSpeaking }: { onFinalT
     stopSpeaking();
     const recognition = recognitionRef.current;
     if (!recognition) { setStatus("Voice recognition is unavailable in this browser. Keep typing."); return; }
-    try { recognition.start(); setListening(true); setStatus("Listening. Select Stop microphone when you are finished."); }
+    try { finalTranscriptReceivedRef.current = false; recognitionFailedRef.current = false; recognition.start(); setListening(true); setStatus("Listening. Select Stop microphone when you are finished."); }
     catch { setStatus("Voice recognition could not start. Your draft is unchanged; keep typing."); }
   }, [stopSpeaking]);
   const stop = useCallback(() => { recognitionRef.current?.stop(); setListening(false); setStatus("Microphone stopped. Review the transcript before sending."); }, []);

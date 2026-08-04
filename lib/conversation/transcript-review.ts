@@ -8,7 +8,7 @@ const safeReadOnly = /^(?:how many|how much|which (?:card|account)|show (?:me )?
 const incomplete = /(?:\b(?:and|or|to|for|because|with|the|a|my)\s*$|\.\.\.$)/i;
 
 const correctionFor = (transcript: string): TranscriptCorrection | null => {
-  const merchant = transcript.match(/\b(?:elujay|olu jay|olu guy|olukai)\b/i)?.[0];
+  const merchant = transcript.match(/\b(?:elujay|ukulele|olu jay|olu guy|olukai)\b/i)?.[0];
   if (merchant && normalize(merchant) !== "olukai") return { heard: merchant, canonical: "OLU’KAI", correctedTranscript: transcript.replace(merchant, "OLU’KAI"), kind: "merchant" };
   const person = transcript.match(/\b(?:calvin|callum|kayla)\b/i)?.[0];
   if (person) return { heard: person, canonical: "Caleb", correctedTranscript: transcript.replace(person, "Caleb"), kind: "person" };

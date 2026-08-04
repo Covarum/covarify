@@ -58,6 +58,8 @@ test("safe final read-only voice questions are eligible for transport auto-send"
 test("uncertain merchants, retries, concatenation, and consequential confirmations stay held", () => {
   const correction = assessVoiceTurn({ transcript: "How many payments were made to elujay?", confidence: 0.97, pendingProposal: false, knownMerchants: ["OLU’KAI"] });
   assert.equal(correction.autoSend, false); assert.equal(correction.correction.canonical, "OLU’KAI"); assert.match(correction.correction.correctedTranscript, /OLU’KAI/);
+  const alternate = assessVoiceTurn({ transcript: "How many payments were made to ukulele?", confidence: 0.42, pendingProposal: false, knownMerchants: ["OLU’KAI"] });
+  assert.equal(alternate.autoSend, false); assert.equal(alternate.correction.heard, "ukulele"); assert.equal(alternate.correction.canonical, "OLU’KAI");
   assert.equal(assessVoiceTurn({ transcript: "How many payments were made to OLU’KAI? How many payments were made to OLU’KAI?", confidence: 0.98, pendingProposal: false }).autoSend, false);
   assert.equal(assessVoiceTurn({ transcript: "Which card did I use?", confidence: 0.98, pendingProposal: false, lastSubmittedTranscript: "Which card did I use?" }).autoSend, false);
   for (const transcript of ["Yes", "Yes, classify it.", "Use that plan.", "Remember Caleb is my son.", "Move the money."]) assert.equal(assessVoiceTurn({ transcript, confidence: 0.99, pendingProposal: true }).autoSend, false);
@@ -299,8 +301,14 @@ test("voice adapter is review-first and preserves drafts on unsupported, denied,
   assert.match(adapter, /if \(!result\.isFinal\) continue/);
   assert.match(adapter, /onFinalTranscript\(transcript/);
   assert.doesNotMatch(adapter, /orchestrateConversation|FinancialMemory|fetch\(|localStorage|sessionStorage|MediaRecorder|getUserMedia/);
-  assert.match(adapter, /access was denied\. Your draft is unchanged/);
+  assert.match(adapter, /access was denied\. No final transcript was added; your draft is unchanged/);
   assert.match(adapter, /Voice recognition is unavailable in this browser\. Keep typing/);
+});
+
+test("voice recognition lifecycle copy distinguishes added, replaced, held, absent, denied, and failed transcripts", () => {
+  const adapter = readFileSync(new URL("../components/account/use-browser-speech.ts", import.meta.url), "utf8");
+  for (const copy of ["Final transcript added to the Message draft", "Final transcript replaced the prior unsubmitted voice attempt", "Final transcript added and held for review", "Recognition ended without a final transcript", "Microphone access was denied", "Voice recognition failed before a final transcript was added"]) assert.match(adapter, new RegExp(copy));
+  assert.doesNotMatch(adapter, /stopped without changing your conversation/);
 });
 
 test("speech output reads rendered response exactly and can always be interrupted", () => {
@@ -308,7 +316,7 @@ test("speech output reads rendered response exactly and can always be interrupte
   assert.match(ui, /new SpeechSynthesisUtterance\(response\.message\)/);
   assert.match(ui, /speechSynthesis\.cancel\(\)/);
   assert.match(ui, /useBrowserSpeech\(\{ onFinalTranscript, stopSpeaking \}\)/);
-  assert.match(ui, /Speak responses/); assert.match(ui, /non-production founder-preview fallback/); assert.match(ui, /Stop speaking/);
+  assert.match(ui, /useState\(false\).*speaking/); assert.match(ui, /Speak responses/); assert.match(ui, /Browser fallback/); assert.match(ui, /browser-generated speech is non-production/); assert.match(ui, /Stop speaking/);
 });
 
 test("founder simulation and browser speech privacy disclosures remain visible", () => {
@@ -350,6 +358,15 @@ test("voice auto-send defaults on, can be disabled, and never creates durable me
   assert.match(ui, /useState\(true\).*draftOrigin/); assert.match(ui, /Voice auto-send/); assert.match(ui, /checked=\{voiceAutoSend\}/); assert.match(ui, /checked=\{!voiceAutoSend\}/);
   assert.match(ui, /voiceAutoSend && assessment\.autoSend/); assert.match(ui, /send\(transcript, "voice"\)/);
   assert.doesNotMatch(ui, /FinancialMemory|fetch\(|localStorage|sessionStorage|insert\(|upsert\(/);
+});
+
+test("unresolved merchant correction remains visible and uses shared send only after acceptance", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /I heard “\{transcriptMeta\.correction\.heard\}\.” Did you mean \{transcriptMeta\.correction\.canonical\}/);
+  for (const action of ["Yes, use ", "Edit transcript", "Try again"]) assert.match(ui, new RegExp(action));
+  assert.match(ui, /if \(voiceAutoSend\) send\(corrected, "voice"\)/); assert.match(ui, /Voice auto-send is Off; select Send when ready/);
+  assert.match(ui, /setText\(transcript\)/); assert.equal((ui.match(/orchestrateConversation\(/g) || []).length, 1);
+  assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|insert\(|upsert\(/);
 });
 
 test("rent preview is a sequential state machine and cannot render future active inputs", () => {
