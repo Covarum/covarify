@@ -41,6 +41,7 @@ test("account follow-up reuses the exact prior result", () => {
   assert.equal(followUp.intent.type, "account_question");
   assert.match(followUp.message, /Capital One/);
   assert.equal(followUp.context.transactionIds.length, 2);
+  assert.equal(followUp.message, "You used Capital One ending in 1234 for 2 payments.");
 });
 
 test("gift language resolves a person, never a business, and proposes without writing", () => {
@@ -53,6 +54,19 @@ test("gift language resolves a person, never a business, and proposes without wr
   assert.equal(chosen.kind, "structured_proposal");
   assert.equal(chosen.proposal.confirmationRequired, true);
   assert.match(JSON.stringify(chosen.proposal.values), /Shopping → Gifts/);
+  assert.equal(chosen.nextBestStep.type, "review_transaction");
+  assert.match(chosen.nextBestStep.label, /transaction update/);
+  assert.equal(chosen.proposal.memoryCandidate, undefined);
+});
+
+test("person relationship memory is a separate user-scoped confirmation proposal", () => {
+  const first = orchestrateConversation(request("How many payments were made to OLU’KAI?"));
+  const gift = orchestrateConversation(request("The $89 one was a birthday gift for Caleb.", first.context));
+  assert.match(gift.message, /Who is Caleb/); assert.equal(gift.proposal.memoryCandidate, undefined);
+  const relationship = orchestrateConversation(request("My son.", gift.context));
+  assert.equal(relationship.kind, "structured_proposal"); assert.equal(relationship.proposal.title, "Proposed person relationship");
+  assert.deepEqual(relationship.proposal.values, [{ label: "Person", value: "Caleb" }, { label: "Relationship", value: "Son" }]);
+  assert.equal(relationship.proposal.memoryCandidate.scope, "user"); assert.equal(relationship.proposal.memoryCandidate.status, "proposed"); assert.equal(relationship.proposal.memoryCandidate.retrievalRule, "confirmed_only");
 });
 
 test("expired or cross-user contexts are rejected", () => {
@@ -72,8 +86,20 @@ test("business service context stays a proposal and makes no tax claim", () => {
 test("partial rent keeps payment and obligation separate and clarifies missing gap facts", () => {
   const gap = buildHousingGap({ obligation: "The Heights rent", amountPaid: 1700, paymentType: "partial", evidenceIds: ["rent-payment"] });
   assert.equal(gap.amountPaid, 1700); assert.equal(gap.normalMonthlyAmount, null); assert.equal(gap.remainingAmount, null);
-  assert.deepEqual(gap.missingInputs, ["normal monthly rent", "current amount outstanding"]);
+  assert.deepEqual(gap.missingInputs, ["normal monthly rent", "current amount outstanding", "target catch-up date"]);
   assert.equal(gap.estimatedShortfall, null);
+});
+
+test("target timing and whole-picture protection block false zero/high-confidence gaps", () => {
+  const missingDate = buildHousingGap({ obligation: "Rent", normalMonthlyRent: 2200, amountPaid: 1700, outstanding: 500, expectedIncome: 1800, availableCash: 1000, protectedReserve: 1000, protectedObligations: 75, upcomingObligations: 725, recurringCommitments: 200, essentialSpending: 800, evidenceIds: ["rent"] });
+  assert.equal(missingDate.estimatedShortfall, null); assert.equal(missingDate.confidence, "low"); assert.ok(missingDate.missingInputs.includes("target catch-up date"));
+  const incompletePicture = buildHousingGap({ obligation: "Rent", normalMonthlyRent: 2200, amountPaid: 1700, outstanding: 500, targetCatchUpDate: "2026-09-01", expectedIncome: 1800, availableCash: 1000, evidenceIds: ["rent"] });
+  assert.equal(incompletePicture.estimatedShortfall, null); assert.equal(incompletePicture.availableForGoal, null); assert.equal(incompletePicture.confidence, "low");
+});
+
+test("gross cash is protected before calculating the rent recovery shortfall", () => {
+  const gap = completeGap();
+  assert.equal(gap.availableCash, 1000); assert.equal(gap.protectedReserve, 1000); assert.equal(gap.availableForGoal, 0); assert.equal(gap.estimatedShortfall, 500); assert.equal(gap.confidence, "high");
 });
 
 test("urgent housing stability outranks optimization", () => {
@@ -94,8 +120,10 @@ test("lever engine protects essentials, minimums, user constraints, and one-time
   assert.equal(levers[0].estimatedAmount, 350); assert.deepEqual(levers[0].evidenceIds, ["u1", "u2", "u3"]);
 });
 
+const completeGap = (overrides = {}) => buildHousingGap({ obligation: "Rent catch-up", normalMonthlyRent: 2200, amountPaid: 1700, outstanding: 500, targetCatchUpDate: "2026-09-01", expectedIncome: 1800, availableCash: 1000, protectedReserve: 1000, protectedObligations: 75, upcomingObligations: 725, recurringCommitments: 200, essentialSpending: 800, evidenceIds: ["rent", "cash", "obligations"], ...overrides });
+
 test("option generation is evidence-bounded, constraint-aware, and does not invent three plans", () => {
-  const gap = buildHousingGap({ obligation: "Rent catch-up", normalMonthlyRent: 2200, amountPaid: 1700, outstanding: 500, dueDate: "2026-09-01", evidenceIds: ["rent"] });
+  const gap = completeGap();
   const levers = candidateLevers([{ key: "uber", label: "Uber Eats", category: "Delivery", amount: 700, transactionIds: ["1", "2"], flexibility: "discretionary", recurring: true }, { key: "subs", label: "Optional subscriptions", category: "Subscriptions", amount: 50, transactionIds: ["3", "4"], flexibility: "potentially_cancellable", recurring: true }]);
   const options = generateRecoveryOptions(gap, levers, [{ kind: "deadline", key: "deadline", value: "2026-09-01" }]);
   assert.equal(options.length, 1); assert.ok(options[0].expectedContribution <= levers.reduce((sum, lever) => sum + lever.estimatedAmount, 0));
@@ -137,7 +165,7 @@ test("competing unranked goals require one priority clarification", () => {
 });
 
 test("identical facts with different goals produce different strategy rankings", () => {
-  const gap = buildHousingGap({ obligation: "Rent", normalMonthlyRent: 2200, amountPaid: 1700, outstanding: 500, evidenceIds: ["rent"] });
+  const gap = completeGap();
   const levers = candidateLevers([{ key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }, { key: "subscriptions", label: "Subscriptions", category: "Subscriptions", amount: 100, transactionIds: ["s1", "s2"], flexibility: "potentially_cancellable", recurring: true }]);
   const options = generateRecoveryOptions(gap, levers);
   const housing = recommendPersonalizedStrategy({ goal: goal(), situation: situation(), options, constraints: [] });
@@ -151,7 +179,7 @@ test("constraints materially remove protected levers and recalculate options", (
 });
 
 test("recommended strategies explain ranking, retain alternatives, and preserve protections", () => {
-  const gap = buildHousingGap({ obligation: "Rent", normalMonthlyRent: 2200, amountPaid: 1700, outstanding: 300, evidenceIds: ["rent"] });
+  const gap = completeGap({ outstanding: 300 });
   const levers = candidateLevers([{ key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }, { key: "subscriptions", label: "Subscriptions", category: "Subscriptions", amount: 100, transactionIds: ["s1", "s2"], flexibility: "potentially_cancellable", recurring: true }]);
   const options = generateRecoveryOptions(gap, levers, [{ kind: "protect", key: "groceries", value: "Groceries" }]);
   const strategy = recommendPersonalizedStrategy({ goal: goal({ targetAmount: 300 }), situation: situation(), options, constraints: [{ kind: "protect", key: "groceries", value: "Groceries" }] });
@@ -226,4 +254,18 @@ test("preview CSS stacks options at mobile width without horizontal comparison s
 test("preview supports keyboard submission and screen-reader state labels", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /event\.ctrlKey \|\| event\.metaKey/); assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-pressed=/); assert.match(ui, /aria-label="Strategy options"/);
+});
+
+test("rent preview is a sequential state machine and cannot render future active inputs", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /inputStep === 0[\s\S]*inputStep === 1[\s\S]*When do you want to be caught up/);
+  assert.match(ui, /setInputStep\(\(step\) => Math\.min\(3, step \+ 1\)\)/); assert.match(ui, /User-provided confirmed facts/);
+  assert.doesNotMatch(ui, /className=\{styles\.inputs\}/);
+});
+
+test("completed rent inputs produce levers, options, rationale, and constraint recalculation", () => {
+  const gap = completeGap(); const all = candidateLevers([{ key: "callie", label: "Callie’s activities", category: "Family", amount: 180, transactionIds: ["c1", "c2"], flexibility: "discretionary", recurring: true }, { key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }]);
+  const options = generateRecoveryOptions(gap, all); assert.ok(options.length >= 1);
+  const protectedLevers = candidateLevers([{ key: "callie", label: "Callie’s activities", category: "Family", amount: 180, transactionIds: ["c1", "c2"], flexibility: "discretionary", recurring: true }, { key: "delivery", label: "Delivery", category: "Food", amount: 700, transactionIds: ["d1", "d2"], flexibility: "discretionary", recurring: true }], [{ kind: "protect", key: "callie", value: "Callie’s activities" }]);
+  assert.equal(protectedLevers.some((lever) => lever.label.includes("Callie")), false); assert.notEqual(protectedLevers.length, all.length);
 });
