@@ -638,7 +638,7 @@ test("memory and real-data contracts retain confirmation and provenance boundari
 
 test("Flow C remains session-only, progressively disclosed, and accessible at 390px", () => {
   const ui = readFileSync(new URL("../components/account/whole-picture-allocation-preview.tsx", import.meta.url), "utf8"); const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
-  for (const copy of ["One blocking question", "Help me decide quickly", "Review the details", "Simulated · baseline unchanged · not active", "Your place is saved for this session", "Show full calculation", "Founder diagnostics"]) assert.match(ui, new RegExp(copy));
+  for (const copy of ["One blocking question", "Help me decide quickly", "Review the details", "Simulated · baseline unchanged · not active", "Your place is saved for this session", "Show full calculation", "Founder testing tools"]) assert.match(ui, new RegExp(copy));
   assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-label="Preliminary allocation"/); assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /\.allocationList/); assert.match(css, /min-height:44px/);
   assert.doesNotMatch(ui, /fetch\(|localStorage|sessionStorage|insert\(|upsert\(|FinancialMemory/);
 });
@@ -704,7 +704,7 @@ test("off-account facts remain governed candidates and never persist automatical
 
 test("cash and receivable fixture UX is minimal, responsive, and read-only", () => {
   const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8"); const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
-  for (const copy of ["How much cash did you receive?", "How much of it do you still have available?", "Your answer", "Change amount", "Undo", "approximately", "What if only half is paid?", "Simulated · baseline preserved · not active", "Founder diagnostics"]) assert.ok(ui.includes(copy));
+  for (const copy of ["How much cash did you receive?", "How much of it do you still have available?", "Your answer", "Change · Undo", "Cash from tips", "About", "What if only half is paid?", "Simulated · baseline preserved · not active", "See how this could change the plan"]) assert.ok(ui.includes(copy));
   assert.match(ui, /aria-live="polite"/); assert.match(ui, /aria-label="Cash summary"/); assert.match(ui, /aria-pressed/); assert.match(css, /\.resourceSummary/); assert.match(css, /\.cashHeadline/); assert.match(css, /@media\(max-width:700px\)/);
   assert.doesNotMatch(ui, /fetch\(|localStorage|sessionStorage|insert\(|upsert\(|FinancialMemory/);
 });
@@ -734,7 +734,7 @@ test("cash validation blocks impossible amounts before reconciliation", () => {
 
 test("cash applied state visibly confirms values and provides Change and Undo without persistence", () => {
   const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
-  for (const contract of [/Recorded for this preview:/, /Allocation recalculated/, /Resulting available cash:/, /aria-live="polite"/, /aria-pressed="true"/, /Change amount/, />Undo</, /setCashValues/, /setPriorByAction/, /restored the prior cash state/]) assert.match(ui, contract);
+  for (const contract of [/Recorded for this preview:/, /Allocation recalculated/, /Resulting available cash:/, /aria-live="polite"/, /aria-pressed=/, />Change</, />Undo</, /setCashValues/, /setPriorByAction/, /restored the prior cash state/]) assert.match(ui, contract);
   assert.match(ui, /Final transcript added/); assert.match(ui, /Answer by voice/); assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|fetch\(/);
 });
 
@@ -742,7 +742,7 @@ test("conversational cash flow closes completed questions and reconciles upstrea
   const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /cashComplete/); assert.match(ui, /!cashComplete \|\| editingAction \|\| pendingReview \|\| pendingUpstream/);
   assert.match(ui, /setActiveAction\("remaining"\)/); assert.match(ui, /Recalculate from remaining amount/); assert.match(ui, /Recalculate from amount used/); assert.match(ui, /Clear dependent amounts and ask again/); assert.match(ui, />Cancel</);
-  assert.match(ui, /Received/); assert.match(ui, /Already used/); assert.match(ui, /Available for this plan/); assert.match(ui, /Show how this was calculated/);
+  assert.match(ui, /Cash from tips/); assert.match(ui, />Used</); assert.match(ui, /is available for this plan/); assert.match(ui, /Show calculation/);
 });
 
 test("received-cash reconciliation preserves one coherent state and rejects impossible choices", () => {
@@ -761,7 +761,27 @@ test("mobile consolidation exposes one primary path, exact goal copy, and collap
   assert.match(allocation, /Help me decide quickly/); assert.match(allocation, /Review the details/); assert.match(allocation, /Pause for now/);
   assert.match(allocation, /Use this exact goal: keep upcoming rent current while making steady progress on the past-due balance/);
   assert.match(strategy, /Use this exact goal: keep upcoming rent current while making steady progress on the past-due balance/);
-  assert.match(strategy, /Show details/); assert.match(allocation, /Founder diagnostics/); assert.match(css, /overflow-x:hidden/); assert.match(css, /min-height:44px/);
+  assert.match(strategy, /Show details/); assert.match(allocation, /Founder testing tools/); assert.match(css, /overflow-x:hidden/); assert.match(css, /min-height:44px/);
+});
+
+test("true quick mode hides detailed resources while detailed mode reveals them", () => {
+  const ui = readFileSync(new URL("../components/account/whole-picture-allocation-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /reviewPath === "details" \? <section className=\{styles\.knownNeeds\}/);
+  assert.match(ui, /reviewPath === "details" \? <OffAccountResourcePreview \/>/);
+  assert.match(ui, /reviewPath && result\.blockingQuestion/); assert.match(ui, /Preliminary allocation/); assert.match(ui, /Flow C next step/);
+  assert.doesNotMatch(ui, /Confirm allocation — not available/); assert.doesNotMatch(ui, /type="button" disabled>Confirm allocation/);
+  assert.match(ui, /Preview only/); assert.match(ui, /Nothing has been saved, activated, or moved/);
+});
+
+test("mobile detail surfaces are compact, collapsed, and separated from the consumer journey", () => {
+  const cash = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
+  const allocation = readFileSync(new URL("../components/account/whole-picture-allocation-preview.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
+  assert.match(cash, /cashComplete \? <div className=\{styles\.cashHeadline\}/); assert.match(cash, /Cash from tips/); assert.match(cash, /Change · Undo/);
+  assert.match(cash, /cashComplete \|\| editingAction/); assert.match(cash, /See how this could change the plan/); assert.match(cash, /invoiceScenarios/);
+  assert.match(allocation, /knownNeeds[\s\S]*fixture\.needs\.map[\s\S]*<p key=/); assert.match(allocation, /Founder testing tools/); assert.match(allocation, /className=\{styles\.founderTools\}/);
+  assert.match(css, /\.knownNeeds>div\{display:grid;gap:0\}/); assert.match(css, /\.cashHeadline\{display:grid;gap:/); assert.doesNotMatch(css, /\.cashHeadline\{[^}]*repeat\(4/);
+  assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /overflow-x:hidden/); assert.match(css, /min-height:44px/);
 });
 
 test("typed parser context distinguishes money from time and preserves transcript metadata", () => {
@@ -781,7 +801,7 @@ test("ambiguous money stays pending while clean updates share one governed state
 
 test("cash voice auto-apply is bounded, reversible, accessible, and session-only", () => {
   const ui = readFileSync(new URL("../components/account/off-account-resource-preview.tsx", import.meta.url), "utf8");
-  for (const contract of [/useState\(true\)/, /voiceAutoSend && safeKind/, /!parsed\.candidate\.reviewRequired/, /commitCashAction\(parsed, "voice"\)/, /Voice auto-send/, /Auto-applied/, /setActiveAction\("remaining"\)/, /Change amount/, />Undo</, /aria-live="polite"/, /Awaiting review/, /No amount recorded/, /Keep current amount/, /correctionProvenance: "user_accepted"/]) assert.match(ui, contract);
+  for (const contract of [/useState\(true\)/, /voiceAutoSend && safeKind/, /!parsed\.candidate\.reviewRequired/, /commitCashAction\(parsed, "voice"\)/, /Voice auto-send/, /Auto-applied/, /setActiveAction\("remaining"\)/, />Change</, />Undo</, /aria-live="polite"/, /Awaiting review/, /No amount recorded/, /Keep current amount/, /correctionProvenance: "user_accepted"/]) assert.match(ui, contract);
   assert.doesNotMatch(ui, /localStorage|sessionStorage|FinancialMemory|fetch\(/);
 });
 
