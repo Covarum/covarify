@@ -286,7 +286,7 @@ test("preview preserves confirmation and no-plan-activation boundaries", () => {
 
 test("strategy preview exposes rationale, alternatives, evidence, constraints, stale semantics, and one primary step pattern", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
-  for (const copy of ["Recommended", "Alternative", "Why ", "Show details", "protect Callie’s activities", "Missing financial evidence", "Flow B next step"]) assert.match(ui, new RegExp(copy));
+  for (const copy of ["Recommended", "Alternative", "Why ", "Show details", "Protect Callie’s activities", "Missing financial evidence", "Flow B next step"]) assert.match(ui, new RegExp(copy));
   assert.match(ui, /aria-label="Flow B next step"/); assert.match(ui, /aria-label="Whole-picture situation preview"/); assert.match(ui, /aria-label="Proposed change requiring confirmation"/);
 });
 
@@ -519,10 +519,23 @@ test("consequential reference requests remain review-gated", () => {
 
 test("Callie protection follows candidate-lever disclosure and remains temporary", () => {
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
-  assert.match(ui, /\{options\.length \? <label className=\{styles\.constraint\}/);
-  assert.match(ui, /Do you want me to protect Callie’s activities from these options/);
+  assert.match(ui, /\{options\.length \? <section className=\{styles\.protectionBlock\}/);
+  assert.match(ui, /Protect Callie’s activities/); assert.match(ui, /Exclude this expense from the recovery options/); assert.match(ui, /Plan-specific/);
   assert.match(ui, /candidateLevers\(spend, constraints\)/); assert.match(ui, /generateTimelineOptions\(\{ gap, levers, constraints/);
   assert.doesNotMatch(ui, /FinancialMemory|localStorage|sessionStorage|insert\(|upsert\(/);
+});
+
+test("Flow B facts and protection control reflow cleanly at 390px", () => {
+  const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
+  for (const label of ["Normal monthly rent", "Currently outstanding", "Target approach"]) assert.ok(ui.includes(label));
+  assert.match(ui, /confirmedFacts[\s\S]*<article><div><strong>Normal monthly rent<\/strong><span>/);
+  assert.match(css, /\.confirmedFacts article>div\{display:grid;gap:/); assert.match(css, /@media\(max-width:700px\)\{\.confirmedFacts article\{grid-template-columns:1fr/);
+  assert.match(css, /\.confirmedFacts article button\{[^}]*white-space:nowrap/); assert.match(css, /\.confirmedFacts article span\{overflow-wrap:anywhere/);
+  assert.match(ui, /className=\{styles\.protectionControl\}/); assert.match(ui, /type="checkbox" checked=\{protectCallie\}/); assert.match(ui, /role="status" aria-live="polite"/);
+  assert.match(ui, /Callie’s activities are included under Protected priorities/); assert.match(ui, />Undo</);
+  assert.doesNotMatch(ui, /Plan-scoped protected priority/); assert.doesNotMatch(css, /overflow-x:\s*(?:auto|scroll)/);
+  assert.match(css, /min-height:44px/);
 });
 
 test("canonical recommendation identity aligns highlight, rationale, CTA, and proposed target", () => {
