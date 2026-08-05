@@ -768,9 +768,30 @@ test("true quick mode hides detailed resources while detailed mode reveals them"
   const ui = readFileSync(new URL("../components/account/whole-picture-allocation-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /reviewPath === "details" \? <section className=\{styles\.knownNeeds\}/);
   assert.match(ui, /reviewPath === "details" \? <OffAccountResourcePreview \/>/);
-  assert.match(ui, /reviewPath && result\.blockingQuestion/); assert.match(ui, /Preliminary allocation/); assert.match(ui, /Flow C next step/);
+  assert.match(ui, /reviewPath && repairAnswer == null/); assert.match(ui, /Preliminary allocation/); assert.match(ui, /Flow C next step/);
   assert.doesNotMatch(ui, /Confirm allocation — not available/); assert.doesNotMatch(ui, /type="button" disabled>Confirm allocation/);
   assert.match(ui, /Preview only/); assert.match(ui, /Nothing has been saved, activated, or moved/);
+});
+
+test("quick-mode blocking question is actionable and closes into a recorded decision", () => {
+  const ui = readFileSync(new URL("../components/account/whole-picture-allocation-preview.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../components/account/conversation-strategy-preview.module.css", import.meta.url), "utf8");
+  assert.match(ui, /Is the \$500 car repair required for you to keep working\?/);
+  for (const choice of ["Yes — I need it to keep working", "No — it can wait", "I’m not sure"]) assert.ok(ui.includes(choice));
+  assert.match(ui, /className=\{styles\.primary\}[\s\S]*Yes — I need it to keep working/);
+  assert.match(ui, /setRepairAnswer\("yes"\); setRepairRequired\(true\)/); assert.match(ui, /setRepairAnswer\("no"\); setRepairRequired\(false\)/); assert.match(ui, /setRepairAnswer\("unsure"\); setRepairRequired\(null\)/);
+  assert.match(ui, /reviewPath && repairAnswer == null/); assert.match(ui, /reviewPath && repairAnswer \? <div className=\{styles\.recordedDecision\}/);
+  assert.match(ui, /The repair is required to keep working/); assert.match(ui, /The repair can wait/); assert.match(ui, /The repair consequence is not confirmed/);
+  assert.match(ui, /Preliminary guidance/); assert.match(ui, /Verify whether delaying the repair would affect your ability to keep working/);
+  assert.match(ui, />Change</); assert.match(ui, />Undo</); assert.match(ui, /aria-live="polite"/); assert.match(css, /\.recordedDecision button\{min-height:44px/);
+  assert.doesNotMatch(ui, /fetch\(|localStorage|sessionStorage|insert\(|upsert\(|FinancialMemory/);
+});
+
+test("founder testing tools remain collapsed after the consumer journey and preview boundary", () => {
+  const ui = readFileSync(new URL("../components/account/whole-picture-allocation-preview.tsx", import.meta.url), "utf8");
+  const boundary = ui.indexOf("Preview only"); const tools = ui.indexOf("Founder testing tools");
+  assert.ok(boundary >= 0); assert.ok(tools > boundary); assert.match(ui, /<details className=\{styles\.founderTools\}><summary>Founder testing tools<\/summary>/);
+  assert.doesNotMatch(ui, /<details[^>]*open[^>]*className=\{styles\.founderTools\}/);
 });
 
 test("mobile detail surfaces are compact, collapsed, and separated from the consumer journey", () => {
