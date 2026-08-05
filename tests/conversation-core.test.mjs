@@ -17,6 +17,7 @@ import { resolveTransactionReference } from "../lib/conversation/reference-resol
 import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel } from "../lib/conversation/recommendation-presentation.ts";
 import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
 import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, applyCashUpdate, cashIncomeFixture, conservativeCashEstimate, normalizeCashAmount, offAccountMemoryMapping, ownerAvailable, parseCashAction, parseContextualValue, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, reconcileReceivedChange, simulateReceivable, validateCashAction } from "../lib/conversation/off-account-resources.ts";
+import { buildJourneyPresentation, guidanceModeFromStatement } from "../lib/conversation/journey-presentation.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -249,8 +250,56 @@ test("strategy and next-step copy avoids shame, guarantees, tax, legal, and inve
 test("authenticated founder preview renders both controlled conversation flows", () => {
   const page = readFileSync(new URL("../app/account/transaction-understanding/preview/page.tsx", import.meta.url), "utf8");
   const ui = readFileSync(new URL("../components/account/conversation-strategy-preview.tsx", import.meta.url), "utf8");
-  assert.match(page, /getAuthenticatedUser/); assert.match(page, /getAuthorizedFounderPreviewUser/); assert.match(page, /ConversationStrategyPreview/);
+  assert.match(page, /getAuthenticatedUser/); assert.match(page, /getAuthorizedFounderPreviewUser/); assert.match(page, /AdaptiveJourneyPreview/);
   for (const copy of ["How many payments were made to OLU’KAI?", "Which card did I use?", "birthday gift for Caleb", "Rent recovery strategy preview"]) assert.match(ui, new RegExp(copy.replace(/[?]/g, "\\?")));
+});
+
+test("authenticated founder preview renders one adaptive continuous journey", () => {
+  const page = readFileSync(new URL("../app/account/transaction-understanding/preview/page.tsx", import.meta.url), "utf8");
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(page, /AdaptiveJourneyPreview/); assert.doesNotMatch(page, /<ConversationStrategyPreview|<TransactionUnderstandingPreview|from "@\/components\/account\/(?:conversation-strategy-preview|transaction-understanding-preview)"/);
+  for (const copy of ["What we already covered", "One thing I need to know", "What that changes", "Recommendation", "Next Best Step"]) assert.match(ui, new RegExp(copy));
+});
+
+test("journey modes alter presentation without changing financial facts", () => {
+  assert.equal(guidanceModeFromStatement("Go faster", "guided"), "concise");
+  assert.equal(guidanceModeFromStatement("Show me the math", "guided"), "expert");
+  assert.equal(guidanceModeFromStatement("Walk me through it", "expert"), "guided");
+  const guided = buildJourneyPresentation({ mode: "guided", repairAnswer: "yes" });
+  const expert = buildJourneyPresentation({ mode: "expert", repairAnswer: "yes" });
+  assert.deepEqual(guided.recordedFacts, expert.recordedFacts); assert.equal(guided.nextBestStep, expert.nextBestStep);
+});
+
+test("critical journey question cannot be skipped in any guidance mode", () => {
+  for (const mode of ["guided", "concise", "expert"]) {
+    const journey = buildJourneyPresentation({ mode, repairAnswer: null });
+    assert.equal(journey.completion, "blocked_by_critical_fact"); assert.match(journey.currentQuestion, /repair required.*keep working/i); assert.equal(journey.criticalMissingFacts.length, 1);
+  }
+});
+
+test("answered turns synthesize, advance, and expose a session-only stopping point", () => {
+  for (const answer of ["yes", "no", "unsure"]) assert.ok(buildJourneyPresentation({ mode: "guided", repairAnswer: answer }).synthesis);
+  const ready = buildJourneyPresentation({ mode: "guided", repairAnswer: "yes" });
+  assert.equal(ready.completion, "recommendation_ready"); assert.equal(ready.stoppingPoint, true); assert.equal(ready.currentQuestion, null);
+  assert.equal(buildJourneyPresentation({ mode: "guided", repairAnswer: "yes", stopped: true }).completion, "user_has_enough_for_now");
+});
+
+test("consumer journey removes prototype labels and keeps diagnostics below its boundary", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  for (const label of ["Flow A", "Flow B", "Flow C", "Scenario A", "Scenario B", "Resource Extension"]) assert.doesNotMatch(ui, new RegExp(label));
+  assert.ok(ui.indexOf("Preview boundary") < ui.indexOf("Founder testing tools")); assert.match(ui, /<details className=\{styles\.founderTools\}>/);
+  assert.doesNotMatch(ui, /localStorage|sessionStorage|fetch\(|FinancialMemory|insert\(|upsert\(/);
+});
+
+test("adaptive journey uses one shared typed and voice statement path", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /onFinalTranscript: \(transcript\) => applyStatement\(transcript\)/); assert.match(ui, /applyStatement\(statement\)/);
+  assert.match(ui, /aria-pressed=\{mode === item\.id\}/); assert.match(ui, /Stop here.*I have enough for now/);
+});
+
+test("adaptive journey remains mobile-first and accessible at 390px", () => {
+  const css = readFileSync(new URL("../components/account/adaptive-journey-preview.module.css", import.meta.url), "utf8");
+  assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /min-height:44px/); assert.match(css, /overflow-x:hidden/); assert.match(css, /grid-template-columns:1fr/); assert.doesNotMatch(css, /overflow-x:\s*(?:auto|scroll)/);
 });
 
 test("founder preview uses the canonical admin allowlist without weakening Plaid authorization", () => {
