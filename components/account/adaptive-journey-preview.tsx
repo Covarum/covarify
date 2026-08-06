@@ -17,6 +17,7 @@ export function AdaptiveJourneyPreview() {
   const [mode, setMode] = useState<GuidanceMode>("guided");
   const [repairAnswer, setRepairAnswer] = useState<RepairAnswer>(null);
   const [priorAnswer, setPriorAnswer] = useState<RepairAnswer>(null);
+  const [activatingAnswer, setActivatingAnswer] = useState<RepairAnswer>(null);
   const [stopped, setStopped] = useState(false);
   const [command, setCommand] = useState("");
   const [announcement, setAnnouncement] = useState("Ready for your next answer.");
@@ -33,6 +34,11 @@ export function AdaptiveJourneyPreview() {
     setPriorAnswer((current) => repairAnswer ?? current); setRepairAnswer(answer); setStopped(false);
     setAnnouncement(answer === "unsure" ? "You confirmed that the repair consequence is uncertain. Guidance remains preliminary." : `You confirmed that the repair ${answer === "yes" ? "is" : "is not"} required for work. The recommendation was recalculated.`);
   }, [repairAnswer]);
+  const selectRepairAnswer = (answer: Exclude<RepairAnswer, null>) => {
+    setActivatingAnswer(answer);
+    setAnnouncement(`${answer === "yes" ? "Yes" : answer === "no" ? "No" : "I’m not sure"} selected.`);
+    window.setTimeout(() => { setActivatingAnswer(null); recordRepairAnswer(answer); }, 120);
+  };
   const applyStatement = useCallback((statement: string) => {
     const nextMode = guidanceModeFromStatement(statement, mode);
     if (nextMode !== mode) { setMode(nextMode); setAnnouncement(`Guidance changed to ${modes.find((item) => item.id === nextMode)?.label}. Your financial facts are unchanged.`); return "applied" as const; }
@@ -58,7 +64,7 @@ export function AdaptiveJourneyPreview() {
 
     <details className={styles.guidance}><summary><span>Guidance: <strong>{modeLabel}</strong></span><span className={styles.changeLabel}>Change</span></summary><div className={styles.modeChoices} role="group" aria-label="Guidance pace">{modes.map((item) => <button key={item.id} className={styles.modeChoice} aria-pressed={mode === item.id} onClick={() => { setMode(item.id); setAnnouncement(`Guidance changed to ${item.label}. Your financial facts are unchanged.`); }}><span>{mode === item.id ? "✓ " : ""}{item.label}</span><small>{item.description}</small></button>)}</div></details>
 
-    {presentation.currentQuestion ? <section className={styles.decision} aria-labelledby="repair-question"><p>One answer could change the recommendation.</p><h2 id="repair-question" ref={questionRef} tabIndex={-1}>{presentation.currentQuestion}</h2><div className={styles.choices} role="group" aria-label="Repair requirement"><button className={styles.choice} aria-pressed="false" onClick={() => recordRepairAnswer("yes")}>Yes — I need it to keep working</button><button className={styles.choice} aria-pressed="false" onClick={() => recordRepairAnswer("no")}>No — it can wait</button><button className={styles.choice} aria-pressed="false" onClick={() => recordRepairAnswer("unsure")}>I’m not sure</button></div><details className={styles.why}><summary>Why this matters</summary><p>If the repair protects your ability to earn income, it may need to come before older obligations.</p></details><details className={styles.alternateAnswer}><summary>Answer another way</summary><Composer command={command} setCommand={setCommand} submitCommand={submitCommand} speech={speech} /></details></section> : null}
+    {presentation.currentQuestion ? <section className={styles.decision} aria-labelledby="repair-question"><p>One answer could change the recommendation.</p><h2 id="repair-question" ref={questionRef} tabIndex={-1}>{presentation.currentQuestion}</h2><div className={styles.choices} role="group" aria-label="Repair requirement"><button className={styles.choice} aria-pressed={activatingAnswer === "yes"} onClick={() => selectRepairAnswer("yes")}>Yes — I need it to keep working</button><button className={styles.choice} aria-pressed={activatingAnswer === "no"} onClick={() => selectRepairAnswer("no")}>No — it can wait</button><button className={styles.choice} aria-pressed={activatingAnswer === "unsure"} onClick={() => selectRepairAnswer("unsure")}>I’m not sure</button></div><details className={styles.why}><summary>Why this matters</summary><p>If the repair protects your ability to earn income, it may need to come before older obligations.</p></details><details className={styles.alternateAnswer}><summary>Answer another way</summary><Composer command={command} setCommand={setCommand} submitCommand={submitCommand} speech={speech} /></details></section> : null}
 
     {repairAnswer ? <><section className={styles.confirmed} aria-labelledby="confirmed-heading" data-answer={repairAnswer} ref={confirmationRef} tabIndex={-1}><p id="confirmed-heading">You confirmed</p><h2>✓ {repairAnswer === "yes" ? "Required for work" : repairAnswer === "no" ? "The repair can wait" : "The consequence is still uncertain"}</h2><div className={styles.quietActions}><button onClick={changeAnswer}>Change</button><button onClick={undoAnswer}>Undo</button></div></section><section className={styles.synthesis} aria-labelledby="changed-heading"><h2 id="changed-heading">What changed</h2><p>{presentation.synthesis}</p></section></> : null}
 

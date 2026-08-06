@@ -300,7 +300,8 @@ test("adaptive journey uses one shared typed and voice statement path", () => {
 test("unanswered repair choices are neutral, complete, and never preselected", () => {
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
   for (const answer of ["Yes — I need it to keep working", "No — it can wait", "I’m not sure"]) assert.match(ui, new RegExp(answer));
-  assert.equal((ui.match(/className=\{styles\.choice\} aria-pressed="false"/g) || []).length, 3);
+  assert.equal((ui.match(/className=\{styles\.choice\} aria-pressed=\{activatingAnswer ===/g) || []).length, 3);
+  assert.match(ui, /useState<RepairAnswer>\(null\)/); assert.match(ui, /setActivatingAnswer\(answer\)/); assert.match(ui, /setTimeout\(\(\) => \{ setActivatingAnswer\(null\); recordRepairAnswer\(answer\); \}, 120\)/);
   assert.doesNotMatch(ui, /className=\{styles\.primary\}[^>]*>Yes/); assert.ok(ui.indexOf("No — it can wait") < ui.indexOf("Why this matters"));
 });
 
