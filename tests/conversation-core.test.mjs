@@ -329,7 +329,7 @@ test("change restores focus and undo retains the prior confirmed answer", () => 
 
 test("bounded questions subordinate the composer while preserving text and voice", () => {
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
-  assert.match(ui, /<summary>Answer another way<\/summary><Composer/); assert.match(ui, /!activeQuestion \? <section className=\{styles\.standardComposer\}/);
+  assert.match(ui, /<summary>Answer another way<\/summary><Composer/); assert.match(ui, /!activeQuestion && journeyStep !== "utility_timing_review" \? <section className=\{styles\.standardComposer\}/);
   assert.match(ui, /Microphone/); assert.match(ui, /placeholder="Type an answer or guidance request"/);
 });
 
@@ -370,7 +370,52 @@ test("typed and reviewed voice answers resolve against the same active utility q
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /onFinalTranscript: \(transcript\) => applyStatement\(transcript\)/);
   assert.match(ui, /if \(journeyStep === "utility_timing_question"\) recordUtilityAnswer\(answer\)/);
-  assert.match(ui, /utilityTimingAnswer === "unsure"/); assert.match(ui, /You have a workable next step/); assert.match(ui, />Finish for now<\/button>/);
+  assert.match(ui, /utilityTimingAnswer === "unsure"/); assert.match(ui, /You have a workable next step/); assert.match(ui, />Done for now<\/button>/);
+});
+
+test("post-utility state renders one unified final outcome without a duplicate recommendation", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /recommendation && journeyStep === "repair_review"/);
+  assert.match(ui, /journeyStep === "utility_timing_review" \? <section className=\{styles\.completion\}/);
+  assert.doesNotMatch(ui, /journeyStep === "utility_timing_review" \? <><section className=\{styles\.completedTurn\}/);
+  assert.match(ui, /Final outcome/); assert.match(ui, /Nothing has been moved or saved/);
+});
+
+test("final utility allocations retain the existing approved yes and no results", () => {
+  const yes = allocateNextDollar({ repairRequiredForWork: true, protectUtility: true }).options[0].allocations.filter((item) => item.allocated > 0);
+  assert.deepEqual(yes.map((item) => [item.needId, item.allocated]), [["repair", 500], ["card-minimum", 75], ["utility", 180], ["current-rent", 145]]);
+  const no = allocateNextDollar({ repairRequiredForWork: true, protectUtility: false }).options[0].allocations.filter((item) => item.allocated > 0);
+  assert.deepEqual(no.map((item) => [item.needId, item.allocated]), [["repair", 500], ["card-minimum", 75], ["current-rent", 325]]);
+});
+
+test("uncertain utility timing remains preliminary with a bounded verification step", () => {
+  const presentation = buildJourneyPresentation({ mode: "guided", repairAnswer: "yes", utilityTimingAnswer: "unsure", step: "utility_timing_review" });
+  assert.equal(presentation.completion, "preliminary_answer_reached"); assert.match(presentation.synthesis, /preliminary/i);
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /Preliminary outcome/); assert.match(ui, /Utility timing remains unconfirmed/); assert.match(ui, /Verify whether the \$180 payment is due/);
+});
+
+test("final outcome owns focus and reduced-motion-aware scrolling", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /finalOutcomeRef\.current/); assert.match(ui, /heading\?\.focus\(\)/); assert.match(ui, /heading\?\.scrollIntoView/);
+  assert.match(ui, /prefers-reduced-motion: reduce/); assert.match(ui, /ref=\{finalOutcomeRef\} tabIndex=\{-1\}/);
+});
+
+test("completion actions preserve session state and reveal details without duplicating summary", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, />Done for now<\/button>/); assert.match(ui, /setStopped\(true\)/); assert.match(ui, />Resume<\/button>/);
+  assert.match(ui, /setStopped\(false\); setShowFinalDetails\(true\)/);
+  assert.match(ui, /setPriorUtilityAnswer\(utilityTimingAnswer\); setActivatingAnswer\(utilityTimingAnswer\)/);
+  assert.doesNotMatch(ui, /changeUtilityAnswer[^\n]*setUtilityTimingAnswer\(null\)/);
+  assert.match(ui, /aria-expanded=\{showFinalDetails\}/); assert.match(ui, /Recommendation details/);
+});
+
+test("final composer is subordinate and remains keyboard and voice accessible", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /<details className=\{styles\.finalComposer\}><summary>Ask or change something<\/summary><Composer/);
+  assert.match(ui, /event\.key === "Enter"/); assert.match(ui, /Microphone/);
+  const css = readFileSync(new URL("../components/account/adaptive-journey-preview.module.css", import.meta.url), "utf8");
+  assert.match(css, /\.finalComposer/); assert.match(css, /min-height:44px/); assert.doesNotMatch(css, /overflow-x:\s*(?:auto|scroll)/);
 });
 
 test("concise, expert, and stopping states preserve reasoning without developer state language", () => {
