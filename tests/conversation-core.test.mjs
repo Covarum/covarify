@@ -15,7 +15,7 @@ import { isFounderAdmin } from "../lib/waitlist-core.ts";
 import { assessVoiceTurn, resolveMerchantCorrection, transcriptNeedsExplicitReview } from "../lib/conversation/transcript-review.ts";
 import { resolveTransactionReference } from "../lib/conversation/reference-resolver.ts";
 import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel } from "../lib/conversation/recommendation-presentation.ts";
-import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
+import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, reconcileAllocation, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
 import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, applyCashUpdate, cashIncomeFixture, conservativeCashEstimate, normalizeCashAmount, offAccountMemoryMapping, ownerAvailable, parseCashAction, parseContextualValue, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, reconcileReceivedChange, simulateReceivable, validateCashAction } from "../lib/conversation/off-account-resources.ts";
 import { buildJourneyPresentation, guidanceModeFromStatement } from "../lib/conversation/journey-presentation.ts";
 
@@ -388,11 +388,50 @@ test("final utility allocations retain the existing approved yes and no results"
   assert.deepEqual(no.map((item) => [item.needId, item.allocated]), [["repair", 500], ["card-minimum", 75], ["current-rent", 325]]);
 });
 
+test("final outcome reconciles canonical available and allocated values without hiding over-allocation", () => {
+  for (const protectUtility of [true, false]) {
+    const result = allocateNextDollar({ repairRequiredForWork: true, protectUtility });
+    const option = result.options.find((item) => item.id === result.recommendedId) || null;
+    const reconciliation = reconcileAllocation(result, option);
+    assert.deepEqual(reconciliation, { available: 900, allocated: 900, leftUnallocated: 0, exceedsAvailable: false });
+    assert.equal(option?.allocations.find((item) => item.needId === "current-rent")?.allocated, protectUtility ? 145 : 325);
+  }
+  const result = allocateNextDollar({ repairRequiredForWork: true, protectUtility: true });
+  const invalidOption = { ...result.options[0], allocations: result.options[0].allocations.map((line) => line.needId === "current-rent" ? { ...line, allocated: line.allocated + 1 } : line) };
+  assert.deepEqual(reconcileAllocation(result, invalidOption), { available: 900, allocated: 901, leftUnallocated: 0, exceedsAvailable: true });
+});
+
+test("completion and stopped summaries show reconciliation from the allocation result", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  for (const copy of ["Available now", "Allocated", "Left unallocated", "Allocation", "Nothing has been moved or saved"]) assert.match(ui, new RegExp(copy));
+  assert.match(ui, /reconcileAllocation\(allocation, recommendation\)/); assert.match(ui, /reconciliation\.available/); assert.match(ui, /reconciliation\.allocated/); assert.match(ui, /reconciliation\.leftUnallocated/);
+  assert.match(ui, /reconciliation\.exceedsAvailable \? <div className=\{styles\.reconciliationError\} role="alert"/);
+  assert.match(ui, /if \(stopped\)[\s\S]*\{moneyReconciliation\}[\s\S]*\{allocationSummary\}/);
+});
+
+test("preliminary utility amount stays conditional while confirmed timing remains consistent", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /utilityConditionalAmount/); assert.match(ui, /utility amount is not a confirmed allocation/);
+  assert.match(ui, /Confirmed: the utility is due before the next paycheck/);
+  assert.match(ui, /Confirmed: the utility can wait until after the next paycheck/);
+  assert.match(ui, /Unconfirmed: verify whether the utility is due before the next paycheck/);
+  assert.match(ui, /utilityTimingAnswer === "unsure" \? "Utility timing still needs verification/);
+  assert.match(ui, /Utility timing is resolved for this preview/);
+  assert.doesNotMatch(ui, /utilityTimingAnswer === "unsure" \? "Utility timing still needs verification\." : allocation\.limitation/);
+});
+
+test("reconciliation remains readable at narrow widths and 200 percent zoom", () => {
+  const css = readFileSync(new URL("../components/account/adaptive-journey-preview.module.css", import.meta.url), "utf8");
+  assert.match(css, /\.reconciliation\{display:grid/); assert.match(css, /@media\(max-width:700px\)/);
+  assert.match(css, /\.reconciliation\{grid-template-columns:1fr\}/); assert.match(css, /minmax\(0,1fr\) auto/);
+  assert.doesNotMatch(css, /overflow-x:\s*(?:auto|scroll)/);
+});
+
 test("uncertain utility timing remains preliminary with a bounded verification step", () => {
   const presentation = buildJourneyPresentation({ mode: "guided", repairAnswer: "yes", utilityTimingAnswer: "unsure", step: "utility_timing_review" });
   assert.equal(presentation.completion, "preliminary_answer_reached"); assert.match(presentation.synthesis, /preliminary/i);
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
-  assert.match(ui, /Preliminary outcome/); assert.match(ui, /Utility timing remains unconfirmed/); assert.match(ui, /Verify whether the \$180 payment is due/);
+  assert.match(ui, /Preliminary outcome/); assert.match(ui, /Utility timing remains unconfirmed/); assert.match(ui, /utility amount is not a confirmed allocation/); assert.match(ui, /Verify whether it is due before your next paycheck/);
 });
 
 test("final outcome owns focus and reduced-motion-aware scrolling", () => {
