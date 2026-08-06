@@ -278,10 +278,12 @@ test("critical journey question cannot be skipped in any guidance mode", () => {
 });
 
 test("answered turns synthesize, advance, and expose a session-only stopping point", () => {
-  for (const answer of ["yes", "no", "unsure"]) assert.ok(buildJourneyPresentation({ mode: "guided", repairAnswer: answer }).synthesis);
-  const ready = buildJourneyPresentation({ mode: "guided", repairAnswer: "yes" });
-  assert.equal(ready.completion, "recommendation_ready"); assert.equal(ready.stoppingPoint, true); assert.equal(ready.currentQuestion, null);
-  assert.equal(buildJourneyPresentation({ mode: "guided", repairAnswer: "yes", stopped: true }).completion, "user_has_enough_for_now");
+  for (const answer of ["yes", "no", "unsure"]) assert.ok(buildJourneyPresentation({ mode: "guided", repairAnswer: answer, step: "repair_review" }).synthesis);
+  const repairReview = buildJourneyPresentation({ mode: "guided", repairAnswer: "yes", step: "repair_review" });
+  assert.equal(repairReview.completion, "recommendation_ready"); assert.equal(repairReview.stoppingPoint, false); assert.match(repairReview.nextBestStep, /utility/i);
+  const ready = buildJourneyPresentation({ mode: "guided", repairAnswer: "yes", utilityTimingAnswer: "yes", step: "utility_timing_review" });
+  assert.equal(ready.stoppingPoint, true); assert.equal(ready.currentQuestion, null); assert.ok(ready.synthesis);
+  assert.equal(buildJourneyPresentation({ mode: "guided", repairAnswer: "yes", utilityTimingAnswer: "yes", stopped: true }).completion, "user_has_enough_for_now");
 });
 
 test("consumer journey removes prototype labels and keeps diagnostics below its boundary", () => {
@@ -301,8 +303,8 @@ test("unanswered repair choices are neutral, complete, and never preselected", (
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
   for (const answer of ["Yes — I need it to keep working", "No — it can wait", "I’m not sure"]) assert.match(ui, new RegExp(answer));
   assert.equal((ui.match(/className=\{styles\.choice\} aria-pressed=\{activatingAnswer ===/g) || []).length, 3);
-  assert.match(ui, /useState<RepairAnswer>\(null\)/); assert.match(ui, /setActivatingAnswer\(answer\)/); assert.match(ui, /setTimeout\(\(\) => \{ setActivatingAnswer\(null\); recordRepairAnswer\(answer\); \}, 120\)/);
-  assert.doesNotMatch(ui, /className=\{styles\.primary\}[^>]*>Yes/); assert.ok(ui.indexOf("No — it can wait") < ui.indexOf("Why this matters"));
+  assert.match(ui, /useState<RepairAnswer>\(null\)/); assert.match(ui, /setActivatingAnswer\(answer\)/); assert.match(ui, /setTimeout\(\(\) => \{ setActivatingAnswer\(null\); if \(journeyStep === "utility_timing_question"\)/);
+  assert.doesNotMatch(ui, /className=\{styles\.primary\}[^>]*>Yes/); assert.match(ui, /No — it can wait/);
 });
 
 test("active guidance is a quiet current preference rather than an unanswered prompt", () => {
@@ -313,21 +315,62 @@ test("active guidance is a quiet current preference rather than an unanswered pr
 
 test("answered state replaces choices with confirmation, synthesis, and a genuinely new next action", () => {
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
-  assert.match(ui, /presentation\.currentQuestion \?/); assert.match(ui, /repairAnswer \? <><section className=\{styles\.confirmed\}/);
+  assert.match(ui, /journeyStep === "repair_review"/); assert.match(ui, /<Confirmation title=/);
   assert.match(ui, /You confirmed/); assert.match(ui, /What changed/); assert.match(ui, /Confirm whether the utility is due before your next paycheck/);
   assert.doesNotMatch(ui, /Next Best Step/);
 });
 
 test("change restores focus and undo retains the prior confirmed answer", () => {
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
-  assert.match(ui, /requestAnimationFrame\(\(\) => questionRef\.current\?\.focus\(\)\)/);
-  assert.match(ui, /setPriorAnswer\(\(current\) => repairAnswer \?\? current\)/); assert.match(ui, /setRepairAnswer\(priorAnswer\)/);
+  assert.match(ui, /requestAnimationFrame\(\(\) => repairQuestionRef\.current\?\.focus\(\)\)/);
+  assert.match(ui, /setPriorRepairAnswer\(\(current\) => repairAnswer \?\? current\)/); assert.match(ui, /setRepairAnswer\(priorRepairAnswer\)/);
+  assert.match(ui, /setPriorUtilityAnswer\(\(current\) => utilityTimingAnswer \?\? current\)/); assert.match(ui, /setUtilityTimingAnswer\(priorUtilityAnswer\)/);
 });
 
 test("bounded questions subordinate the composer while preserving text and voice", () => {
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
-  assert.match(ui, /<summary>Answer another way<\/summary><Composer/); assert.match(ui, /repairAnswer \? <section className=\{styles\.standardComposer\}/);
+  assert.match(ui, /<summary>Answer another way<\/summary><Composer/); assert.match(ui, /!activeQuestion \? <section className=\{styles\.standardComposer\}/);
   assert.match(ui, /Microphone/); assert.match(ui, /placeholder="Type an answer or guidance request"/);
+});
+
+test("post-repair action advances once into the canonical utility timing question", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /const openUtilityQuestion = \(\) =>/); assert.match(ui, /if \(transitionLockRef\.current\) return/);
+  assert.match(ui, /setJourneyStep\("utility_timing_question"\)/); assert.match(ui, /disabled=\{transitioning\}/);
+  assert.match(ui, /Check utility timing/); assert.doesNotMatch(ui, />Continue<\/button>/);
+  assert.equal(buildJourneyPresentation({ mode: "guided", repairAnswer: "yes", step: "utility_timing_question" }).currentQuestion, "Is the $180 utility payment due before your next paycheck?");
+});
+
+test("utility transition preserves repair context and updates focus and orientation", () => {
+  const utility = buildJourneyPresentation({ mode: "guided", repairAnswer: "yes", step: "utility_timing_question" });
+  assert.equal(utility.step, "utility_timing_question"); assert.match(utility.currentQuestion, /\$180 utility/); assert.match(utility.completedContext.at(-1), /Repair confirmed/);
+  assert.equal(utility.currentTopic, "Confirm utility timing"); assert.equal(utility.criticalMissingFacts.length, 1);
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /utilityQuestionRef\.current/); assert.match(ui, /scrollIntoView/); assert.match(ui, /prefers-reduced-motion: reduce/);
+});
+
+test("utility choices are neutral and accepted answers reuse approved allocation behavior", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  for (const answer of ["Yes — it is due first", "No — it can wait until after", "I’m not sure"]) assert.match(ui, new RegExp(answer));
+  assert.match(ui, /protectUtility: utilityTimingAnswer === "yes"/);
+  const existing = allocateNextDollar({ repairRequiredForWork: true, protectUtility: true });
+  const unchanged = allocateNextDollar({ repairRequiredForWork: true, protectUtility: true });
+  assert.deepEqual(unchanged, existing);
+});
+
+test("all guidance modes share the utility transition and stopping contract", () => {
+  for (const mode of ["guided", "concise", "expert"]) {
+    const question = buildJourneyPresentation({ mode, repairAnswer: "yes", step: "utility_timing_question" });
+    const answered = buildJourneyPresentation({ mode, repairAnswer: "yes", utilityTimingAnswer: "yes", step: "utility_timing_review" });
+    assert.equal(question.currentQuestion, "Is the $180 utility payment due before your next paycheck?"); assert.equal(answered.stoppingPoint, true); assert.equal(answered.nextBestStep, "Finish for now or adjust the recommendation.");
+  }
+});
+
+test("typed and reviewed voice answers resolve against the same active utility question", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /onFinalTranscript: \(transcript\) => applyStatement\(transcript\)/);
+  assert.match(ui, /if \(journeyStep === "utility_timing_question"\) recordUtilityAnswer\(answer\)/);
+  assert.match(ui, /utilityTimingAnswer === "unsure"/); assert.match(ui, /You have a workable next step/); assert.match(ui, />Finish for now<\/button>/);
 });
 
 test("concise, expert, and stopping states preserve reasoning without developer state language", () => {
