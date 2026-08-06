@@ -17,7 +17,7 @@ import { resolveTransactionReference } from "../lib/conversation/reference-resol
 import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel } from "../lib/conversation/recommendation-presentation.ts";
 import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, reconcileAllocation, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
 import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, applyCashUpdate, cashIncomeFixture, conservativeCashEstimate, normalizeCashAmount, offAccountMemoryMapping, ownerAvailable, parseCashAction, parseContextualValue, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, reconcileReceivedChange, simulateReceivable, validateCashAction } from "../lib/conversation/off-account-resources.ts";
-import { buildJourneyPresentation, guidanceModeFromStatement } from "../lib/conversation/journey-presentation.ts";
+import { buildJourneyPresentation, buildOutcomeCopy, guidanceModeFromStatement, interpretJourneyEdit } from "../lib/conversation/journey-presentation.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -304,7 +304,7 @@ test("unanswered repair choices are neutral, complete, and never preselected", (
   for (const answer of ["Yes — I need it to keep working", "No — it can wait", "I’m not sure"]) assert.match(ui, new RegExp(answer));
   assert.equal((ui.match(/className=\{styles\.choice\} aria-pressed=\{activatingAnswer ===/g) || []).length, 3);
   assert.match(ui, /useState<RepairAnswer>\(null\)/); assert.match(ui, /setActivatingAnswer\(answer\)/); assert.match(ui, /setTimeout\(\(\) => \{ setActivatingAnswer\(null\); if \(journeyStep === "utility_timing_question"\)/);
-  assert.doesNotMatch(ui, /className=\{styles\.primary\}[^>]*>Yes/); assert.match(ui, /No — it can wait/);
+  assert.doesNotMatch(ui, /className=\{styles\.primary\}[^>]*>Yes — I need it to keep working/); assert.match(ui, /No — it can wait/);
 });
 
 test("active guidance is a quiet current preference rather than an unanswered prompt", () => {
@@ -412,12 +412,54 @@ test("completion and stopped summaries show reconciliation from the allocation r
 test("preliminary utility amount stays conditional while confirmed timing remains consistent", () => {
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /utilityConditionalAmount/); assert.match(ui, /utility amount is not a confirmed allocation/);
-  assert.match(ui, /Confirmed: the utility is due before the next paycheck/);
-  assert.match(ui, /Confirmed: the utility can wait until after the next paycheck/);
-  assert.match(ui, /Unconfirmed: verify whether the utility is due before the next paycheck/);
-  assert.match(ui, /utilityTimingAnswer === "unsure" \? "Utility timing still needs verification/);
-  assert.match(ui, /Utility timing is resolved for this preview/);
+  assert.match(buildOutcomeCopy({ repairAnswer: "yes", utilityTimingAnswer: "yes", allocations: [] }).utilityTiming, /Confirmed: the utility is due/);
+  assert.match(buildOutcomeCopy({ repairAnswer: "yes", utilityTimingAnswer: "no", allocations: [] }).utilityTiming, /Confirmed: the utility can wait/);
+  assert.match(buildOutcomeCopy({ repairAnswer: "yes", utilityTimingAnswer: "unsure", allocations: [] }).utilityTiming, /Unconfirmed/);
+  assert.match(ui, /outcomeCopy\.unresolvedFacts/);
   assert.doesNotMatch(ui, /utilityTimingAnswer === "unsure" \? "Utility timing still needs verification\." : allocation\.limitation/);
+});
+
+test("all nine repair and utility answer combinations use canonical outcome copy", () => {
+  for (const repairAnswer of ["yes", "no", "unsure"]) for (const utilityTimingAnswer of ["yes", "no", "unsure"]) {
+    const result = allocateNextDollar({ repairRequiredForWork: repairAnswer === "yes", protectUtility: utilityTimingAnswer === "yes" });
+    const allocations = result.options[0].allocations;
+    const copy = buildOutcomeCopy({ repairAnswer, utilityTimingAnswer, allocations });
+    const rentReserve = allocations.find((line) => line.needId === "current-rent").allocated;
+    assert.match(copy.rationale, new RegExp(`\\$${rentReserve}`));
+    assert.equal(copy.preliminary, repairAnswer === "unsure" || utilityTimingAnswer === "unsure");
+    if (repairAnswer === "yes") assert.match(copy.rationale, /repair comes first.*required to keep working/i);
+    if (repairAnswer === "no") { assert.match(copy.rationale, /repair can wait/i); assert.doesNotMatch(copy.rationale, /repair comes first|repair.*protects.*work/i); }
+    if (repairAnswer === "unsure") { assert.match(copy.rationale, /still unconfirmed|preliminary/i); assert.doesNotMatch(copy.rationale, /repair comes first|repair can wait/i); }
+    if (utilityTimingAnswer === "yes") { assert.match(copy.utilityTiming, /^Confirmed:.*due before/); assert.ok(!copy.unresolvedFacts.some((fact) => /utility/i.test(fact))); }
+    if (utilityTimingAnswer === "no") { assert.match(copy.utilityTiming, /^Confirmed:.*wait until after/); assert.ok(!copy.unresolvedFacts.some((fact) => /utility/i.test(fact))); }
+    if (utilityTimingAnswer === "unsure") { assert.match(copy.utilityTiming, /^Unconfirmed:/); assert.ok(copy.unresolvedFacts.some((fact) => /utility/i.test(fact))); }
+    assert.equal(allocations.reduce((sum, line) => sum + line.allocated, 0), result.availableBeforeNextIncome);
+  }
+});
+
+test("repair no plus utility yes defers repair and reconciles the correct rent reserve", () => {
+  const result = allocateNextDollar({ repairRequiredForWork: false, protectUtility: true });
+  const allocations = result.options[0].allocations;
+  assert.deepEqual(allocations.filter((line) => line.allocated > 0).map((line) => [line.needId, line.allocated]), [["card-minimum", 75], ["utility", 180], ["current-rent", 645]]);
+  const copy = buildOutcomeCopy({ repairAnswer: "no", utilityTimingAnswer: "yes", allocations });
+  assert.match(copy.rationale, /repair can wait/); assert.match(copy.rationale, /\$645/); assert.doesNotMatch(copy.rationale, /\$145|repair comes first|protects your ability to work/);
+  assert.deepEqual(reconcileAllocation(result, result.options[0]), { available: 900, allocated: 900, leftUnallocated: 0, exceedsAvailable: false });
+});
+
+test("conversational repair edits propose, confirm, reject, clarify, and never silently disappear", () => {
+  assert.deepEqual(interpretJourneyEdit("change car to $400"), { type: "repair_amount_proposal", amount: 400 });
+  assert.deepEqual(interpretJourneyEdit("change the car repair"), { type: "repair_amount_clarification" });
+  assert.deepEqual(interpretJourneyEdit("change rent to $400"), { type: "unsupported" });
+  const before = allocateNextDollar({ repairRequiredForWork: true, repairAmount: 500, protectUtility: true });
+  const after = allocateNextDollar({ repairRequiredForWork: true, repairAmount: 400, protectUtility: true });
+  assert.equal(before.options[0].allocations.find((line) => line.needId === "repair").allocated, 500);
+  assert.equal(after.options[0].allocations.find((line) => line.needId === "repair").allocated, 400);
+  assert.equal(after.options[0].allocations.find((line) => line.needId === "current-rent").allocated, 245);
+  assert.match(buildOutcomeCopy({ repairAnswer: "yes", utilityTimingAnswer: "yes", allocations: after.options[0].allocations }).rationale, /\$400/);
+  assert.deepEqual(reconcileAllocation(after, after.options[0]), { available: 900, allocated: 900, leftUnallocated: 0, exceedsAvailable: false });
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  for (const contract of [/Change the car-repair amount from/, /Yes, change it/, />No<\//, /That’s not what I meant/, /setRepairAmount\(pendingCorrection\.amount\)/, /Kept the repair estimate at/, /Undo amount change/, /This preview cannot apply that request/, /outcome !== "added"/, /aria-live="polite"/]) assert.match(ui, contract);
+  assert.match(ui, /onFinalTranscript: \(transcript\) => applyStatement\(transcript\)/); assert.match(ui, /Nothing is moved, activated, or saved to Financial Memory/);
 });
 
 test("reconciliation remains readable at narrow widths and 200 percent zoom", () => {
