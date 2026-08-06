@@ -258,7 +258,7 @@ test("authenticated founder preview renders one adaptive continuous journey", ()
   const page = readFileSync(new URL("../app/account/transaction-understanding/preview/page.tsx", import.meta.url), "utf8");
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
   assert.match(page, /AdaptiveJourneyPreview/); assert.doesNotMatch(page, /<ConversationStrategyPreview|<TransactionUnderstandingPreview|from "@\/components\/account\/(?:conversation-strategy-preview|transaction-understanding-preview)"/);
-  for (const copy of ["What we already covered", "One thing I need to know", "What that changes", "Recommendation", "Next Best Step"]) assert.match(ui, new RegExp(copy));
+  for (const copy of ["What Covarify already knows", "One answer could change the recommendation", "What changed", "Current recommendation", "Next"]) assert.match(ui, new RegExp(copy));
 });
 
 test("journey modes alter presentation without changing financial facts", () => {
@@ -287,14 +287,60 @@ test("answered turns synthesize, advance, and expose a session-only stopping poi
 test("consumer journey removes prototype labels and keeps diagnostics below its boundary", () => {
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
   for (const label of ["Flow A", "Flow B", "Flow C", "Scenario A", "Scenario B", "Resource Extension"]) assert.doesNotMatch(ui, new RegExp(label));
-  assert.ok(ui.indexOf("Preview boundary") < ui.indexOf("Founder testing tools")); assert.match(ui, /<details className=\{styles\.founderTools\}>/);
+  assert.ok(ui.indexOf("controlled, read-only preview") < ui.indexOf("Founder testing tools")); assert.match(ui, /<details className=\{styles\.founderTools\}>/);
   assert.doesNotMatch(ui, /localStorage|sessionStorage|fetch\(|FinancialMemory|insert\(|upsert\(/);
 });
 
 test("adaptive journey uses one shared typed and voice statement path", () => {
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /onFinalTranscript: \(transcript\) => applyStatement\(transcript\)/); assert.match(ui, /applyStatement\(statement\)/);
-  assert.match(ui, /aria-pressed=\{mode === item\.id\}/); assert.match(ui, /Stop here.*I have enough for now/);
+  assert.match(ui, /aria-pressed=\{mode === item\.id\}/); assert.match(ui, /Stop here/); assert.match(ui, /You have a workable next step/);
+});
+
+test("unanswered repair choices are neutral, complete, and never preselected", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  for (const answer of ["Yes — I need it to keep working", "No — it can wait", "I’m not sure"]) assert.match(ui, new RegExp(answer));
+  assert.equal((ui.match(/className=\{styles\.choice\} aria-pressed="false"/g) || []).length, 3);
+  assert.doesNotMatch(ui, /className=\{styles\.primary\}[^>]*>Yes/); assert.ok(ui.indexOf("No — it can wait") < ui.indexOf("Why this matters"));
+});
+
+test("active guidance is a quiet current preference rather than an unanswered prompt", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /useState<GuidanceMode>\("guided"\)/); assert.match(ui, /Guidance: <strong>\{modeLabel\}<\/strong>/);
+  assert.match(ui, /aria-pressed=\{mode === item\.id\}/); assert.doesNotMatch(ui, /How would you like to work/);
+});
+
+test("answered state replaces choices with confirmation, synthesis, and a genuinely new next action", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /presentation\.currentQuestion \?/); assert.match(ui, /repairAnswer \? <><section className=\{styles\.confirmed\}/);
+  assert.match(ui, /You confirmed/); assert.match(ui, /What changed/); assert.match(ui, /Confirm whether the utility is due before your next paycheck/);
+  assert.doesNotMatch(ui, /Next Best Step/);
+});
+
+test("change restores focus and undo retains the prior confirmed answer", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /requestAnimationFrame\(\(\) => questionRef\.current\?\.focus\(\)\)/);
+  assert.match(ui, /setPriorAnswer\(\(current\) => repairAnswer \?\? current\)/); assert.match(ui, /setRepairAnswer\(priorAnswer\)/);
+});
+
+test("bounded questions subordinate the composer while preserving text and voice", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /<summary>Answer another way<\/summary><Composer/); assert.match(ui, /repairAnswer \? <section className=\{styles\.standardComposer\}/);
+  assert.match(ui, /Microphone/); assert.match(ui, /placeholder="Type an answer or guidance request"/);
+});
+
+test("concise, expert, and stopping states preserve reasoning without developer state language", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /mode === "concise"/); assert.match(ui, /Your situation/); assert.match(ui, /mode === "expert"/); assert.match(ui, /Full financial reasoning/);
+  for (const section of ["Goal and available resources", "Timing and required obligations", "Protected priorities", "Assumptions and missing facts", "Evidence and calculation"]) assert.match(ui, new RegExp(section));
+  assert.match(ui, /Nothing has been moved or saved/); assert.match(ui, /Done for now/); assert.match(ui, /Resume/); assert.doesNotMatch(ui, /state machine|raw enum|internal ID/i);
+});
+
+test("interaction tokens distinguish neutral, selected, confirmed, warning, recommendation, completion, and focus", () => {
+  const css = readFileSync(new URL("../components/account/adaptive-journey-preview.module.css", import.meta.url), "utf8");
+  for (const token of ["--brand", "--line", "--surface", "--confirmed", "--warning", "--focus"]) assert.match(css, new RegExp(token));
+  assert.match(css, /\.choice\[aria-pressed=true\]/); assert.match(css, /\.confirmed/); assert.match(css, /\.warning/); assert.match(css, /\.recommendation/); assert.match(css, /\.completion/); assert.match(css, /:focus-visible/);
+  assert.match(css, /prefers-reduced-motion/); assert.match(css, /min-height:44px/); assert.doesNotMatch(css, /overflow-x:\s*(?:auto|scroll)/);
 });
 
 test("adaptive journey remains mobile-first and accessible at 390px", () => {
