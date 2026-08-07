@@ -17,7 +17,7 @@ import { resolveTransactionReference } from "../lib/conversation/reference-resol
 import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel } from "../lib/conversation/recommendation-presentation.ts";
 import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, reconcileAllocation, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
 import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, applyCashUpdate, cashIncomeFixture, conservativeCashEstimate, normalizeCashAmount, offAccountMemoryMapping, ownerAvailable, parseCashAction, parseContextualValue, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, reconcileReceivedChange, simulateReceivable, validateCashAction } from "../lib/conversation/off-account-resources.ts";
-import { buildJourneyPresentation, buildOutcomeCopy, guidanceModeFromStatement, interpretJourneyEdit } from "../lib/conversation/journey-presentation.ts";
+import { buildJourneyPresentation, buildOutcomeCopy, guidanceModeFromStatement, interpretJourneyEdit, presentRepairAmountChange } from "../lib/conversation/journey-presentation.ts";
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
@@ -376,9 +376,9 @@ test("typed and reviewed voice answers resolve against the same active utility q
 test("post-utility state renders one unified final outcome without a duplicate recommendation", () => {
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
   assert.match(ui, /recommendation && journeyStep === "repair_review"/);
-  assert.match(ui, /journeyStep === "utility_timing_review" \? <section className=\{styles\.completion\}/);
+  assert.match(ui, /journeyStep === "utility_timing_review" \? <section className=\{`\$\{styles\.completion\}/);
   assert.doesNotMatch(ui, /journeyStep === "utility_timing_review" \? <><section className=\{styles\.completedTurn\}/);
-  assert.match(ui, /Final outcome/); assert.match(ui, /Nothing has been moved or saved/);
+  assert.match(ui, /You have a workable next step/); assert.match(ui, /Nothing has been moved or saved/);
 });
 
 test("final utility allocations retain the existing approved yes and no results", () => {
@@ -458,8 +458,58 @@ test("conversational repair edits propose, confirm, reject, clarify, and never s
   assert.match(buildOutcomeCopy({ repairAnswer: "yes", utilityTimingAnswer: "yes", allocations: after.options[0].allocations }).rationale, /\$400/);
   assert.deepEqual(reconcileAllocation(after, after.options[0]), { available: 900, allocated: 900, leftUnallocated: 0, exceedsAvailable: false });
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
-  for (const contract of [/Change the car-repair amount from/, /Yes, change it/, />No<\//, /That’s not what I meant/, /setRepairAmount\(pendingCorrection\.amount\)/, /Kept the repair estimate at/, /Undo amount change/, /This preview cannot apply that request/, /outcome !== "added"/, /aria-live="polite"/]) assert.match(ui, contract);
+  for (const contract of [/Change the car-repair amount from/, /Yes, change it/, />No<\//, /That’s not what I meant/, /setRepairAmount\(pendingCorrection\.amount\)/, /Kept the repair estimate at/, /Undo repair amount change/, /This preview cannot apply that request/, /outcome !== "added"/, /aria-live="polite"/]) assert.match(ui, contract);
   assert.match(ui, /onFinalTranscript: \(transcript\) => applyStatement\(transcript\)/); assert.match(ui, /Nothing is moved, activated, or saved to Financial Memory/);
+});
+
+test("repair edit synthesis comes from before-and-after allocation comparison", () => {
+  const result = (repairRequiredForWork, repairAmount, protectUtility = false) => allocateNextDollar({ repairRequiredForWork, repairAmount, protectUtility });
+  const impact = (repairAnswer, beforeAmount, afterAmount, utilityTimingAnswer = "no") => {
+    const prior = result(repairAnswer === "yes", beforeAmount, utilityTimingAnswer === "yes");
+    const updated = result(repairAnswer === "yes", afterAmount, utilityTimingAnswer === "yes");
+    return presentRepairAmountChange({ before: beforeAmount, after: afterAmount, priorAllocations: prior.options[0].allocations, updatedAllocations: updated.options[0].allocations, priorRecommendationId: prior.recommendedId, updatedRecommendationId: updated.recommendedId, repairAnswer, utilityTimingAnswer });
+  };
+  const deferredDecrease = impact("no", 500, 400); assert.equal(deferredDecrease.allocationChanged, false); assert.match(deferredDecrease.synthesis, /currently deferred.*allocation does not change/i); assert.doesNotMatch(deferredDecrease.synthesis, /frees|additional.*available/i);
+  const deferredIncrease = impact("no", 500, 600); assert.equal(deferredIncrease.allocationChanged, false); assert.match(deferredIncrease.synthesis, /allocation does not change/i); assert.doesNotMatch(deferredIncrease.synthesis, /uses an additional|reduced available/i);
+  const requiredDecrease = impact("yes", 500, 400); assert.equal(requiredDecrease.allocationChanged, true); assert.deepEqual(requiredDecrease.allocationDeltas.map((line) => [line.needId, line.delta]), [["repair", -100], ["current-rent", 100]]); assert.match(requiredDecrease.synthesis, /frees \$100.*rent reserve.*\$100/i);
+  const requiredIncrease = impact("yes", 400, 500); assert.deepEqual(requiredIncrease.allocationDeltas.map((line) => [line.needId, line.delta]), [["repair", 100], ["current-rent", -100]]); assert.match(requiredIncrease.synthesis, /uses an additional \$100.*rent reserve.*decreases by \$100/i);
+  const unsure = impact("unsure", 500, 400, "unsure"); assert.equal(unsure.preliminary, true); assert.match(unsure.synthesis, /remains preliminary/i);
+});
+
+test("correction proposal is the focused active turn above secondary outcome actions", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.ok(ui.indexOf("styles.outcomeSummary") < ui.indexOf("styles.correction") && ui.indexOf("styles.correction") < ui.indexOf("styles.mainActions"));
+  assert.match(ui, /correctionRef\.current\?\.focus\(\)/); assert.match(ui, /correctionRef\.current\?\.scrollIntoView/);
+  assert.match(ui, /pendingCorrection \? styles\.withActiveCorrection/); assert.match(ui, /disabled=\{Boolean\(pendingCorrection\)\}/);
+  const css = readFileSync(new URL("../components/account/adaptive-journey-preview.module.css", import.meta.url), "utf8");
+  assert.match(css, /\.withActiveCorrection \.outcomeSummary\{opacity:/);
+});
+
+test("final actions are consolidated, specific, and expose only supported adjustments", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  for (const label of ["Done for now", "Change an answer or amount", "Review details", "More actions", "Undo utility timing answer", "Undo repair urgency answer", "Undo repair amount change", "Restart this decision"]) assert.match(ui, new RegExp(label));
+  assert.doesNotMatch(ui, /Adjust recommendation|Undo last answer/);
+  for (const label of ["Repair urgency", "Repair estimate", "Utility timing"]) assert.match(ui, new RegExp(label));
+  assert.doesNotMatch(ui, />Available amount</);
+  assert.match(ui, /changeRepairAnswer\(\)/); assert.match(ui, /openRepairAmountAdjustment/); assert.match(ui, /changeUtilityAnswer\(\)/);
+  assert.match(ui, /utilityTimingAnswer \? <button onClick=\{undoUtilityAnswer\}/); assert.match(ui, /priorRepairAmount != null \? <button onClick=\{undoRepairAmount\}/);
+});
+
+test("guidance menu is isolated, closes after selection, and preserves journey state", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /className=\{styles\.guidanceControl\}/); assert.match(ui, /showGuidanceMenu \? <div className=\{styles\.guidanceMenu\}/);
+  assert.match(ui, /setMode\(nextMode\); setShowGuidanceMenu\(false\)/); assert.match(ui, /guidanceButtonRef\.current\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.doesNotMatch(ui, /<details className=\{styles\.guidance\}>/); assert.doesNotMatch(ui, /selectGuidanceMode[^{]*\{[^}]*setRepairAnswer/);
+  const css = readFileSync(new URL("../components/account/adaptive-journey-preview.module.css", import.meta.url), "utf8");
+  assert.match(css, /\.guidanceMenu\{position:absolute/);
+});
+
+test("completed outcome reduces procedural scaffolding and remains mobile accessible", () => {
+  const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
+  assert.match(ui, /Your money picture/); assert.match(ui, /Why this recommendation/);
+  assert.match(ui, /journeyStep !== "utility_timing_review" \? <details className=\{styles\.known\}/);
+  const css = readFileSync(new URL("../components/account/adaptive-journey-preview.module.css", import.meta.url), "utf8");
+  assert.match(css, /@media\(max-width:700px\)/); assert.match(css, /min-height:44px/); assert.doesNotMatch(css, /overflow-x:\s*(?:auto|scroll)/);
 });
 
 test("reconciliation remains readable at narrow widths and 200 percent zoom", () => {
@@ -473,7 +523,7 @@ test("uncertain utility timing remains preliminary with a bounded verification s
   const presentation = buildJourneyPresentation({ mode: "guided", repairAnswer: "yes", utilityTimingAnswer: "unsure", step: "utility_timing_review" });
   assert.equal(presentation.completion, "preliminary_answer_reached"); assert.match(presentation.synthesis, /preliminary/i);
   const ui = readFileSync(new URL("../components/account/adaptive-journey-preview.tsx", import.meta.url), "utf8");
-  assert.match(ui, /Preliminary outcome/); assert.match(ui, /Utility timing remains unconfirmed/); assert.match(ui, /utility amount is not a confirmed allocation/); assert.match(ui, /Verify whether it is due before your next paycheck/);
+  assert.match(ui, /You have a preliminary next step/); assert.match(ui, /Utility timing remains unconfirmed/); assert.match(ui, /utility amount is not a confirmed allocation/); assert.match(ui, /Verify whether it is due before your next paycheck/);
 });
 
 test("final outcome owns focus and reduced-motion-aware scrolling", () => {

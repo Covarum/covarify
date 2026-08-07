@@ -6,6 +6,7 @@ export type JourneyCompletion = "blocked_by_critical_fact" | "preliminary_answer
 export type JourneyPresentation = { mode: GuidanceMode; step: JourneyStep; completedContext: string[]; currentTopic: string; currentQuestion: string | null; recordedFacts: string[]; synthesis: string | null; completion: JourneyCompletion; criticalMissingFacts: string[]; materialNonblockingFacts: string[]; informationalFacts: string[]; nextBestStep: string; stoppingPoint: boolean };
 export type JourneyEditInterpretation = { type: "repair_amount_proposal"; amount: number } | { type: "repair_amount_clarification" } | { type: "unsupported" };
 type OutcomeLine = { needId: string; title: string; allocated: number };
+export type AllocationChangeImpact = { changedFact: { field: "repair_amount"; before: number; after: number }; allocationChanged: boolean; allocationDeltas: Array<{ needId: string; title: string; before: number; after: number; delta: number }>; recommendationChanged: boolean; preliminary: boolean; synthesis: string };
 
 const modeCommands: Array<[RegExp, GuidanceMode]> = [
   [/\b(?:go faster|explain less|skip the walkthrough|keep this concise|just tell me what matters now)\b/i, "concise"],
@@ -37,6 +38,29 @@ export function buildOutcomeCopy(input: { repairAnswer: RepairAnswer; utilityTim
   const utilityTiming = input.utilityTimingAnswer === "yes" ? "Confirmed: the utility is due before the next paycheck." : input.utilityTimingAnswer === "no" ? "Confirmed: the utility can wait until after the next paycheck." : "Unconfirmed: verify whether the utility is due before the next paycheck.";
   const unresolvedFacts = [input.repairAnswer === "unsure" ? "Whether the repair is required to keep working." : null, input.utilityTimingAnswer === "unsure" ? "Whether the utility is due before the next paycheck." : null, "The effect of a partial rent payment."].filter((item): item is string => Boolean(item));
   return { rationale, utilityTiming, unresolvedFacts, preliminary: input.repairAnswer === "unsure" || input.utilityTimingAnswer === "unsure" };
+}
+
+export function presentRepairAmountChange(input: { before: number; after: number; priorAllocations: OutcomeLine[]; updatedAllocations: OutcomeLine[]; priorRecommendationId: string | null; updatedRecommendationId: string | null; repairAnswer: RepairAnswer; utilityTimingAnswer: UtilityTimingAnswer; action?: "updated" | "restored" }): AllocationChangeImpact {
+  const ids = new Set([...input.priorAllocations.map((line) => line.needId), ...input.updatedAllocations.map((line) => line.needId)]);
+  const allocationDeltas = [...ids].map((needId) => {
+    const prior = input.priorAllocations.find((line) => line.needId === needId);
+    const updated = input.updatedAllocations.find((line) => line.needId === needId);
+    const before = prior?.allocated || 0; const after = updated?.allocated || 0;
+    return { needId, title: updated?.title || prior?.title || needId, before, after, delta: after - before };
+  }).filter((line) => line.delta !== 0);
+  const preliminary = input.repairAnswer === "unsure" || input.utilityTimingAnswer === "unsure";
+  const action = input.action === "restored" ? "Restored" : "Updated";
+  let synthesis: string;
+  if (input.repairAnswer === "no") synthesis = `${action} the repair estimate to $${input.after}. Because the repair is currently deferred, today’s allocation does not change.`;
+  else if (input.repairAnswer === "unsure") synthesis = `${action} the repair estimate to $${input.after}. The current recommendation remains preliminary until you confirm whether the repair is required for work.`;
+  else {
+    const repairDelta = allocationDeltas.find((line) => line.needId === "repair")?.delta || 0;
+    const destination = allocationDeltas.find((line) => line.needId !== "repair" && line.delta !== 0);
+    if (repairDelta < 0) synthesis = `${action} the repair estimate to $${input.after}. That frees $${Math.abs(repairDelta)} for the remaining priorities${destination?.delta && destination.delta > 0 ? `; ${destination.title === "Upcoming current rent" ? "the rent reserve" : destination.title.toLowerCase()} increases by $${destination.delta}` : ""}.`;
+    else if (repairDelta > 0) synthesis = `${action} the repair estimate to $${input.after}. The repair allocation uses an additional $${repairDelta}${destination?.delta && destination.delta < 0 ? `; ${destination.title === "Upcoming current rent" ? "the rent reserve" : destination.title.toLowerCase()} decreases by $${Math.abs(destination.delta)}` : ""}.`;
+    else synthesis = `${action} the repair estimate to $${input.after}. Today’s allocation does not change.`;
+  }
+  return { changedFact: { field: "repair_amount", before: input.before, after: input.after }, allocationChanged: allocationDeltas.length > 0, allocationDeltas, recommendationChanged: input.priorRecommendationId !== input.updatedRecommendationId, preliminary, synthesis };
 }
 
 export function buildJourneyPresentation(input: { mode: GuidanceMode; repairAnswer: RepairAnswer; utilityTimingAnswer?: UtilityTimingAnswer; repairAmount?: number; step?: JourneyStep; stopped?: boolean }): JourneyPresentation {
