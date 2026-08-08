@@ -11,5 +11,5 @@ export function SiteHeader() {
 }
 
 export function SiteFooter() {
-  return <footer className="site-footer"><div className="shell footer-grid"><div className="footer-brand"><Brand variant="light" /><p>From Complexity to Confidence.</p></div><nav aria-label="Legal"><Link href="/privacy">Privacy</Link><Link href="/security">Security</Link><Link href="/terms">Terms</Link></nav><a className="footer-security" href="mailto:security@covarify.com"><span>Security</span>security@covarify.com</a></div><div className="shell copyright">© {new Date().getFullYear()} Covarify. Built quietly, with intention.</div></footer>;
+  return <footer className="site-footer"><div className="shell footer-grid"><div className="footer-brand"><Brand variant="light" /><p>From Complexity to Confidence.</p></div><nav aria-label="Legal"><Link href="/privacy">Privacy</Link><Link href="/security">Security</Link><Link href="/terms">Terms</Link></nav><a className="footer-security" href="mailto:security@covarify.com"><span>Security</span>security@covarify.com</a></div><div className="shell copyright">© {new Date().getFullYear()} Covarify. Built quietly, with intention. COVARIFY is a registered alternate name of COVARUM LLC.</div></footer>;
 }
