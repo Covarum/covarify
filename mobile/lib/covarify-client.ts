@@ -1,8 +1,14 @@
 import type { CovarifyTurn, TurnInput } from "./turn-contract.ts";
 
 export interface CovarifyClient {
-  readonly mode: "fixture" | "production";
+  readonly mode: "fixture" | "authenticated_development";
   sendTurn(input: TurnInput): Promise<CovarifyTurn>;
+}
+
+export type CovarifyTransportErrorCode = "OFFLINE" | "TIMEOUT" | "UNAUTHORIZED" | "FORBIDDEN" | "CONTRACT_MISMATCH" | "INVALID_RESPONSE" | "SERVER_ERROR" | "STALE_ACTION" | "SESSION_EXPIRED";
+export class CovarifyTransportError extends Error {
+  readonly code: CovarifyTransportErrorCode;
+  constructor(code: CovarifyTransportErrorCode) { super(code); this.code = code; this.name = "CovarifyTransportError"; }
 }
 
 export function assertClientSafeInput(input: TurnInput): TurnInput {

@@ -9,10 +9,16 @@ const action = (id: string, type: SemanticAction["type"], label: string, payload
 const turn = (sequence: number, blocks: PresentationBlock[], actions: SemanticAction[], options: { message?: string; question?: string | null; stopped?: boolean; ambiguity?: CovarifyTurn["understanding"]["ambiguity"] } = {}): CovarifyTurn => ({
   contractVersion: 1,
   identity: { turnId: `fixture-turn-${sequence}`, sessionId: "fixture-native-v1", sequence, timestamp: "2026-08-08T12:00:00.000Z", modality: "guided_action" },
-  understanding: { intent: "PRIORITIZE", capability: "PRIORITIZE_COMPETING_NEEDS", scope: "FINANCIAL_STATE", confidence: options.ambiguity ? "low" : "high", ambiguity: options.ambiguity || null },
+  input: { rawStatement: null, normalizedStatement: null, guidedActionId: null },
+  understanding: { intent: "PRIORITIZE", capability: "PRIORITIZE_COMPETING_NEEDS", scope: "FINANCIAL_STATE", scopeDetail: null, referencedEntityIds: [], resolvedReferences: [], confidence: options.ambiguity ? "low" : "high", ambiguity: options.ambiguity || null },
+  evidence: { references: [], missing: [], stale: [] },
+  financialImpact: { factsRead: [], proposedChanges: [], acceptedSessionChanges: [], derivedCalculations: [], before: [], after: [] },
+  decision: { decisionId: `fixture-decision-${sequence}`, type: "NONE", goal: null, constraints: [], factsConsidered: [], answer: { type: "CLARIFICATION", summary: options.message || blocks[0]?.body || "Covarify is ready." }, recommendation: null, quantified: [], allocation: [], reconciliation: null, alternatives: [], tradeoffs: [], consequenceOfDelay: null, uncertainty: [], confidence: options.ambiguity ? "low" : "high", status: options.ambiguity ? "preliminary" : "final", affectedEntityIds: [] },
   response: { primaryMessage: options.message || blocks[0]?.body || "Covarify is ready.", conciseRationale: null, blocks, question: options.question || null, correction: null },
   actions,
   next: { type: options.stopped ? "RESUME_SESSION" : actions.length ? "EXPLORE_OPTION" : "STOP_VALID", bestStep: actions[0]?.label || "Done for now", blocking: Boolean(options.question), stopped: Boolean(options.stopped), waitingForEvidence: false, actionId: actions[0]?.id || null },
+  memory: { disposition: "session_only", proposal: null },
+  telemetry: { event: "turn_understood", safeAttributes: { mode: "fixture" } },
 });
 
 export const competingNeedsQuestion = turn(

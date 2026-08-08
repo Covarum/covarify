@@ -93,3 +93,7 @@ EAS cloud build. The proposed native identifiers are
   networking or client-side financial calculations.
 - See `docs/architecture/ios-foundation-v1.md` for the Turn Contract, privacy,
   accessibility, and future transport boundaries.
+- Connected development uses the existing authenticated Supabase session and
+  the non-production `/api/development/covarify-turn` endpoint. It must be
+  selected explicitly, is read-only, and never falls back to fixtures. See
+  `docs/architecture/ios-authenticated-development-transport-v1.md`.

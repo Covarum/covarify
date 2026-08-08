@@ -9,6 +9,7 @@ const renderer = readFileSync(new URL("../components/semantic-turn-renderer.tsx"
 const ask = readFileSync(new URL("../app/(app)/ask.tsx", import.meta.url), "utf8");
 const layout = readFileSync(new URL("../app/(app)/_layout.tsx", import.meta.url), "utf8");
 const clientSource = readFileSync(new URL("../lib/covarify-client.ts", import.meta.url), "utf8");
+const authenticatedClientSource = readFileSync(new URL("../lib/authenticated-covarify-client.ts", import.meta.url), "utf8");
 
 test("Turn blocks render generically without journey-specific financial logic", () => {
   assert.match(renderer, /turn\.response\.blocks\.filter/);
@@ -90,4 +91,26 @@ test("native surface contains no authorization, financial engine, secret, or sen
   assert.doesNotMatch(surface, /access_token|service_role|PLAID_SECRET|console\.(log|info)|calculateAllocation|runCovarifyTurn|CanonicalFinancialTruth/);
   assert.match(ask, /FIXTURE MODE · NO REAL FINANCIAL DATA/);
   assert.match(ask, /does not record or transmit audio/);
+});
+
+test("fixture and authenticated development transports share one CovarifyClient contract", () => {
+  assert.match(clientSource, /mode: "fixture" \| "authenticated_development"/);
+  assert.match(authenticatedClientSource, /createAuthenticatedCovarifyClient[\s\S]*: CovarifyClient/);
+  assert.match(authenticatedClientSource, /supportedContractVersion: COVARIFY_TURN_CONTRACT_VERSION/);
+  assert.match(authenticatedClientSource, /parseTurnTransportResponse/);
+  assert.doesNotMatch(authenticatedClientSource, /balance|allocation|recommendation|financialTruth|userId|accountId/);
+});
+
+test("connected mode is explicit and cannot silently fall back to fixtures", () => {
+  assert.match(ask, /mode === "fixture" \? fixtureClient : authenticatedClient\.current/);
+  assert.match(ask, /Use connected development/); assert.match(ask, /CONNECTED DEVELOPMENT · READ ONLY/);
+  assert.match(ask, /End connected session/);
+  assert.match(ask, /mode === "fixture" \? <View accessibilityRole="toolbar" accessibilityLabel="Fixture examples"/);
+  assert.doesNotMatch(authenticatedClientSource, /createFixtureCovarifyClient|fallback/);
+});
+
+test("connected lifecycle preserves drafts, avoids automatic retry, and exposes safe recovery", () => {
+  for (const contract of [/setSubmittedStatements/, /setLoading\(true\)/, /Still checking your authorized financial picture/, /setDraft\(input\.statement\)/, /Retry read-only question/, /send\(retryInput, false\)/, /AccessibilityInfo\.setAccessibilityFocus/]) assert.match(ask, contract);
+  assert.doesNotMatch(authenticatedClientSource, /while\s*\(|setInterval|console\.(log|info|warn|error)/);
+  for (const code of ["OFFLINE", "TIMEOUT", "UNAUTHORIZED", "FORBIDDEN", "CONTRACT_MISMATCH", "INVALID_RESPONSE", "SERVER_ERROR", "STALE_ACTION", "SESSION_EXPIRED"]) assert.match(clientSource + ask, new RegExp(code));
 });
