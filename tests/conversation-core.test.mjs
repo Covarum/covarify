@@ -18,6 +18,69 @@ import { buildRecommendationPresentation, estimatedTimelineCopy, targetModeLabel
 import { allocateNextDollar, correctIncomeReliability, crisisNextStep, detectPlanConflict, founderAllocationFixture, governedMemoryMapping, realDataReadinessContract, reconcileAllocation, simulateAllocation, waitOrNoAction } from "../lib/conversation/allocation-intelligence.ts";
 import { allocationWithOffAccountCash, allocationWithReceivedOwnerFunds, applyCashUpdate, cashIncomeFixture, conservativeCashEstimate, normalizeCashAmount, offAccountMemoryMapping, ownerAvailable, parseCashAction, parseContextualValue, receivableFixture, reconcileCashIncome, reconcileDeposit, reconcileReceivable, reconcileReceivedChange, simulateReceivable, validateCashAction } from "../lib/conversation/off-account-resources.ts";
 import { buildJourneyPresentation, buildOutcomeCopy, guidanceModeFromStatement, interpretJourneyEdit, presentRepairAmountChange } from "../lib/conversation/journey-presentation.ts";
+import { createHeadlessSession, runHeadlessTurn } from "../lib/conversation/headless-turn-orchestrator.ts";
+import { goldenJourneys } from "../lib/conversation/golden-journeys.ts";
+import { assertTurnInvariants, confirmationFor } from "../lib/conversation/turn-contract.ts";
+
+const semantic = (turn) => ({ intent: turn.understanding.intent, proposed: turn.financialImpact.proposedChanges.map(({ entityId, field, after }) => ({ entityId, field, after })), actions: turn.actions.map(({ id, type, consequence, confirmation }) => ({ id, type, consequence, confirmation })) });
+
+test("Turn Contract is UI-independent and all golden journeys share one entry point", () => {
+  const source = readFileSync(new URL("../lib/conversation/turn-contract.ts", import.meta.url), "utf8") + readFileSync(new URL("../lib/conversation/headless-turn-orchestrator.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /from ["']react|JSX|HTMLElement|window\.|document\./);
+  for (const journeyId of Object.keys(goldenJourneys)) {
+    const turn = runHeadlessTurn(createHeadlessSession(journeyId), { modality: "text", statement: journeyId === "what_changed" ? "What changed since last week?" : "Help me with this.", now: "2026-08-08T00:00:00.000Z" });
+    assert.equal(turn.contractVersion, 1); assert.equal(turn.identity.sessionId, `golden:${journeyId}`); assert.ok(turn.response.primaryMessage);
+  }
+});
+
+test("text, guided, and reviewed voice resolve to the same correction action", () => {
+  const text = runHeadlessTurn(createHeadlessSession("competing_cash_needs"), { modality: "text", statement: "The car is only $400" });
+  const voice = runHeadlessTurn(createHeadlessSession("competing_cash_needs"), { modality: "reviewed_voice", statement: "The car is only $400" });
+  const guided = runHeadlessTurn(createHeadlessSession("competing_cash_needs"), { modality: "guided_action", action: { id: "repair.estimate.propose", payload: { amount: 400 } } });
+  assert.deepEqual(semantic(text), semantic(voice)); assert.deepEqual(semantic(text), semantic(guided));
+  assert.equal(text.financialImpact.proposedChanges[0].after, 400); assert.equal(text.financialImpact.acceptedSessionChanges.length, 0);
+});
+
+test("correction proposal does not mutate before Apply and Undo restores prior state", () => {
+  const state = createHeadlessSession("competing_cash_needs");
+  const proposed = runHeadlessTurn(state, { modality: "text", statement: "That repair is $400" });
+  assert.equal(state.facts.find((item) => item.entityId === "repair" && item.field === "estimate").value, 500);
+  assert.equal(proposed.actions[0].id, "correction.apply"); assert.equal(proposed.actions[0].consequence, "SESSION_REVERSIBLE"); assert.equal(proposed.actions[0].confirmation, "explicit_apply");
+  const applied = runHeadlessTurn(state, { modality: "guided_action", action: { id: "correction.apply" } });
+  assert.equal(state.facts.find((item) => item.entityId === "repair" && item.field === "estimate").value, 400); assert.equal(applied.financialImpact.acceptedSessionChanges[0].before, 500);
+  assert.equal(applied.financialImpact.before.find((item) => item.entityId === "repair" && item.field === "estimate").value, 500); assert.equal(applied.financialImpact.after.find((item) => item.entityId === "repair" && item.field === "estimate").value, 400);
+  runHeadlessTurn(state, { modality: "guided_action", action: { id: "correction.undo" } });
+  assert.equal(state.facts.find((item) => item.entityId === "repair" && item.field === "estimate").value, 500);
+});
+
+test("expected resources stay unavailable until received", () => {
+  const turn = runHeadlessTurn(createHeadlessSession("expected_business_income"), { modality: "text", statement: "I'm getting a $2,500 invoice paid Friday, but $300 is materials." });
+  assert.match(turn.response.primaryMessage, /expected, not available cash/i); assert.equal(turn.financialImpact.factsRead.find((item) => item.entityId === "cash" && item.field === "available_from_invoice").value, 0);
+  assert.equal(turn.decision.constraints[0], "Expected income is unavailable until received");
+});
+
+test("transaction meaning creates a typed memory proposal without canonical memory", () => {
+  const turn = runHeadlessTurn(createHeadlessSession("transaction_meaning"), { modality: "reviewed_voice", statement: "That $312 Target charge was back-to-school stuff for Callie." });
+  assert.equal(turn.memory.disposition, "memory_proposal"); assert.equal(turn.memory.proposal.fact.status, "unconfirmed"); assert.equal(turn.memory.proposal.fact.value, "back-to-school for Callie");
+  assert.equal(turn.financialImpact.acceptedSessionChanges.length, 0); assert.doesNotMatch(JSON.stringify(turn.financialImpact.after), /back-to-school for Callie/);
+});
+
+test("ambiguity, unsupported input, stopping, and depth changes have visible bounded semantics", () => {
+  const ambiguous = runHeadlessTurn(createHeadlessSession("goal_conflict"), { modality: "text", statement: "Change that amount." });
+  assert.equal(ambiguous.understanding.intent, "clarify_reference"); assert.equal(ambiguous.next.blocking, true); assert.ok(ambiguous.response.question);
+  const unsupported = runHeadlessTurn(createHeadlessSession("competing_cash_needs"), { modality: "text", statement: "Order a pizza." });
+  assert.equal(unsupported.understanding.intent, "unsupported"); assert.match(unsupported.response.primaryMessage, /can’t apply/i);
+  const state = createHeadlessSession("goal_conflict"); const before = structuredClone(state.facts);
+  const depth = runHeadlessTurn(state, { modality: "text", statement: "Show me the math." }); assert.equal(state.presentationDepth, "DETAILED"); assert.deepEqual(state.facts, before); assert.equal(depth.decision.status, "not_applicable");
+  const stopped = runHeadlessTurn(state, { modality: "guided_action", action: { id: "session.stop" } }); assert.equal(stopped.next.stopped, true); assert.equal(stopped.actions[0].id, "session.resume");
+});
+
+test("recommendation and rationale share one decision object and actions obey consequence policy", () => {
+  const turn = runHeadlessTurn(createHeadlessSession("goal_conflict"), { modality: "text", statement: "I want to pay down my card, but a camp deposit is due." });
+  assert.match(turn.decision.recommendation, /camp deposit/i); assert.match(turn.decision.rationale, /nearer consequence/i); assert.equal(turn.response.conciseRationale, turn.decision.rationale);
+  for (const item of turn.actions) assert.equal(item.confirmation, confirmationFor(item.consequence));
+  assert.equal(assertTurnInvariants(turn), turn);
+});
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
