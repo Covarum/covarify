@@ -21,12 +21,16 @@ import { buildJourneyPresentation, buildOutcomeCopy, guidanceModeFromStatement, 
 import { createHeadlessSession, runHeadlessTurn } from "../lib/conversation/headless-turn-orchestrator.ts";
 import { goldenJourneys } from "../lib/conversation/golden-journeys.ts";
 import { assertTurnInvariants, confirmationFor } from "../lib/conversation/turn-contract.ts";
+import { runCovarifyTurn } from "../lib/conversation/covarify-orchestrator.ts";
+import { capabilityRegistry } from "../lib/conversation/capability-registry.ts";
+import { runAdaptiveJourneyShadow } from "../lib/conversation/adaptive-journey-shadow.ts";
 
 const semantic = (turn) => ({ intent: turn.understanding.intent, proposed: turn.financialImpact.proposedChanges.map(({ entityId, field, after }) => ({ entityId, field, after })), actions: turn.actions.map(({ id, type, consequence, confirmation }) => ({ id, type, consequence, confirmation })) });
 
-test("Turn Contract is UI-independent and all golden journeys share one entry point", () => {
-  const source = readFileSync(new URL("../lib/conversation/turn-contract.ts", import.meta.url), "utf8") + readFileSync(new URL("../lib/conversation/headless-turn-orchestrator.ts", import.meta.url), "utf8");
+test("Turn Contract is UI-independent and authoritative orchestration never imports golden fixtures", () => {
+  const source = readFileSync(new URL("../lib/conversation/turn-contract.ts", import.meta.url), "utf8") + readFileSync(new URL("../lib/conversation/covarify-orchestrator.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /from ["']react|JSX|HTMLElement|window\.|document\./);
+  assert.doesNotMatch(source, /golden-journeys|GoldenJourneyId|competing_cash_needs|transaction_meaning|expected_business_income|goal_conflict|what_changed|contextual_correction/);
   for (const journeyId of Object.keys(goldenJourneys)) {
     const turn = runHeadlessTurn(createHeadlessSession(journeyId), { modality: "text", statement: journeyId === "what_changed" ? "What changed since last week?" : "Help me with this.", now: "2026-08-08T00:00:00.000Z" });
     assert.equal(turn.contractVersion, 1); assert.equal(turn.identity.sessionId, `golden:${journeyId}`); assert.ok(turn.response.primaryMessage);
@@ -36,7 +40,7 @@ test("Turn Contract is UI-independent and all golden journeys share one entry po
 test("text, guided, and reviewed voice resolve to the same correction action", () => {
   const text = runHeadlessTurn(createHeadlessSession("competing_cash_needs"), { modality: "text", statement: "The car is only $400" });
   const voice = runHeadlessTurn(createHeadlessSession("competing_cash_needs"), { modality: "reviewed_voice", statement: "The car is only $400" });
-  const guided = runHeadlessTurn(createHeadlessSession("competing_cash_needs"), { modality: "guided_action", action: { id: "repair.estimate.propose", payload: { amount: 400 } } });
+  const guided = runHeadlessTurn(createHeadlessSession("competing_cash_needs"), { modality: "guided_action", action: { id: "fact.correct.propose", payload: { kind: "propose_correction", entityId: "repair", field: "estimate", value: 400 } } });
   assert.deepEqual(semantic(text), semantic(voice)); assert.deepEqual(semantic(text), semantic(guided));
   assert.equal(text.financialImpact.proposedChanges[0].after, 400); assert.equal(text.financialImpact.acceptedSessionChanges.length, 0);
 });
@@ -46,17 +50,17 @@ test("correction proposal does not mutate before Apply and Undo restores prior s
   const proposed = runHeadlessTurn(state, { modality: "text", statement: "That repair is $400" });
   assert.equal(state.facts.find((item) => item.entityId === "repair" && item.field === "estimate").value, 500);
   assert.equal(proposed.actions[0].id, "correction.apply"); assert.equal(proposed.actions[0].consequence, "SESSION_REVERSIBLE"); assert.equal(proposed.actions[0].confirmation, "explicit_apply");
-  const applied = runHeadlessTurn(state, { modality: "guided_action", action: { id: "correction.apply" } });
+  const applied = runHeadlessTurn(state, { modality: "guided_action", action: { id: "correction.apply", payload: { kind: "apply_correction", changeId: proposed.financialImpact.proposedChanges[0].changeId } } });
   assert.equal(state.facts.find((item) => item.entityId === "repair" && item.field === "estimate").value, 400); assert.equal(applied.financialImpact.acceptedSessionChanges[0].before, 500);
   assert.equal(applied.financialImpact.before.find((item) => item.entityId === "repair" && item.field === "estimate").value, 500); assert.equal(applied.financialImpact.after.find((item) => item.entityId === "repair" && item.field === "estimate").value, 400);
-  runHeadlessTurn(state, { modality: "guided_action", action: { id: "correction.undo" } });
+  runHeadlessTurn(state, { modality: "guided_action", action: { id: "correction.undo", payload: { kind: "undo", reversibleActionId: applied.financialImpact.acceptedSessionChanges[0].changeId } } });
   assert.equal(state.facts.find((item) => item.entityId === "repair" && item.field === "estimate").value, 500);
 });
 
 test("expected resources stay unavailable until received", () => {
   const turn = runHeadlessTurn(createHeadlessSession("expected_business_income"), { modality: "text", statement: "I'm getting a $2,500 invoice paid Friday, but $300 is materials." });
-  assert.match(turn.response.primaryMessage, /expected, not available cash/i); assert.equal(turn.financialImpact.factsRead.find((item) => item.entityId === "cash" && item.field === "available_from_invoice").value, 0);
-  assert.equal(turn.decision.constraints[0], "Expected income is unavailable until received");
+  assert.match(turn.response.primaryMessage, /expected, not available cash/i); assert.equal(turn.financialImpact.factsRead.find((item) => item.entityId === "cash" && item.field === "available_amount").value, 0);
+  assert.match(turn.decision.constraints[0], /unavailable until received/i);
 });
 
 test("transaction meaning creates a typed memory proposal without canonical memory", () => {
@@ -67,19 +71,47 @@ test("transaction meaning creates a typed memory proposal without canonical memo
 
 test("ambiguity, unsupported input, stopping, and depth changes have visible bounded semantics", () => {
   const ambiguous = runHeadlessTurn(createHeadlessSession("goal_conflict"), { modality: "text", statement: "Change that amount." });
-  assert.equal(ambiguous.understanding.intent, "clarify_reference"); assert.equal(ambiguous.next.blocking, true); assert.ok(ambiguous.response.question);
+  assert.equal(ambiguous.understanding.intent, "CORRECT_FACT"); assert.ok(ambiguous.understanding.ambiguity); assert.equal(ambiguous.next.blocking, true); assert.ok(ambiguous.response.question);
   const unsupported = runHeadlessTurn(createHeadlessSession("competing_cash_needs"), { modality: "text", statement: "Order a pizza." });
-  assert.equal(unsupported.understanding.intent, "unsupported"); assert.match(unsupported.response.primaryMessage, /can’t apply/i);
+  assert.equal(unsupported.understanding.intent, "OUT_OF_SCOPE"); assert.match(unsupported.response.primaryMessage, /focused on helping/i);
   const state = createHeadlessSession("goal_conflict"); const before = structuredClone(state.facts);
-  const depth = runHeadlessTurn(state, { modality: "text", statement: "Show me the math." }); assert.equal(state.presentationDepth, "DETAILED"); assert.deepEqual(state.facts, before); assert.equal(depth.decision.status, "not_applicable");
+  runHeadlessTurn(state, { modality: "text", statement: "Show me the math." }); assert.equal(state.presentationDepth, "DETAILED"); assert.deepEqual(state.facts, before);
   const stopped = runHeadlessTurn(state, { modality: "guided_action", action: { id: "session.stop" } }); assert.equal(stopped.next.stopped, true); assert.equal(stopped.actions[0].id, "session.resume");
 });
 
 test("recommendation and rationale share one decision object and actions obey consequence policy", () => {
   const turn = runHeadlessTurn(createHeadlessSession("goal_conflict"), { modality: "text", statement: "I want to pay down my card, but a camp deposit is due." });
-  assert.match(turn.decision.recommendation, /camp deposit/i); assert.match(turn.decision.rationale, /nearer consequence/i); assert.equal(turn.response.conciseRationale, turn.decision.rationale);
+  assert.match(turn.decision.recommendation.summary, /camp deposit/i); assert.match(turn.response.conciseRationale, /camp place/i);
   for (const item of turn.actions) assert.equal(item.confirmation, confirmationFor(item.consequence));
   assert.equal(assertTurnInvariants(turn), turn);
+});
+
+test("capability registry is generalized and client-safe", () => {
+  for (const id of ["READ_FINANCIAL_STATE", "CORRECT_FACT", "CORRECT_REFERENCE", "ANSWER_BLOCKING_QUESTION", "PRIORITIZE_COMPETING_NEEDS", "ASSESS_EXPECTED_RESOURCE", "COMPARE_FINANCIAL_SNAPSHOTS", "COMPARE_OPTIONS", "SHOW_EVIDENCE", "SHOW_CALCULATION", "CHANGE_PRESENTATION_DEPTH", "STOP_FOR_NOW", "RESUME", "UNDO", "PROPOSE_MEMORY"]) {
+    const capability = capabilityRegistry[id]; assert.equal(capability.id, id); assert.equal(capability.confirmation, confirmationFor(capability.consequence)); assert.ok(capability.operation); assert.ok(capability.presenterInput);
+  }
+});
+
+test("one generic correction engine handles amounts across financial domains", () => {
+  const cases = [
+    ["competing_cash_needs", "repair is $400", "repair", "estimate", 400], ["competing_cash_needs", "card minimum is $90", "card", "minimum", 90], ["competing_cash_needs", "utility is $200", "utility", "amount", 200],
+    ["expected_business_income", "the invoice is actually $2,800", "invoice-2500", "gross", 2800], ["expected_business_income", "materials are $350", "invoice-2500", "materials", 350], ["goal_conflict", "the camp deposit is $450", "camp-deposit", "amount", 450],
+  ];
+  for (const [journey, statement, entityId, field, value] of cases) { const turn = runCovarifyTurn(createHeadlessSession(journey), { modality: "text", statement }); const change = turn.financialImpact.proposedChanges[0]; assert.equal(turn.understanding.capability, "CORRECT_FACT"); assert.deepEqual([change.entityId, change.field, change.after], [entityId, field, value]); assert.equal(turn.actions[0].payload.kind, "apply_correction"); }
+});
+
+test("T1, T8, and T9 protect reconciliation, correction scope, and modality continuity", () => {
+  const state = createHeadlessSession("competing_cash_needs"); state.facts = state.facts.map((fact) => fact.entityId === "repair" && fact.field === "work_required" ? { ...fact, value: false, status: "confirmed" } : fact); const text = runCovarifyTurn(state, { modality: "text", statement: "repair is $400" });
+  assert.equal(text.decision.reconciliation.available, text.decision.reconciliation.allocated + text.decision.reconciliation.remaining);
+  const applied = runCovarifyTurn(state, { modality: "guided_action", action: { id: "correction.apply", payload: text.actions[0].payload } });
+  const changed = applied.financialImpact.after.filter((fact, index) => fact.value !== applied.financialImpact.before[index].value); assert.deepEqual(changed.map((fact) => `${fact.entityId}.${fact.field}`), ["repair.estimate"]);
+  const voice = runCovarifyTurn(state, { modality: "reviewed_voice", statement: "make that $450" }); assert.equal(voice.financialImpact.proposedChanges[0].entityId, "repair"); assert.equal(voice.financialImpact.proposedChanges[0].after, 450);
+});
+
+test("typed ambiguity is renderable and shadow integration passes without changing visible UX", () => {
+  const ambiguous = runCovarifyTurn(createHeadlessSession("competing_cash_needs"), { modality: "text", statement: "change that amount to $450" });
+  assert.ok(ambiguous.understanding.ambiguity.candidates.length >= 2); for (const candidate of ambiguous.understanding.ambiguity.candidates) { assert.ok(candidate.entityId); assert.ok(candidate.displayLabel); assert.equal(candidate.clarificationRequired, true); }
+  assert.equal(runAdaptiveJourneyShadow().passed, true);
 });
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });

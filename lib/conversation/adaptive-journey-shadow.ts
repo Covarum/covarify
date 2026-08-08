@@ -1,0 +1,8 @@
+import { createGoldenSession } from "./golden-journeys.ts";
+import { runCovarifyTurn } from "./covarify-orchestrator.ts";
+export type ShadowParity = { passed: boolean; checks: Record<"entityUnderstanding" | "factsUsed" | "decisionResult" | "financialValues" | "rationaleMeaning" | "confirmationClass" | "actions" | "nextBestStep" | "stoppingState", boolean> };
+export function runAdaptiveJourneyShadow(): ShadowParity {
+  const state = createGoldenSession("competing_cash_needs"); state.facts = state.facts.map((fact) => fact.entityId === "repair" && fact.field === "work_required" ? { ...fact, value: false, status: "confirmed" } : fact); const turn = runCovarifyTurn(state, { modality: "guided_action", action: { id: "fact.correct.propose", payload: { kind: "propose_correction", entityId: "repair", field: "estimate", value: 400 } }, now: "2026-08-08T00:00:00.000Z" });
+  const checks = { entityUnderstanding: turn.understanding.resolvedReferences[0]?.entityId === "repair", factsUsed: turn.decision.factsConsidered.some((fact) => fact.entityId === "cash" && fact.value === 900), decisionResult: turn.decision.type === "ALLOCATION", financialValues: turn.decision.reconciliation?.available === 900 && turn.financialImpact.proposedChanges[0]?.after === 400, rationaleMeaning: Boolean(turn.response.conciseRationale?.includes("$900.00")), confirmationClass: turn.actions[0]?.confirmation === "explicit_apply", actions: turn.actions[0]?.id === "correction.apply" && turn.actions[1]?.id === "correction.cancel", nextBestStep: turn.next.type === "CONFIRM_PROPOSAL", stoppingState: turn.next.stopped === false };
+  return { passed: Object.values(checks).every(Boolean), checks };
+}

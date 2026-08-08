@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getAuthorizedFounderPreviewUser } from "@/lib/founder-review-auth";
 import { getAuthenticatedUser } from "@/lib/supabase/auth";
 import { AdaptiveJourneyPreview } from "@/components/account/adaptive-journey-preview";
+import { runAdaptiveJourneyShadow } from "@/lib/conversation/adaptive-journey-shadow";
 
 export const dynamic = "force-dynamic";
 
@@ -16,5 +17,7 @@ export default async function TransactionUnderstandingPreviewPage() {
     <p>Authentication succeeded, but this account is not on the founder-review allowlist. No financial or account data was loaded.</p>
     <Link href="/">Return to Covarify</Link>
   </main>;
+  // Non-visible fixture parity check. It performs no I/O, logging, persistence, or user-state mutation.
+  void runAdaptiveJourneyShadow();
   return <AdaptiveJourneyPreview />;
 }
