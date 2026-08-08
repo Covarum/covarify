@@ -24,6 +24,9 @@ import { assertTurnInvariants, confirmationFor } from "../lib/conversation/turn-
 import { runCovarifyTurn } from "../lib/conversation/covarify-orchestrator.ts";
 import { capabilityRegistry } from "../lib/conversation/capability-registry.ts";
 import { runAdaptiveJourneyShadow } from "../lib/conversation/adaptive-journey-shadow.ts";
+import { canonicalTruthFromTransactions } from "../lib/conversation/financial-truth.ts";
+import { compareAuthenticatedTransactionShadow } from "../lib/conversation/authenticated-transaction-shadow.ts";
+import { createAuthorizedCovarifySession, legacyTransactionProjection } from "../lib/conversation/covarify-orchestrator.ts";
 
 const semantic = (turn) => ({ intent: turn.understanding.intent, proposed: turn.financialImpact.proposedChanges.map(({ entityId, field, after }) => ({ entityId, field, after })), actions: turn.actions.map(({ id, type, consequence, confirmation }) => ({ id, type, consequence, confirmation })) });
 
@@ -116,6 +119,49 @@ test("typed ambiguity is renderable and shadow integration passes without changi
 
 const transaction = (overrides = {}) => ({ id: "tx-1", plaidAccountId: "account-1", accountLabel: "Capital One · 1234", merchantName: null, name: "OLU’KAI", description: "VISA DDA PUR AP 469216 SP AFF OLUKAI *", amount: 89, currency: "USD", date: "2026-01-10", pending: false, pendingTransactionId: null, category: "GENERAL_MERCHANDISE", sourceCategory: "GENERAL_MERCHANDISE", direction: "outflow", transferRelationship: null, ...overrides });
 const request = (text, context = null) => ({ text, userId: "user-1", sessionId: "session-1", now: new Date("2026-08-03T12:00:00Z"), context, transactions: [transaction(), transaction({ id: "tx-2", amount: 110, date: "2026-02-10" }), transaction({ id: "refund", amount: -20, direction: "inflow", date: "2026-03-10", sourceCategory: "REFUND" })] });
+
+const authenticatedTruth = () => canonicalTruthFromTransactions({ userId: "user-1", transactions: request("").transactions, asOf: "2026-08-08T12:00:00.000Z", sourceMode: "authenticated_preview" });
+
+test("legacy transaction machinery is behind the authoritative facade with exact read-only parity", () => {
+  const truth = authenticatedTruth(); const session = createAuthorizedCovarifySession({ sessionId: "session-1", truth, authenticatedUserId: "user-1" }); const input = { modality: "text", statement: "How many payments were made to OLU’KAI?", now: "2026-08-08T12:00:00.000Z" };
+  const turn = runCovarifyTurn(session, input); const projection = legacyTransactionProjection(session); const legacy = orchestrateConversation(request(input.statement));
+  assert.equal(turn.understanding.intent, "TRANSACTION_COUNT"); assert.equal(turn.understanding.scopeDetail, "ALL_AVAILABLE_HISTORY"); assert.equal(turn.response.primaryMessage, legacy.message); assert.deepEqual(turn.decision.affectedEntityIds, legacy.evidence.transactionIds); assert.equal(projection.message, legacy.message);
+  const shadow = compareAuthenticatedTransactionShadow({ truth, authenticatedUserId: "user-1", sessionId: "session-1", statement: input.statement, authoritativeTurn: turn, authoritativeLegacy: projection }); assert.equal(shadow.passed, true); assert.deepEqual(shadow.failedChecks, []);
+});
+
+test("authorized truth cannot be substituted by surface identity or entity payload", () => {
+  const truth = authenticatedTruth(); assert.throws(() => createAuthorizedCovarifySession({ sessionId: "session-1", truth, authenticatedUserId: "other-user" }), /AUTHORIZED_FINANCIAL_TRUTH_REQUIRED/);
+  const session = createAuthorizedCovarifySession({ sessionId: "session-1", truth, authenticatedUserId: "user-1" }); const turn = runCovarifyTurn(session, { modality: "text", statement: "Which account did this payment use?", transaction: { selectedTransactionId: "another-users-transaction" } });
+  assert.equal(turn.understanding.scope, "TRANSACTION"); assert.doesNotMatch(JSON.stringify(turn), /another-users-transaction/); assert.ok(turn.response.primaryMessage);
+});
+
+test("session overlays never mutate base Canonical Financial Truth", () => {
+  const state = createHeadlessSession("competing_cash_needs"); const base = structuredClone(state.canonicalTruth.facts); const proposed = runCovarifyTurn(state, { modality: "text", statement: "repair is $400" }); runCovarifyTurn(state, { modality: "guided_action", action: { id: "correction.apply", payload: proposed.actions[0].payload } });
+  assert.deepEqual(state.canonicalTruth.facts, base); assert.equal(state.facts.find((fact) => fact.entityId === "repair" && fact.field === "estimate").value, 400); assert.equal(state.canonicalTruth.facts.find((fact) => fact.entityId === "repair" && fact.field === "estimate").value, 500);
+});
+
+test("fixture and authenticated truth use the same facade and modality cannot change authorization semantics", () => {
+  const truth = authenticatedTruth(); const textSession = createAuthorizedCovarifySession({ sessionId: "text", truth, authenticatedUserId: "user-1" }); const voiceSession = createAuthorizedCovarifySession({ sessionId: "voice", truth, authenticatedUserId: "user-1" });
+  const text = runCovarifyTurn(textSession, { modality: "text", statement: "How many payments were made to OLU’KAI?" }); const voice = runCovarifyTurn(voiceSession, { modality: "reviewed_voice", statement: "How many payments were made to OLU’KAI?" });
+  assert.equal(text.understanding.capability, voice.understanding.capability); assert.deepEqual(text.decision.quantified, voice.decision.quantified); assert.deepEqual(text.decision.affectedEntityIds, voice.decision.affectedEntityIds);
+  const fixture = runCovarifyTurn(createHeadlessSession("competing_cash_needs"), { modality: "text", statement: "repair is $400" }); assert.equal(fixture.contractVersion, text.contractVersion);
+});
+
+test("provenance survives truth through transaction adapter and Turn Contract", () => {
+  const truth = authenticatedTruth(); const session = createAuthorizedCovarifySession({ sessionId: "provenance", truth, authenticatedUserId: "user-1" }); const turn = runCovarifyTurn(session, { modality: "text", statement: "How many payments were made to OLU’KAI?" });
+  assert.ok(turn.evidence.references.length); for (const evidence of turn.evidence.references) { assert.equal(evidence.provenance, "CONNECTED_DATA"); assert.equal(evidence.ownership.userId, "user-1"); assert.ok(evidence.sourceId); assert.equal(evidence.freshness, "current"); }
+  assert.ok(turn.decision.factsConsidered.every((fact) => fact.evidenceIds.every((id) => turn.evidence.references.some((evidence) => evidence.sourceId === id))));
+});
+
+test("authoritative transaction meaning remains a non-durable memory proposal", () => {
+  const truth = canonicalTruthFromTransactions({ userId: "user-1", transactions: [transaction({ id: "target-312", name: "Target", merchantName: "Target", amount: 312 })], asOf: "2026-08-08T12:00:00.000Z", sourceMode: "authenticated_preview" }); const session = createAuthorizedCovarifySession({ sessionId: "memory", truth, authenticatedUserId: "user-1" });
+  runCovarifyTurn(session, { modality: "text", statement: "How many payments were made to Target?" }); const turn = runCovarifyTurn(session, { modality: "text", statement: "That $312 Target charge was back-to-school stuff for Callie." });
+  assert.equal(turn.memory.disposition, "memory_proposal"); assert.equal(turn.memory.proposal.fact.status, "unconfirmed"); assert.equal(turn.financialImpact.acceptedSessionChanges.length, 0); assert.deepEqual(session.canonicalTruth.governedMemory, []);
+});
+
+test("authenticated API selects only runCovarifyTurn as its conversation entry point", () => {
+  const source = readFileSync(new URL("../app/api/account/transaction-understanding/route.ts", import.meta.url), "utf8"); assert.match(source, /runCovarifyTurn\(session/); assert.doesNotMatch(source, /import \{ orchestrateConversation \}/); assert.match(readFileSync(new URL("../lib/conversation/orchestrator.ts", import.meta.url), "utf8"), /@deprecated Internal TRANSACTION_UNDERSTANDING adapter machinery/);
+});
 
 test("all transaction questions use canonical deterministic intents", () => {
   assert.equal(routeConversationIntent("How many payments were made to OLU’KAI?").type, "transaction_count");

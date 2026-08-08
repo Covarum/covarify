@@ -22,6 +22,7 @@ const naturalAccountAnswer = (accounts: Array<{ label: string; count: number }>)
   const parts = accounts.map((account) => `${naturalAccountLabel(account.label)} for ${account.count === 1 ? "one payment" : `${account.count} payments`}`);
   return parts.length === 1 ? `You used ${parts[0]}.` : parts.length === 2 ? `You used ${parts[0]} and ${parts[1].replace(/ for one payment$/, " for the other")}.` : `You used ${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}.`;
 };
+/** @deprecated Internal TRANSACTION_UNDERSTANDING adapter machinery. Product surfaces must call runCovarifyTurn. */
 export function orchestrateConversation(input: ConversationRequest & { transactions: MoneyTransaction[] }): ConversationResponse {
   const now = input.now || new Date();
   const prior = validConversationContext(input.context, input.userId, input.sessionId, now);

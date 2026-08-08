@@ -1,7 +1,7 @@
 import type { AmbiguityCandidate, CanonicalDecisionResult, PresentationBlock, PresentationDepth, StateChange } from "./turn-contract.ts";
 const money = (value: unknown) => typeof value === "number" ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value) : String(value);
 export function presentTurn(input: { turnId: string; decision: CanonicalDecisionResult; depth: PresentationDepth; proposal: StateChange | null; ambiguity: { message: string; candidates: AmbiguityCandidate[] } | null; outOfScope?: boolean; sessionMessage?: string | null }) {
-  let primary = input.sessionMessage || input.decision.recommendation?.summary || "I can help with your financial picture and decisions."; let question: string | null = null;
+  let primary = input.sessionMessage || input.decision.answer?.summary || input.decision.recommendation?.summary || "I can help with your financial picture and decisions."; let question: string | null = null;
   const blocks: PresentationBlock[] = [];
   if (input.outOfScope) primary = "I’m focused on helping with your financial picture and decisions.";
   if (input.ambiguity) { primary = input.ambiguity.message; question = input.ambiguity.message; blocks.push({ id: `${input.turnId}:clarification`, type: "question", body: primary, emphasis: "primary", evidenceIds: [] }); }

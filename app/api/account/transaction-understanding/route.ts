@@ -43,7 +43,9 @@ import {
 } from "@/lib/recurring-obligations";
 import { ambiguousHistoryMerchantNames, answerTransactionHistoryQuery, parseTransactionHistoryQuery } from "@/lib/transaction-history-query";
 import { formatFinancialPeriodDateRange, type ResolvedFinancialPeriod } from "@/lib/financial-periods";
-import { orchestrateConversation } from "@/lib/conversation/orchestrator";
+import { canonicalTruthFromTransactions } from "@/lib/conversation/financial-truth";
+import { createAuthorizedCovarifySession, legacyTransactionProjection, runCovarifyTurn } from "@/lib/conversation/covarify-orchestrator";
+import { compareAuthenticatedTransactionShadow } from "@/lib/conversation/authenticated-transaction-shadow";
 import type { ConversationContext } from "@/lib/conversation/types";
 
 export const dynamic = "force-dynamic";
@@ -276,25 +278,16 @@ export async function POST(request: Request) {
     if (body.operation === "interpret") {
       const text = String(body.text || "").trim();
       if (!text || text.length > 500) return NextResponse.json({ error: "INVALID_INTENT" }, { status: 400 });
-      const conversation = orchestrateConversation({
-        text,
-        userId: user.id,
-        sessionId: String(body.sessionId || "default"),
-        selectedTransactionId: body.selectedTransactionId,
-        context: body.conversationContext,
-        activePeriod: body.activePeriod,
-        transactions,
-      });
-      console.info("conversation_core", {
-        intent: conversation.intent.type,
-        scope: conversation.scope.type,
-        tool: conversation.intent.capability,
-        clarificationRequired: conversation.kind === "clarification_question",
-        evidenceCount: conversation.evidence?.transactionIds.length || 0,
-        proposalGenerated: Boolean(conversation.proposal),
-      });
-      if (!body.conversationProposalReview && conversation.intent.type !== "ambiguous" && conversation.intent.type !== "merchant_rule" && conversation.intent.type !== "transaction_correction") {
-        return NextResponse.json(conversation);
+      const sessionId = String(body.sessionId || "default");
+      const truth = canonicalTruthFromTransactions({ userId: user.id, transactions, asOf: new Date().toISOString(), sourceMode: "authenticated_preview" });
+      const session = createAuthorizedCovarifySession({ sessionId, truth, authenticatedUserId: user.id });
+      const turn = runCovarifyTurn(session, { modality: body.modality === "spoken" ? "reviewed_voice" : "text", statement: text, transaction: { selectedTransactionId: body.selectedTransactionId, context: body.conversationContext, activePeriod: body.activePeriod, dataMode: "connected" } });
+      const conversation = legacyTransactionProjection(session);
+      if (conversation) {
+        const shadow = compareAuthenticatedTransactionShadow({ truth, authenticatedUserId: user.id, sessionId, statement: text, selectedTransactionId: body.selectedTransactionId, context: body.conversationContext, activePeriod: body.activePeriod, authoritativeTurn: turn, authoritativeLegacy: conversation });
+        if (!shadow.passed) throw new Error("AUTHENTICATED_TRANSACTION_SHADOW_PARITY_FAILED");
+        console.info("conversation_core", { intent: conversation.intent.type, scope: conversation.scope.type, tool: turn.understanding.capability, clarificationRequired: conversation.kind === "clarification_question", evidenceCount: conversation.evidence?.transactionIds.length || 0, proposalGenerated: Boolean(conversation.proposal) });
+        if (!body.conversationProposalReview && conversation.intent.type !== "ambiguous" && conversation.intent.type !== "merchant_rule" && conversation.intent.type !== "transaction_correction") return NextResponse.json(conversation);
       }
       const historyQuery = parseTransactionHistoryQuery(text);
       if (historyQuery) {
