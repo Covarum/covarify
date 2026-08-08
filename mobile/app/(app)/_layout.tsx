@@ -1,11 +1,12 @@
-import { Redirect, Tabs } from "expo-router";
-import { ActivityIndicator, SafeAreaView, StyleSheet } from "react-native";
+import { Redirect, Tabs, useRouter } from "expo-router";
+import { ActivityIndicator, Pressable, SafeAreaView, StyleSheet, Text } from "react-native";
 
 import { colors } from "../../lib/theme";
 import { useAuth } from "../../providers/auth-provider";
 
 export default function AppLayout() {
   const { isLoading, session } = useAuth();
+  const router = useRouter();
 
   if (isLoading) {
     return (
@@ -20,15 +21,24 @@ export default function AppLayout() {
   return (
     <Tabs
       screenOptions={{
-        headerShown: false,
+        headerShown: true,
+        headerShadowVisible: false,
+        headerStyle: { backgroundColor: colors.white },
+        headerRight: () => (
+          <Pressable accessibilityRole="button" accessibilityLabel="Open profile and settings" hitSlop={8} onPress={() => router.push("/(app)/you")} style={styles.profileButton}>
+            <Text style={styles.profileText}>Profile</Text>
+          </Pressable>
+        ),
         tabBarActiveTintColor: colors.purple,
         tabBarInactiveTintColor: colors.muted,
         tabBarLabelStyle: { fontSize: 12, fontWeight: "700" },
       }}
     >
       <Tabs.Screen name="index" options={{ title: "Today" }} />
+      <Tabs.Screen name="ask" options={{ title: "Ask Covarify" }} />
       <Tabs.Screen name="money" options={{ title: "Money" }} />
-      <Tabs.Screen name="you" options={{ title: "You" }} />
+      <Tabs.Screen name="decisions" options={{ title: "Decisions" }} />
+      <Tabs.Screen name="you" options={{ href: null, title: "Profile" }} />
     </Tabs>
   );
 }
@@ -40,4 +50,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.lavenderBackground,
   },
+  profileButton: { minHeight: 44, justifyContent: "center", paddingHorizontal: 16 },
+  profileText: { color: colors.purple, fontSize: 16, fontWeight: "600" },
 });

@@ -1,6 +1,6 @@
-# Project Pocket mobile
+# Covarify mobile
 
-Project Pocket is Covarify's Expo and React Native application foundation for
+Covarify mobile is the Expo and React Native application foundation for
 iOS and Android. It currently supports approved-user sign-in only. Public
 signup remains intentionally unavailable during the controlled beta.
 
@@ -88,3 +88,8 @@ EAS cloud build. The proposed native identifiers are
 - The text treatment uses committed Covarify colors; final mobile logo and font
   assets still need a confirmed native asset package.
 - Native Plaid Link is intentionally deferred to Step 3.
+- Ask Covarify currently uses unmistakably labelled local `CovarifyTurn`
+  fixtures through a replaceable client interface. It performs no production
+  networking or client-side financial calculations.
+- See `docs/architecture/ios-foundation-v1.md` for the Turn Contract, privacy,
+  accessibility, and future transport boundaries.

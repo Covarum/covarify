@@ -1,0 +1,26 @@
+export const nativeTokens = {
+  color: {
+    canvas: "#FBFAFC",
+    surface: "#FFFFFF",
+    text: "#201727",
+    secondaryText: "#665E6B",
+    accent: "#6D3CC7",
+    accentSoft: "#F0EAFE",
+    border: "#E7E1EA",
+    warning: "#8A4B12",
+    warningSoft: "#FFF4E5",
+    confirmation: "#176B4D",
+    confirmationSoft: "#E8F6F0",
+    focus: "#315EEA",
+    financialValue: "#2D1B43",
+  },
+  space: { xxs: 4, xs: 8, sm: 12, md: 16, lg: 24, xl: 32, xxl: 44 },
+  radius: { control: 14, surface: 18 },
+  type: {
+    title: { fontSize: 34, lineHeight: 40, fontWeight: "700" as const },
+    heading: { fontSize: 21, lineHeight: 28, fontWeight: "700" as const },
+    body: { fontSize: 17, lineHeight: 25 },
+    detail: { fontSize: 14, lineHeight: 20 },
+    value: { fontSize: 24, lineHeight: 31, fontWeight: "700" as const },
+  },
+} as const;
