@@ -62,8 +62,31 @@ test("authenticated native path preserves bounded financial scope", () => {
   assert.equal(turn.understanding.intent, "OUT_OF_SCOPE"); assert.match(turn.response.primaryMessage, /financial/i); assert.equal(turn.actions.some((action) => action.type === "CONFIRM_MEMORY"), false);
 });
 
-test("development endpoint uses bearer auth, founder authorization, server truth, and no raw logging", () => {
+test("development endpoint uses preview founder auth without production Plaid coupling", () => {
   const route = readFileSync(new URL("../app/api/development/covarify-turn/route.ts", import.meta.url), "utf8");
-  for (const contract of [/authenticateRequestWithClient/, /getAuthorizedFounderUser/, /loadAuthorizedTransactions\(founder\.id\)/, /canonicalTruthFromTransactions/, /createAuthorizedCovarifySession/, /runCovarifyTurn/, /VERCEL_ENV === "production"/, /hasClientAuthority/, /actionAllowed/]) assert.match(route, contract);
-  assert.doesNotMatch(route, /console\.(log|info|warn|error)|body\.userId|body\.financialTruth/);
+  const auth = readFileSync(new URL("../lib/founder-review-auth.ts", import.meta.url), "utf8");
+  for (const contract of [/authenticateRequestWithClient/, /getAuthorizedFounderPreviewUser\(auth\.user\.supabaseUser\)/, /loadAuthorizedTransactions\(founder\.id\)/, /canonicalTruthFromTransactions/, /createAuthorizedCovarifySession/, /runCovarifyTurn/, /VERCEL_ENV === "production"/, /hasClientAuthority/, /actionAllowed/]) assert.match(route, contract);
+  assert.match(auth, /getAuthorizedFounderPreviewUser[\s\S]*isFounderAdmin\(user, process\.env\.COVARIFY_ADMIN_EMAILS\)/);
+  assert.match(auth, /getAuthorizedFounderUser[\s\S]*readProductionPlaidConfig\(\)\.allowedUserIds/);
+  assert.doesNotMatch(route, /getAuthorizedFounderUser|readProductionPlaidConfig|PLAID_PRODUCTION|console\.(log|info|warn|error)|body\.userId|body\.financialTruth/);
+});
+
+test("founder native truth is persisted, user-scoped, and independent of Plaid APIs", () => {
+  const loader = readFileSync(new URL("../lib/conversation/authorized-transactions-server.ts", import.meta.url), "utf8");
+  for (const contract of [/from\("plaid_items"\)/, /from\("plaid_accounts"\)/, /from\("plaid_transactions"\)/, /eq\("user_id", userId\)/, /eq\("environment", "production"\)/]) assert.match(loader, contract);
+  assert.doesNotMatch(loader, /PlaidApi|linkTokenCreate|itemPublicTokenExchange|transactionsSync|PLAID_(?:SANDBOX|PRODUCTION)_SECRET/);
+});
+
+test("legacy Plaid sandbox routes are local-only and fail before hosted work", () => {
+  for (const path of [
+    "../app/api/plaid/create-link-token/route.ts",
+    "../app/api/plaid/exchange-public-token/route.ts",
+    "../app/api/plaid/webhook/route.ts",
+  ]) {
+    const route = readFileSync(new URL(path, import.meta.url), "utf8");
+    assert.match(route, /export async function POST[\s\S]*if \(process\.env\.VERCEL_ENV\)[\s\S]*status: 404/);
+  }
+  const productionWebhook = readFileSync(new URL("../app/api/plaid/production/webhook/route.ts", import.meta.url), "utf8");
+  assert.match(productionWebhook, /verifyPlaidWebhook/);
+  assert.doesNotMatch(productionWebhook, /process\.env\.VERCEL_ENV/);
 });

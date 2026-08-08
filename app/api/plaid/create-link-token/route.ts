@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { getPlaidConfig, getPlaidRuntimeDiagnostics, logSafePlaidError, normalizePlaidError } from "@/lib/plaid/server";
 
 export async function POST() {
+  if (process.env.VERCEL_ENV) {
+    return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
+  }
   try {
     const { client, clientName, products, countryCodes } = getPlaidConfig();
     const response = await client.linkTokenCreate({

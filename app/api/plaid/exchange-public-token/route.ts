@@ -22,6 +22,9 @@ const debtStrategy = (accounts: SanitizedAccount[]) => {
 };
 
 export async function POST(request: Request) {
+  if (process.env.VERCEL_ENV) {
+    return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
+  }
   try {
     const body = await request.json().catch(() => null);
     const publicToken = typeof body?.public_token === "string" ? body.public_token.trim() : "";

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { getAuthorizedFounderUser } from "@/lib/founder-review-auth";
+import { getAuthorizedFounderPreviewUser } from "@/lib/founder-review-auth";
 import { loadAuthorizedTransactions } from "@/lib/conversation/authorized-transactions-server";
 import { actionAllowed, issueDevelopmentTurnToken, readDevelopmentTurnToken } from "@/lib/conversation/development-turn-token";
 import { canonicalTruthFromTransactions } from "@/lib/conversation/financial-truth";
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   if (process.env.VERCEL_ENV === "production") return failure("FORBIDDEN", 403);
   const auth = await authenticateRequestWithClient(request, await createSupabaseServerClient());
   if (!auth.authenticated) return failure("UNAUTHORIZED", 401);
-  const founder = await getAuthorizedFounderUser(auth.user.supabaseUser);
+  const founder = await getAuthorizedFounderPreviewUser(auth.user.supabaseUser);
   if (!founder) return failure("FORBIDDEN", 403);
 
   let body: unknown;

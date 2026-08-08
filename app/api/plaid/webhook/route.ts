@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
+  if (process.env.VERCEL_ENV) {
+    return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
+  }
   const body = await request.json().catch(() => null);
   const safeEvent = {
     webhook_type: typeof body?.webhook_type === "string" ? body.webhook_type : null,
